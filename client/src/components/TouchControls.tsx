@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { sfx } from "../game/audio";
 
 // Touch controls feed the SAME keyboard pipeline: they dispatch real
 // KeyboardEvents on window, so Player/Vehicle/handlers don't fork.
@@ -67,6 +68,7 @@ export default function TouchControls({ driving, onPause }: { driving: boolean; 
           </div>
           <div className="touch-actions">
             <HoldButton label="EXIT" k="e" />
+            <HoldButton label="HORN" onTap={() => sfx.horn()} />
             <HoldButton label="DRIFT" k=" " />
             <HoldButton label="BRAKE" k="s" className="pedal" />
             <HoldButton label="GAS" k="w" className="pedal gas" />

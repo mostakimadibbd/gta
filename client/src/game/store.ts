@@ -1,6 +1,7 @@
 // Central mutable game store (refs, not React state) — read/written every
 // frame by the 3D systems; the HUD polls it at 8 Hz and copies to React state.
 import * as THREE from "three";
+import { sfx } from "./audio";
 import { CAR_SPAWNS, PIER_SPAWN } from "../world";
 import type { VehicleState } from "../physics/GamePhysics";
 
@@ -41,7 +42,9 @@ export function addCrime(kind: "steal" | "hit" | "ped" | "reckless") {
   if (G.crimeCooldown > 0 && kind !== "ped") return;
   G.crimeCooldown = 4;
   const inc = kind === "ped" ? 2 : 1;
+  const before = G.wanted;
   G.wanted = Math.min(5, G.wanted + inc);
+  if (G.wanted > before) sfx.star();
   G.wantedCooldown = 0;
   if (kind === "ped") G.health = Math.max(0, G.health - 4);
   if (kind === "hit") G.health = Math.max(0, G.health - 3);

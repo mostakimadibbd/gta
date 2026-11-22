@@ -35,6 +35,7 @@ export default function Vehicle(p: Props) {
       if (refs.current.paused || G.dialogueActive || isInteractiveTarget(e.target)) return;
       const key = normalizeGameKey(e.key);
       if (["w", "a", "s", "d", " "].includes(key) && G.driving) { e.preventDefault(); keys.current.add(key); }
+      if (key === "b" && G.driving && !e.repeat) { sfx.horn(); e.preventDefault(); }
       if ((key === "e" || key === "f") && !e.repeat) {
         if (G.driving) {
           const car = G.cars[G.activeCarId];

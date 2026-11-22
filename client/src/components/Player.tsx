@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { isBlocked } from "../world";
+import { sfx } from "../game/audio";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
 
 type AnimationState = "Idle" | "Walk" | "Run" | "Driving";
@@ -95,6 +96,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
         if (grounded.current) {
           jumpVelocity.current = 7.5;
           grounded.current = false;
+          sfx.jump();
         }
         jumpRequested.current = false;
       }
@@ -104,6 +106,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
         if (positionRef.current.y === 0) {
           grounded.current = true;
           jumpVelocity.current = 0;
+          sfx.land();
         }
       }
     }

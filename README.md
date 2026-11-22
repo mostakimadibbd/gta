@@ -41,7 +41,7 @@ corrupt harbour boss's debt ledger.
   timer, glowing objective pillar in the world.
 - **Day cycle** — sun moves, dusk turns to night, windows and lamps glow.
 - **Personal themes** — 5 full-game themes (below), saved automatically.
-- **Audio** — WebAudio engine hum, sirens, pickups and jingles. No audio files.
+- **Audio / SFX** — all WebAudio-synthesised, no audio files: engine hum tied to speed, police siren wail while wanted, crash impact + thud, car horn (**B** on keyboard, HORN button on touch), door, jump/land, tyre skid, wanted-star sting, dialogue blips, UI clicks, pickup/cash chimes, mission-complete jingle, BUSTED sting and fail tone. **N** mutes everything.
 - **Multiplayer (optional)** — WebSocket rooms via the Python server;
   remote players render in your city. Single-player needs no server.
 

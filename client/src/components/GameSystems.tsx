@@ -129,7 +129,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         const d2 = (car.x - px) ** 2 + (car.z - pz) ** 2;
         if (d2 < 3.1 ** 2 && pSpeed > 3) {
           hitCooldown.current = 1.2; car.stopped = 2.5; car.fleeing = 3;
-          addCrime("hit"); cb.current.event("shake"); cb.current.event("crime"); sfx.crime();
+          addCrime("hit"); cb.current.event("shake"); cb.current.event("crime"); sfx.crash();
         }
       }
     }
@@ -146,7 +146,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       if (Math.abs(ped.x) > 114 || Math.abs(ped.z) > 118) { ped.dir = (ped.dir * -1) as 1 | -1; }
       // hit by player car
       if (G.driving && hitCooldown.current <= 0 && threatD2 < 2.2 ** 2 && pSpeed > 4) {
-        hitCooldown.current = 1.5; ped.fleeUntil = t + 4; addCrime("ped"); cb.current.event("shake"); sfx.crime();
+        hitCooldown.current = 1.5; ped.fleeUntil = t + 4; addCrime("ped"); cb.current.event("shake"); sfx.thud();
         ped.x += Math.sin(ped.heading) * 2; // knocked aside (arcade, non-graphic)
       }
     }
@@ -183,7 +183,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // busted: cop close + player slow
       if (nearestCop < 7.5 && pSpeed < 2.5 && !G.driving || (nearestCop < 7.5 && pSpeed < 2.5)) {
         G.bustTimer += dt;
-        if (G.bustTimer > 3) { G.status = "busted"; G.statusTimer = 0; sfx.fail(); }
+        if (G.bustTimer > 3) { G.status = "busted"; G.statusTimer = 0; sfx.busted(); }
       } else G.bustTimer = Math.max(0, G.bustTimer - dt * 1.5);
     } else G.bustTimer = 0;
     if (G.health <= 0 && !G.status) { G.status = "wasted"; G.statusTimer = 0; sfx.fail(); }

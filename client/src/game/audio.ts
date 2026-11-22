@@ -20,6 +20,17 @@ function blip(freq: number, dur: number, type: OscillatorType, vol: number, when
   g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + when + dur);
   o.connect(g).connect(a.destination); o.start(a.currentTime + when); o.stop(a.currentTime + when + dur + 0.02);
 }
+function noiseBurst(dur: number, vol: number, cutoff: number) {
+  const a = ac(); if (!a || muted) return;
+  const len = Math.max(1, Math.floor(a.sampleRate * dur));
+  const buf = a.createBuffer(1, len, a.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = a.createBufferSource(); src.buffer = buf;
+  const f = a.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = cutoff;
+  const g = a.createGain(); g.gain.value = vol;
+  src.connect(f); f.connect(g); g.connect(a.destination); src.start();
+}
 export const sfx = {
   pickup() { blip(880, 0.12, "sine", 0.16); blip(1320, 0.18, "sine", 0.14, 0.07); },
   cash() { blip(1046, 0.1, "triangle", 0.15); blip(1568, 0.16, "triangle", 0.13, 0.06); },
@@ -27,6 +38,16 @@ export const sfx = {
   fail() { blip(220, 0.35, "sawtooth", 0.1, 0, -110); },
   crime() { blip(196, 0.18, "square", 0.07); },
   door() { blip(160, 0.09, "square", 0.08, 0, -60); },
+  crash() { noiseBurst(0.28, 0.32, 900); blip(90, 0.25, "sawtooth", 0.12, 0, -40); },
+  thud() { noiseBurst(0.12, 0.18, 500); },
+  horn() { blip(370, 0.38, "square", 0.07); blip(466, 0.38, "square", 0.07); },
+  jump() { blip(300, 0.18, "sine", 0.1, 0, 260); },
+  land() { noiseBurst(0.06, 0.07, 400); },
+  click() { blip(740, 0.06, "triangle", 0.1); },
+  dialogue() { blip(660, 0.07, "sine", 0.09); blip(880, 0.08, "sine", 0.07, 0.05); },
+  star() { blip(523, 0.12, "square", 0.08); blip(784, 0.2, "square", 0.08, 0.09); },
+  busted() { [392, 330, 262].forEach((f, i) => blip(f, 0.25, "triangle", 0.12, i * 0.14)); },
+  skid() { noiseBurst(0.3, 0.1, 2600); },
 };
 /** Call every ~200ms from HUD loop: engine hum tied to speed + siren when wanted. */
 export function audioTick(driving: boolean, speedKph: number, wanted: number) {

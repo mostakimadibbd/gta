@@ -122,6 +122,7 @@ export default function App() {
   }, []);
   const advanceDialogue = useCallback(() => {
     const d = dialogueRef.current; if (!d) return;
+    sfx.dialogue();
     if (d.idx < d.lines.length - 1) setDialogue({ ...d, idx: d.idx + 1 });
     else { setDialogue(null); G.dialogueActive = false; d.after(); }
   }, []);
@@ -462,7 +463,7 @@ export default function App() {
             <h3>Driving</h3>
             <dl className="key-list">
               <div><dt>WASD / Arrows</dt><dd>Accelerate · brake/reverse · steer</dd></div>
-              <div><dt>Space</dt><dd>Handbrake / drift</dd></div><div><dt>E / F</dt><dd>Exit car</dd></div>
+              <div><dt>Space</dt><dd>Handbrake / drift</dd></div><div><dt>B</dt><dd>Horn</dd></div><div><dt>E / F</dt><dd>Exit car</dd></div>
               <div><dt>C</dt><dd>Camera near / far</dd></div>
             </dl>
             <h3>Game</h3>
