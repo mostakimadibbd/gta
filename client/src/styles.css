@@ -1,0 +1,122 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@400;600;700;800&display=swap");
+
+:root {
+  font-family: "Outfit", sans-serif;
+  color: #f7f5ec;
+  background: #111820;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.game-shell {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.game-shell canvas {
+  display: block;
+}
+
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  padding: 26px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-shadow: 0 2px 8px #11182080;
+}
+
+.hud-brand {
+  font-size: 19px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.hud-brand span {
+  color: #f0c767;
+}
+
+.hud-status,
+.hud-meta {
+  margin-top: 13px;
+  color: #f4f1e7;
+  font: 12px "DM Mono", monospace;
+}
+
+.hud-meta {
+  margin-top: 7px;
+  color: #e1e4dc;
+  font-size: 11px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #d6a649;
+}
+
+.status-dot.online {
+  background: #7bd68e;
+  box-shadow: 0 0 9px #7bd68e;
+}
+
+.controls {
+  align-self: center;
+  margin-top: auto;
+  padding: 11px 16px;
+  border: 1px solid #ffffff25;
+  border-radius: 6px;
+  background: #18212dbd;
+  color: #d9e0e0;
+  font-size: 12px;
+  backdrop-filter: blur(8px);
+}
+
+.controls b {
+  color: #f0c767;
+  font: 500 10px "DM Mono", monospace;
+  letter-spacing: 0.04em;
+}
+
+.controls i {
+  display: inline-block;
+  height: 12px;
+  margin: 0 11px -3px;
+  border-left: 1px solid #ffffff35;
+}
+
+@media (max-width: 720px) {
+  .hud {
+    padding: 20px;
+  }
+
+  .controls {
+    max-width: 100%;
+    text-align: center;
+    line-height: 2;
+  }
+
+  .controls i {
+    margin-inline: 5px;
+  }
+}
