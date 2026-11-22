@@ -1,6 +1,6 @@
 # Low-poly multiplayer driving MVP
 
-The project source lives in this selected workspace. Frontend production files are built to `client/dist`; Python virtual environments, npm dependencies/caches, test programs, and temporary Wasm output can stay under `/tmp/gta-web-game-temp`. The Python WebSocket service is hosted separately from the Vercel static frontend.
+The project source lives in this selected workspace. Frontend production files are built to `client/dist`; Python virtual environments, npm dependencies/caches, test programs, and temporary Wasm output can stay under `/tmp/gta-web-game-temp`. The backend exports a FastAPI ASGI `app` for Python deployment platforms.
 
 ## Prerequisites
 
@@ -27,7 +27,8 @@ mkdir -p "$TMP_ROOT"
 TMPDIR="$TMP_ROOT" python3 -m venv "$TMP_ROOT/venv"
 "$TMP_ROOT/venv/bin/python" -m pip install --cache-dir "$TMP_ROOT/pip-cache" -r "$PROJECT_ROOT/server/requirements.txt"
 cd "$PROJECT_ROOT"
-"$TMP_ROOT/venv/bin/python" server/main.py
+cd "$PROJECT_ROOT/server"
+"$TMP_ROOT/venv/bin/python" -m uvicorn main:app --host 0.0.0.0 --port 8765
 ```
 
 Terminal 2, install frontend dependencies and npm cache outside the workspace. The temporary symlink is removed automatically after the build command:
@@ -55,7 +56,7 @@ npm --cache "$TMP_ROOT/npm-cache" ci
 ln -s "$TMP_ROOT/client-deps/node_modules" "$PROJECT_ROOT/client/node_modules"
 trap 'rm -f "$PROJECT_ROOT/client/node_modules"' EXIT
 cd "$PROJECT_ROOT/client"
-VITE_MULTIPLAYER_SERVER_URL=ws://localhost:8765 VITE_MULTIPLAYER_ROOM=downtown npm --cache "$TMP_ROOT/npm-cache" run dev -- --host 0.0.0.0
+VITE_MULTIPLAYER_SERVER_URL=ws://localhost:8765/ws VITE_MULTIPLAYER_ROOM=downtown npm --cache "$TMP_ROOT/npm-cache" run dev -- --host 0.0.0.0
 ```
 
 Open the Vite URL (normally `http://localhost:5173`) in two browser tabs. Without `VITE_MULTIPLAYER_SERVER_URL`, the game remains playable offline.
@@ -81,6 +82,16 @@ npm --cache "$TMP_ROOT/npm-cache" run build
 
 The expected deployment output is `client/dist`, configured in `client/vercel.json`. Set `VITE_MULTIPLAYER_SERVER_URL` in the Vercel project to the public `wss://` URL of a separately hosted Python server. `VITE_MULTIPLAYER_ROOM` is optional and defaults to `downtown`.
 
+## Deploy the Python backend
+
+The entrypoint is [`server/main.py`](./server/main.py), which exports `app` and provides `GET /`, `GET /health`, and `WS /ws`. For an ASGI host that supports persistent WebSockets, set its root directory to `server`, install `requirements.txt`, and run:
+
+```sh
+uvicorn main:app --host 0.0.0.0 --port "$PORT"
+```
+
+For Vercel's Python runtime, the exported `app` fixes entrypoint discovery and the HTTP health routes can run as functions. Vercel serverless functions are not a persistent WebSocket host; deploy multiplayer on a separate ASGI service that supports WebSockets and set the frontend URL to `wss://your-host/ws`. Room state is in process memory, so use a single persistent instance for this MVP; scaling to multiple instances requires shared state/pub-sub.
+
 To compile and test WebAssembly without leaving generated files in the workspace, run:
 
 ```sh
@@ -95,7 +106,11 @@ That command writes `physics.js` and `physics.wasm` under `/tmp/gta-web-game-tem
 ## Controls
 
 - `WASD`: walk / steer and accelerate or reverse
+- Arrow keys: alternate movement / steering controls
 - `Shift`: sprint
 - `Space`: jump
 - `E`: enter the nearby car or exit it
+- `Escape`: pause / resume
+- `?`: show keyboard help
 - Drag the mouse: orbit the third-person camera
+- Collect the six glowing city tokens on foot or in a car
