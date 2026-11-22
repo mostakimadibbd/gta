@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type RefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
+import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation } from "@react-three/postprocessing";
 import * as THREE from "three";
 import Collectibles from "./components/Collectibles";
 import GameSystems, { type SysCallbacks } from "./components/GameSystems";
@@ -17,6 +18,8 @@ import { STORY_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, type DialogueLi
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
 import { ROAD_COORDS, FUEL_STATIONS, districtAt } from "./world";
 import Weather from "./components/Weather";
+import Combat from "./components/Combat";
+import Interiors from "./components/Interiors";
 import { POSTER_PANELS } from "./posterData";
 import Phone from "./components/Phone";
 import { WEATHER_META, cycleWeather } from "./game/weather";
@@ -41,16 +44,37 @@ function EnvSetup() {
 
 const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
 const tmpV = new THREE.Vector3();
+// Touch/mobile devices skip the post-processing composer entirely (perf).
+const COARSE_POINTER = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
-function CameraRig({ target, camFar }: { target: RefObject<THREE.Vector3>; camFar: RefObject<boolean> }) {
+interface FpState { on: boolean; yaw: number; pitch: number; }
+
+function CameraRig({ target, camFar, fp }: { target: RefObject<THREE.Vector3>; camFar: RefObject<boolean>; fp: RefObject<FpState> }) {
   const controls = useRef<ComponentRef<typeof OrbitControls> | null>(null);
   const { camera } = useThree();
   useFrame((_, delta) => {
-    if (!controls.current || !target.current) return;
+    if (!target.current) return;
+    const cam = camera as THREE.PerspectiveCamera;
+    // ---- Phase 3: first-person (V). Head-height camera; drag to look.
+    if (fp.current?.on) {
+      if (controls.current) controls.current.enabled = false;
+      const car = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
+      const base = car ? car.state.heading : G.playerHeading;
+      const headY = car ? 1.14 : 1.62;
+      tmpV.copy(target.current); tmpV.y += headY;
+      if (car) { tmpV.x += Math.sin(base) * 0.15; tmpV.z += Math.cos(base) * 0.15; }
+      camera.position.copy(tmpV);
+      const h = base + fp.current.yaw; const p = fp.current.pitch;
+      const cp = Math.cos(p);
+      camera.lookAt(tmpV.x + Math.sin(h) * cp, tmpV.y + Math.sin(p), tmpV.z + Math.cos(h) * cp);
+      if (Math.abs(cam.fov - 62) > 0.4) { cam.fov += (62 - cam.fov) * 0.2; cam.updateProjectionMatrix(); }
+      return;
+    }
+    if (!controls.current) return;
+    if (!controls.current.enabled) controls.current.enabled = true;
     tmpV.copy(target.current); tmpV.y += 1.1;
     controls.current.target.lerp(tmpV, 1 - Math.exp(-5 * delta));
-    controls.current.maxDistance = camFar.current ? 26 : 15;
-    const cam = camera as THREE.PerspectiveCamera;
+    controls.current.maxDistance = G.interior ? 6.5 : camFar.current ? 26 : 15;
     const targetFov = 58 + Math.min(14, G.speedKph / 9);
     if (Math.abs(cam.fov - targetFov) > 0.4) { cam.fov += (targetFov - cam.fov) * 0.08; cam.updateProjectionMatrix(); }
     controls.current.update();
@@ -80,8 +104,8 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0 };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -94,6 +118,12 @@ const LOAD_TIPS = [
   "Smash a car past 60% damage and it smokes; at 100% it's a wreck. Walk away.",
   "Hold L to freeze the day cycle at golden hour.",
   "Harbour tokens hide around the city — each one is worth $25.",
+  "V switches to first person — in the car you ride over the hood.",
+  "Click or J throws a punch. Find a pistol (villa, docks) and it fires instead — mind the witnesses.",
+  "The red bike by the beach is rideable — it leans hard and tops out fast.",
+  "Lina's Garage and Club Solace have doors now. Walk up and press E.",
+  "Save $7,500 and the villa at Sable Heights is yours — park in its drive to keep a car for good.",
+  "Deep water past the wet sand? You can swim — just paddle back to shore.",
 ];
 function FirstFrame({ onReady }: { onReady: () => void }) {
   const done = useRef(false);
@@ -110,6 +140,7 @@ export default function App() {
   const physicsRef = useRef<PhysicsEngine>(fallbackPhysics);
   const tokenCountRef = useRef(0);
   const camFar = useRef(false);
+  const fpRef = useRef<FpState>({ on: false, yaw: 0, pitch: 0 });
   const [driving, setDriving] = useState(false);
   const [paused, setPaused] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -264,6 +295,7 @@ export default function App() {
         district: districtAt(px, pz), driving: G.driving, bust: G.bustTimer, status: G.status, storyDone: M.storyDone,
         weather: G.weather, weatherIcon: WEATHER_META[G.weather].icon,
         fuel: myCar ? Math.round(myCar.fuel) : 100, damage: myCar ? Math.round(myCar.damage) : 0,
+        ammo: G.ammo, armed: G.armed, prompt: G.promptText, promptWarn: G.promptWarn,
       });
       if (G.toastAt !== lastToastAt.current) { lastToastAt.current = G.toastAt; if (G.toast) showPopup(G.toast); }
       if (G.health < prevHud.current.health) { setFlash(true); window.setTimeout(() => setFlash(false), 350); }
@@ -288,7 +320,15 @@ export default function App() {
         if (key === "e" || key === "enter" || key === " ") { e.preventDefault(); advanceDialogue(); }
         return;
       }
-      if (key === "escape" || key === "p") { if (showHelp) setShowHelp(false); else setPaused((v) => !v); }
+      // Phase 3: contextual E (doors, mansion gate) — set by Interiors
+      if (key === "e" && G.interact) { e.preventDefault(); G.interact(); return; }
+      if (key === "v") {
+        const fp = fpRef.current;
+        fp.on = !fp.on; fp.yaw = 0; fp.pitch = 0;
+        G.firstPerson = fp.on;
+        showPopup(fp.on ? "Camera: first person — drag to look around" : "Camera: third person");
+      }
+      else if (key === "escape" || key === "p") { if (showHelp) setShowHelp(false); else setPaused((v) => !v); }
       else if (key === "?" || key === "h") { e.preventDefault(); setShowHelp((v) => !v); }
       else if (key === "t") { const i = THEMES.findIndex((t) => t.id === theme.id); applyTheme(THEMES[(i + 1) % THEMES.length]); showPopup(`Theme: ${THEMES[(i + 1) % THEMES.length].name}`); }
       else if (["1", "2", "3", "4", "5"].includes(key)) { const t = THEMES[Number(key) - 1]; if (t) { applyTheme(t); showPopup(`Theme: ${t.name}`); } }
@@ -307,6 +347,18 @@ export default function App() {
     window.addEventListener("keydown", down);
     return () => window.removeEventListener("keydown", down);
   }, [advanceDialogue, applyTheme, showHelp, showPopup, theme]);
+
+  // first-person drag-look (mouse or touch drag while FP is on)
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const fp = fpRef.current;
+      if (!fp.on || !(e.buttons & 1)) return;
+      fp.yaw -= e.movementX * 0.0032;
+      fp.pitch = THREE.MathUtils.clamp(fp.pitch - e.movementY * 0.0032, -1.05, 1.05);
+    };
+    window.addEventListener("pointermove", move);
+    return () => window.removeEventListener("pointermove", move);
+  }, []);
 
   const effectivePaused = paused || !!dialogue || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen;
   // ---- poster loading screen: real first-frame signal + minimum display ----
@@ -368,9 +420,25 @@ export default function App() {
           <Player positionRef={playerPositionRef} rotationRef={playerRotationRef} driving={driving} paused={effectivePaused} shirt={theme.shirt} />
           <GameSystems paused={effectivePaused} physicsRef={physicsRef} theme={theme} cb={sysCb} tokenCountRef={tokenCountRef} />
           <Weather paused={effectivePaused} theme={theme} />
+          <Combat enabled={started && !effectivePaused} />
+          <Interiors />
           <FirstFrame onReady={() => setSceneReady(true)} />
           {players.map((pl) => <RemoteAvatar key={pl.playerId} player={pl} />)}
-          <CameraRig target={followRef} camFar={camFar} />
+          <CameraRig target={followRef} camFar={camFar} fp={fpRef} />
+          {/* Phase 3 film grade: bloom + warm grade + grain + vignette +
+              SMAA. Skipped entirely on coarse pointers (mobile) for fps. */}
+          {!COARSE_POINTER && (
+            <EffectComposer multisampling={0}>
+              <>
+                <Bloom intensity={0.55} luminanceThreshold={0.55} luminanceSmoothing={0.25} mipmapBlur />
+                <HueSaturation saturation={0.08} />
+                <BrightnessContrast contrast={0.06} brightness={0.01} />
+                <Noise opacity={0.035} />
+                <Vignette darkness={0.22} offset={0.28} />
+                <SMAA />
+              </>
+            </EffectComposer>
+          )}
         </Suspense>
       </Canvas>
 
@@ -390,12 +458,14 @@ export default function App() {
               {[1, 2, 3, 4, 5].map((i) => <span key={i} className={i <= hud.wanted ? "on" : ""}>★</span>)}
             </div>
             <div className="cash">${hud.cash.toLocaleString()}</div>
+            {hud.armed && <div className="ammo-chip" title="Pistol ammo — click or J to fire">🔫 {hud.ammo}</div>}
             <div className="hud-meta">Tokens {hud.tokens}/6 · {players.length + 1} player{players.length ? "s" : ""}</div>
           </div>
           {hud.objective && (
             <div className="objective-banner"><b>{M.active?.title}</b> — {hud.objective}{hud.dist ? ` · ${hud.dist}m` : ""}{M.phase === "play" ? ` · ⏱ ${Math.floor(hud.timer / 60)}:${String(hud.timer % 60).padStart(2, "0")}` : ""}</div>
           )}
           {nearVehicle && !driving && <p className="interaction-prompt">Press <b>E</b> to enter the car</p>}
+          {hud.prompt && <p className={`interaction-prompt ${hud.promptWarn ? "warn" : ""}`}>{hud.prompt}</p>}
           {driving && <div className="speedo"><div className="speedo-arc" style={{ ["--speed" as string]: `${Math.min(100, hud.speed / 1.4)}%` }} /><strong>{hud.speed}</strong><span>km/h</span></div>}
           {driving && (
             <div className="car-bars">
@@ -406,7 +476,7 @@ export default function App() {
           <button type="button" className="phone-fab" aria-label="Open phone (U)" onClick={() => setPhoneOpen(true)}>📱</button>
           {popup && <div className="cash-popup">{popup}</div>}
           {banner && <div className={`mission-banner ${banner.ok ? "ok" : "bad"}`}>{banner.text}</div>}
-          <div className="controls"><b>WASD</b> Move <i /><b>E/F</b> Car <i /><b>T</b> Theme <i /><b>M</b> Map <i /><b>H</b> Help <i /><b>ESC/P</b> Pause</div>
+          <div className="controls"><b>WASD</b> Move <i /><b>E/F</b> Car · Doors <i /><b>V</b> 1st person <i /><b>Click/J</b> Punch · Fire <i /><b>T</b> Theme <i /><b>M</b> Map <i /><b>H</b> Help <i /><b>ESC/P</b> Pause</div>
         </section>
       )}
 
@@ -587,7 +657,10 @@ export default function App() {
             <h3>On foot</h3>
             <dl className="key-list">
               <div><dt>WASD / Arrows</dt><dd>Move</dd></div><div><dt>Shift</dt><dd>Sprint</dd></div>
-              <div><dt>Space</dt><dd>Jump</dd></div><div><dt>E / F</dt><dd>Enter car · advance dialogue</dd></div>
+              <div><dt>Space</dt><dd>Jump</dd></div><div><dt>E / F</dt><dd>Enter car · doors · buy · advance dialogue</dd></div>
+              <div><dt>Click / J</dt><dd>Punch — or fire the pistol once you find one</dd></div>
+              <div><dt>V</dt><dd>First-person camera (drag to look) — works in cars too</dd></div>
+              <div><dt>Swim</dt><dd>Wade past the wet sand and you swim; paddle to shore to climb out</dd></div>
             </dl>
             <h3>Driving</h3>
             <dl className="key-list">

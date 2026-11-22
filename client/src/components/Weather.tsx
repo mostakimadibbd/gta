@@ -84,7 +84,7 @@ export default function Weather({ paused, theme }: { paused: boolean; theme: Gam
     // ---- rain field around the camera focus ----
     const pts = points.current;
     if (pts) {
-      pts.visible = G.rainAmt > 0.04;
+      pts.visible = G.rainAmt > 0.04 && !G.interior; // no rain indoors (Phase 3)
       if (pts.visible) {
         pts.position.set(G.followPos.x, 0, G.followPos.z);
         const attr = geo.getAttribute("position") as THREE.BufferAttribute;

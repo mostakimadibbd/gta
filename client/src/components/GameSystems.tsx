@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted } from "../game/store";
+import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar } from "../game/store";
 import { M, currentTarget, endMission, persist } from "../game/missionState";
 import { pushPhoneMsg } from "../game/phone";
-import { ROAD_COORDS, districtAt, isBlocked } from "../world";
+import { ROAD_COORDS, districtAt, isBlocked, MANSION_DRIVE } from "../world";
 import { glowTexture } from "../textures";
 import { fallbackPhysics, type PhysicsEngine } from "../physics/GamePhysics";
 import type { GameTheme } from "../themes";
@@ -60,7 +60,7 @@ function initWorld() {
       G.peds.push({
         x: px0, z: pz0,
         heading: headingFor(axis, dir), speed: 0, axis, dir, side, color: PED_COLORS[i % PED_COLORS.length], fleeUntil: 0, swing: Math.random() * 6,
-        zone: districtAt(px0, pz0), active: true,
+        zone: districtAt(px0, pz0), active: true, downUntil: 0,
       });
     }
   }
@@ -131,9 +131,12 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     scene.fog = new THREE.Fog(fogC.getHex(), theme.fogNear, theme.fogFar);
   }, [scene, bg, fogC, theme]);
 
+  const garageSave = useRef({ timer: 0, lastKey: "" });
+
   useFrame(({ clock }, delta) => {
     const dt = Math.min(delta, 0.05);
     const t = clock.elapsedTime;
+    G.timeS = t;
     // ---- day cycle (5-minute full cycle; L pauses/resumes it from App) ----
     if (!paused && !G.dayPaused) G.dayTime = (G.dayTime + dt / 300) % 1;
     const sunAng = G.dayTime * Math.PI * 2 - Math.PI / 2;
@@ -212,8 +215,10 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     });
     for (const ped of G.peds) {
       if (!ped.active) { ped.speed = 0; continue; }
+      // knocked down (punch/gunfire): lies still, then gets up and flees
+      if (t < ped.downUntil) { ped.speed = 0; continue; }
       const threatD2 = (ped.x - px) ** 2 + (ped.z - pz) ** 2;
-      const flee = (G.driving && pSpeed > 5 && threatD2 < 15 ** 2) || (G.wanted > 0 && threatD2 < 10 ** 2);
+      const flee = (G.driving && pSpeed > 5 && threatD2 < 15 ** 2) || (G.wanted > 0 && threatD2 < 10 ** 2) || t < ped.fleeUntil;
       const ahead = 14;
       const tx = ped.axis === "x" ? ped.x + ped.dir * ahead : ped.x;
       const tz = ped.axis === "z" ? ped.z + ped.dir * ahead : ped.z;
@@ -359,6 +364,24 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         }
       }
     }
+    // ---- property: park on the villa drive (owned) to garage-save the car —
+    // it reappears there next session (localStorage, via the store loader)
+    {
+      const gs = garageSave.current;
+      const car = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
+      const onDrive = !!car && G.ownsMansion && Math.abs(car.state.speed) < 0.5 &&
+        Math.abs(car.state.x - MANSION_DRIVE.x) < MANSION_DRIVE.hw && Math.abs(car.state.z - MANSION_DRIVE.z) < MANSION_DRIVE.hd;
+      if (onDrive && car) {
+        gs.timer += dt;
+        const key = `${G.activeCarId}|${car.state.x.toFixed(1)}|${car.state.z.toFixed(1)}`;
+        if (gs.timer > 2 && gs.lastKey !== key) {
+          gs.lastKey = key;
+          persistSavedCar({ kind: car.kind, color: car.color, x: car.state.x, z: car.state.z, heading: car.state.heading });
+          cb.current.popup("🔧 Car saved in your villa garage — it'll be here next visit.");
+          sfx.cash();
+        }
+      } else gs.timer = 0;
+    }
     // objective beam follows current target
     if (beam.current) {
       const o = G.objective;
@@ -394,11 +417,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       G.peds.forEach((pd, i) => {
         const g = pedRefs.current[i]; if (!g) return;
         g.visible = pd.active;
-        g.position.set(pd.x, 0, pd.z); g.rotation.y = pd.heading;
+        const down = tt < pd.downUntil;
+        g.position.set(pd.x, down ? 0.32 : 0, pd.z);
+        g.rotation.set(down ? -Math.PI / 2 * 0.92 : 0, pd.heading, 0);
         const rig = pedRigs[i];
-        if (rig) animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
+        if (rig && !down) animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
         const marker = reportRefs.current[i];
-        if (marker) marker.visible = pd.active && G.reportingPed === i && reportT < G.witnessUntil;
+        if (marker) marker.visible = pd.active && !down && G.reportingPed === i && reportT < G.witnessUntil;
       });
       // NPC-life vignettes: seated figures (sit pose re-applied after idle anim)
       for (const v of vignettes.seated) {

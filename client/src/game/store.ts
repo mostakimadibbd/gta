@@ -2,14 +2,15 @@
 // frame by the 3D systems; the HUD polls it at 8 Hz and copies to React state.
 import * as THREE from "three";
 import { sfx } from "./audio";
-import { CAR_SPAWNS, PIER_SPAWN } from "../world";
+import { CAR_SPAWNS, PIER_SPAWN, MANSION } from "../world";
 import type { VehicleState } from "../physics/GamePhysics";
 
 export interface NpcCar extends VehicleState { axis: "x" | "z"; dir: 1 | -1; lane: number; color: string; stopped: number; fleeing: number; }
-export interface Ped { x: number; z: number; heading: number; speed: number; axis: "x" | "z"; dir: 1 | -1; side: number; color: string; fleeUntil: number; swing: number; zone: string; active: boolean; }
+export interface Ped { x: number; z: number; heading: number; speed: number; axis: "x" | "z"; dir: 1 | -1; side: number; color: string; fleeUntil: number; swing: number; zone: string; active: boolean; downUntil: number; }
 export interface Cop extends VehicleState { active: boolean; lightPhase: number; }
 export type WeatherKind = "Clear" | "Cloudy" | "Rain" | "Storm" | "Fog";
-export interface PendingCrime { kind: "steal" | "hit" | "ped" | "reckless"; due: number; }
+export type CrimeKind = "steal" | "hit" | "ped" | "reckless" | "assault" | "shoot";
+export interface PendingCrime { kind: CrimeKind; due: number; }
 export const nowS = () => (typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000);
 
 export const G = {
@@ -53,15 +54,51 @@ export const G = {
   finesPaid: 0,
   toast: "",
   toastAt: 0,
+  // ---- Phase 3: cameras / swimming / interiors / combat / property ----
+  timeS: 0, // elapsed game clock (set by GameSystems every frame)
+  firstPerson: false,
+  swimming: false,
+  interior: "" as "" | "garage" | "club",
+  armed: false,
+  ammo: 0,
+  punchT: -9, // nowS() of the last punch (drives the arm-swing animation)
+  shotFx: { t: -9, mx: 0, mz: 0, hx: 0, hz: 0, hit: false }, // muzzle→hit fx
+  promptText: "",
+  promptWarn: false,
+  interact: null as null | (() => void),
+  ownsMansion: false,
+  savedCarId: -1, // G.cars index of the garage-saved car, if any
 };
 export function toast(msg: string) { G.toast = msg; G.toastAt = nowS(); }
 
-function applyCrime(kind: "steal" | "hit" | "ped" | "reckless") {
-  if (G.crimeCooldown > 0 && kind !== "ped") return;
+// ---- Phase 3 persistence: mansion ownership + garage-saved car ----
+export interface SavedCar { kind: string; color: string; x: number; z: number; heading: number; }
+export function loadSavedCar(): SavedCar | null {
+  try { const raw = localStorage.getItem("harborfall-garage-car"); if (raw) return JSON.parse(raw) as SavedCar; } catch { /* ignore */ }
+  return null;
+}
+export function persistSavedCar(c: SavedCar | null) {
+  try { if (c) localStorage.setItem("harborfall-garage-car", JSON.stringify(c)); else localStorage.removeItem("harborfall-garage-car"); } catch { /* ignore */ }
+}
+try {
+  G.ownsMansion = localStorage.getItem("harborfall-mansion") === "1";
+  const saved = loadSavedCar();
+  if (saved) {
+    G.cars.push({
+      id: G.cars.length, x: saved.x, z: saved.z, heading: saved.heading, color: saved.color,
+      model: "Garage-kept", kind: saved.kind as typeof G.cars[number]["kind"], owned: true,
+      state: { x: saved.x, z: saved.z, heading: saved.heading, speed: 0 }, stolen: false, damage: 0, fuel: 85,
+    });
+    G.savedCarId = G.cars.length - 1;
+  }
+} catch { /* storage unavailable */ }
+
+function applyCrime(kind: CrimeKind) {
+  if (G.crimeCooldown > 0 && kind !== "ped" && kind !== "shoot") return;
   G.crimeCooldown = 4;
-  const inc = kind === "ped" ? 2 : 1;
   const before = G.wanted;
-  G.wanted = Math.min(5, G.wanted + inc);
+  if (kind === "shoot") G.wanted = Math.min(5, Math.max(G.wanted + 1, 2)); // gunfire: 2★ minimum
+  else G.wanted = Math.min(5, G.wanted + (kind === "ped" ? 2 : 1));
   if (G.wanted > before) sfx.star();
   G.wantedCooldown = 0;
   if (kind === "ped") G.health = Math.max(0, G.health - 4);
@@ -75,8 +112,8 @@ function applyCrime(kind: "steal" | "hit" | "ped" | "reckless") {
  * processPendingCrimes() applies it). Hitting a pedestrian is witnessed by
  * the victim, so it applies immediately. No witness = no report.
  */
-export function addCrime(kind: "steal" | "hit" | "ped" | "reckless") {
-  if (kind === "ped") { applyCrime(kind); return; }
+export function addCrime(kind: CrimeKind) {
+  if (kind === "ped" || kind === "shoot") { applyCrime(kind); return; } // victim/gunfire: known at once
   const px = G.followPos.x, pz = G.followPos.z;
   let wi = -1; let wd = 26 ** 2;
   G.peds.forEach((p, i) => { const d = (p.x - px) ** 2 + (p.z - pz) ** 2; if (d < wd) { wd = d; wi = i; } });
@@ -96,18 +133,24 @@ export function processPendingCrimes() {
   if (t > G.witnessUntil) G.reportingPed = -1;
 }
 
+function respawnPoint() {
+  // villa owners wake up at home; everyone else gets the hospital corner
+  if (G.ownsMansion) G.playerPos.set(MANSION.x + 9, 0, MANSION.z + 9);
+  else G.playerPos.set(-100, 0, 100);
+  G.interior = "";
+}
 export function resetAfterArrest(fine: number) {
   G.finesPaid += Math.min(fine, G.cash);
   G.cash = Math.max(0, G.cash - fine);
   G.wanted = 0; G.bustTimer = 0; G.health = Math.max(60, G.health);
   G.driving = false; G.activeCarId = -1;
-  G.playerPos.set(-100, 0, 100);
+  respawnPoint();
   for (const c of G.cops) c.active = false;
 }
 export function resetAfterWasted() {
   G.finesPaid += Math.min(100, G.cash);
   G.cash = Math.max(0, G.cash - 100);
   G.wanted = 0; G.health = 100; G.driving = false; G.activeCarId = -1;
-  G.playerPos.set(-100, 0, 100);
+  respawnPoint();
   for (const c of G.cops) c.active = false;
 }

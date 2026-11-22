@@ -8,18 +8,35 @@ import {
   asphaltTexture, asphaltTextureH, concreteTexture, concreteTextureH,
   facadeTexture, brickTexture, containerTexture, streetSignTexture, neonSignTexture,
   grassTexture, sandTexture, palmFrondTexture, glowTexture, cloudTexture,
+  arrowTexture, oilTexture,
 } from "../textures";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 
 // ---------- local canvas textures ----------
 function makeWindowTexture(): THREE.CanvasTexture {
-  const c = document.createElement("canvas"); c.width = 64; c.height = 128;
+  // Phase 3: windows with DEPTH — frame shading (lit top edge, dark sill),
+  // a glass gradient per pane, and lived-in variance: some panes warm-lit,
+  // some with half-drawn blinds, most dark reflective blue-grey.
+  const c = document.createElement("canvas"); c.width = 96; c.height = 192;
   const g = c.getContext("2d")!;
-  g.fillStyle = "#20262b"; g.fillRect(0, 0, 64, 128);
-  for (let y = 6; y < 120; y += 14) for (let x = 6; x < 58; x += 14) {
-    g.fillStyle = Math.random() > 0.45 ? "#ffd98a" : "#3a4a52";
-    g.fillRect(x, y, 8, 9);
+  let s = 1234; const rnd = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+  g.fillStyle = "#181d21"; g.fillRect(0, 0, 96, 192);
+  for (let y = 5; y < 182; y += 15) for (let x = 5; x < 88; x += 15) {
+    const r = rnd();
+    // frame
+    g.fillStyle = "#05070a"; g.fillRect(x - 1.5, y - 1.5, 11, 12);
+    g.fillStyle = "rgba(235,240,244,0.5)"; g.fillRect(x - 1.5, y - 1.5, 11, 1.2);
+    if (r < 0.16) { g.fillStyle = "#ffd98a"; g.fillRect(x, y, 8, 9); } // warm lit room
+    else if (r < 0.24) { // half-drawn blinds over dim glass
+      g.fillStyle = "#46545e"; g.fillRect(x, y, 8, 9);
+      g.fillStyle = "#cfd6da"; for (let b = 0; b < 4; b++) g.fillRect(x, y + b * 1.6, 8, 0.9);
+    } else { // dark glass with a top-to-bottom sheen gradient
+      const gr = g.createLinearGradient(x, y, x, y + 9);
+      gr.addColorStop(0, "#5d7482"); gr.addColorStop(0.45, "#33424c"); gr.addColorStop(1, "#232e36");
+      g.fillStyle = gr; g.fillRect(x, y, 8, 9);
+    }
+    g.fillStyle = "rgba(0,0,0,0.45)"; g.fillRect(x - 1.5, y + 10, 11, 1.4); // sill shadow
   }
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
 }
@@ -57,6 +74,7 @@ function makeSkyTexture(): THREE.CanvasTexture {
 }
 const SIGNS: { text: string; bg: string; fg: string; pos: [number, number, number]; rot: number }[] = [
   { text: "LINA'S GARAGE", bg: "#0f4442", fg: "#ffca7a", pos: [-40, 6, -27], rot: 0 },
+  { text: "LINA'S GARAGE", bg: "#0f4442", fg: "#ffca7a", pos: [-25, 5.6, 102.1], rot: Math.PI },
   { text: "SOLANO TRUCKING", bg: "#5a3a14", fg: "#ffd98a", pos: [60, 9, 93], rot: Math.PI },
   { text: "PORT SABLE", bg: "#14524f", fg: "#ffffff", pos: [0, 7, 118], rot: Math.PI },
   { text: "SABLE FISH CO.", bg: "#274268", fg: "#ffe9a8", pos: [-80, 5, 93], rot: Math.PI },
@@ -229,6 +247,11 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       }
       drains.push({ p: [ix + 6.35, 0.07, iz - 7.4], s: [1, 1, 1] });
       drains.push({ p: [ix - 6.35, 0.07, iz + 7.4], s: [1, 1, 1] });
+      // stop bars just before each crosswalk entry (Phase 3)
+      stripes.push({ p: [ix + 2.8, 0.076, iz - 9.9], s: [2.7, 0.018, 0.55] });
+      stripes.push({ p: [ix - 2.8, 0.076, iz + 9.9], s: [2.7, 0.018, 0.55] });
+      stripes.push({ p: [ix - 9.9, 0.076, iz + 2.8], s: [0.55, 0.018, 2.7] });
+      stripes.push({ p: [ix + 9.9, 0.076, iz - 2.8], s: [0.55, 0.018, 2.7] });
     }
     for (let i = 0; i < 44; i++) {
       const c = ROAD_COORDS[Math.floor(srnd() * 6)]; const along = -110 + srnd() * 220; const off = (srnd() - 0.5) * 7;
@@ -241,6 +264,91 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       holes: buildInstanced(new THREE.CylinderGeometry(0.5, 0.5, 0.03, 14), new THREE.MeshStandardMaterial({ color: "#1d1e20", roughness: 0.55, metalness: 0.35 }), holes),
       patches: buildInstanced(new THREE.BoxGeometry(1, 0.016, 1), new THREE.MeshStandardMaterial({ color: "#232326", roughness: 1 }), patches),
       drains: buildInstanced(new THREE.BoxGeometry(0.4, 0.05, 1.1), new THREE.MeshStandardMaterial({ color: "#17181a", roughness: 0.6, metalness: 0.3 }), drains),
+    };
+  }, []);
+
+  // ---- Phase 3 ground decals: direction arrows at every intersection
+  // approach, oil stains on the asphalt, and rain puddles (opacity follows
+  // G.rainAmt in useFrame). All instanced — 3 draw calls total.
+  const puddleMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color: "#33424e", roughness: 0.05, metalness: 0.4, envMapIntensity: 1.6,
+    transparent: true, opacity: 0, depthWrite: false,
+  }), []);
+  const decals = useMemo(() => {
+    const build = (geo: THREE.BufferGeometry, mat: THREE.Material, items: { x: number; z: number; s: number; sy?: number; ry: number }[]) => {
+      const im = new THREE.InstancedMesh(geo, mat, items.length);
+      const m = new THREE.Matrix4(); const q = new THREE.Quaternion(); const e = new THREE.Euler();
+      items.forEach((it, i) => {
+        e.set(-Math.PI / 2, it.ry, 0, "YXZ"); q.setFromEuler(e);
+        m.compose(new THREE.Vector3(it.x, 0.082, it.z), q, new THREE.Vector3(it.s, it.sy ?? it.s, 1));
+        im.setMatrixAt(i, m);
+      });
+      im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true;
+      return im;
+    };
+    const arrows: { x: number; z: number; s: number; sy?: number; ry: number }[] = [];
+    for (const ix of ROAD_COORDS) for (const iz of ROAD_COORDS) {
+      arrows.push({ x: ix + 2.8, z: iz - 11.5, s: 1.5, sy: 3, ry: Math.PI });   // travelling +z
+      arrows.push({ x: ix - 2.8, z: iz + 11.5, s: 1.5, sy: 3, ry: 0 });          // travelling -z
+      arrows.push({ x: ix - 11.5, z: iz + 2.8, s: 1.5, sy: 3, ry: -Math.PI / 2 }); // travelling +x
+      arrows.push({ x: ix + 11.5, z: iz - 2.8, s: 1.5, sy: 3, ry: Math.PI / 2 });  // travelling -x
+    }
+    const oils: { x: number; z: number; s: number; ry: number }[] = [];
+    const puddles: { x: number; z: number; s: number; sy?: number; ry: number }[] = [];
+    for (let i = 0; i < 36; i++) {
+      const c = ROAD_COORDS[Math.floor(srnd() * 6)]; const along = -108 + srnd() * 216; const off = (srnd() - 0.5) * 7.5;
+      if (i % 2) oils.push({ x: c + off, z: along, s: 1.6 + srnd() * 2.4, ry: srnd() * 3 });
+      else oils.push({ x: along, z: c + off, s: 1.6 + srnd() * 2.4, ry: srnd() * 3 });
+    }
+    for (let i = 0; i < 22; i++) {
+      const c = ROAD_COORDS[Math.floor(srnd() * 6)]; const along = -105 + srnd() * 210; const off = (srnd() - 0.5) * 6.5;
+      if (i % 2) puddles.push({ x: c + off, z: along, s: 1.8 + srnd() * 2.2, sy: 1.2 + srnd() * 1.6, ry: srnd() * 3 });
+      else puddles.push({ x: along, z: c + off, s: 1.8 + srnd() * 2.2, sy: 1.2 + srnd() * 1.6, ry: srnd() * 3 });
+    }
+    return {
+      arrows: build(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ map: arrowTexture(), transparent: true, roughness: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), arrows),
+      oils: build(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ map: oilTexture(), transparent: true, roughness: 0.35, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), oils),
+      puddles: build(new THREE.CircleGeometry(0.5, 14), puddleMat, puddles),
+    };
+  }, [puddleMat]);
+
+  // ---- Phase 3 street-prop scatter (instanced): grass tufts, trash bins,
+  // mail boxes, planters, port cones — density sells the street level.
+  const streetProps = useMemo(() => {
+    const onRoad = (x: number, z: number, m: number) => ROAD_COORDS.some((c) => Math.abs(x - c) < 6 + m || Math.abs(z - c) < 6 + m);
+    const inBuilding = (x: number, z: number) => buildings.some((b) => Math.abs(x - b.x) < b.width / 2 + 1.2 && Math.abs(z - b.z) < b.depth / 2 + 1.2);
+    const tufts: XForm[] = [];
+    let guard = 0;
+    while (tufts.length < 300 && guard++ < 3000) {
+      const x = -116 + srnd() * 232, z = -116 + srnd() * 228;
+      if (onRoad(x, z, 1.6) || inBuilding(x, z) || z > 112) continue;
+      if (Math.abs(x - MANSION.x) < 10 && Math.abs(z - MANSION.z) < 9) continue;
+      tufts.push({ p: [x, 0.14, z], s: [0.8 + srnd() * 0.9, 0.8 + srnd() * 1.1, 0.8 + srnd() * 0.9] });
+    }
+    const bins: XForm[] = []; const mails: XForm[] = []; const planters: XForm[] = []; const planterBush: XForm[] = [];
+    for (let i = 0; i < 18; i++) {
+      const c = ROAD_COORDS[i % 6]; const along = -102 + ((i * 41) % 204); const side = i % 2 ? 7.7 : -7.7;
+      if (i % 2) bins.push({ p: [c + side, 0.42, along], s: [1, 1, 1] }); else bins.push({ p: [along, 0.42, c + side], s: [1, 1, 1] });
+    }
+    for (let i = 0; i < 8; i++) {
+      const c = ROAD_COORDS[(i + 2) % 6]; const along = -88 + ((i * 53) % 176); const side = i % 2 ? -7.7 : 7.7;
+      if (i % 2) mails.push({ p: [along, 0.5, c + side], s: [1, 1, 1] }); else mails.push({ p: [c + side, 0.5, along], s: [1, 1, 1] });
+    }
+    for (let i = 0; i < 10; i++) {
+      const bx = [-40, 0, 40][i % 3], bz = [-40, 0, 40][Math.floor(i / 3) % 3];
+      const x = bx + (i % 2 ? 16.5 : -16.5), z = bz + 16.5;
+      planters.push({ p: [x, 0.28, z], s: [1, 1, 1] });
+      planterBush.push({ p: [x, 0.72, z], s: [1, 1, 1] });
+    }
+    const cones: XForm[] = [];
+    for (let i = 0; i < 14; i++) cones.push({ p: [38 + srnd() * 40, 0.3, 102 + srnd() * 9], s: [1, 1, 1] });
+    return {
+      tufts: buildInstanced(new THREE.ConeGeometry(0.1, 0.36, 5), new THREE.MeshStandardMaterial({ color: "#2e5c2c", roughness: 1 }), tufts),
+      bins: buildInstanced(new THREE.CylinderGeometry(0.34, 0.3, 0.84, 10), new THREE.MeshStandardMaterial({ color: "#2c4a3a", roughness: 0.7, metalness: 0.3 }), bins),
+      mails: buildInstanced(new THREE.BoxGeometry(0.62, 1, 0.5), new THREE.MeshStandardMaterial({ color: "#274b8f", roughness: 0.5, metalness: 0.3 }), mails),
+      planters: buildInstanced(new THREE.BoxGeometry(1.5, 0.55, 0.65), new THREE.MeshStandardMaterial({ color: "#5d4a38", roughness: 0.9 }), planters),
+      planterBush: buildInstanced(new THREE.IcosahedronGeometry(0.48, 1), new THREE.MeshStandardMaterial({ color: "#2c5f42", roughness: 0.95 }), planterBush),
+      cones: buildInstanced(new THREE.ConeGeometry(0.22, 0.62, 9), new THREE.MeshStandardMaterial({ color: "#e86a17", roughness: 0.6 }), cones),
     };
   }, []);
 
@@ -329,6 +437,8 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
     mats.asphaltH.roughness = rough;
     mats.asphaltV.metalness = 0.04 + night * 0.1 + G.rainAmt * 0.12;
     mats.asphaltH.metalness = mats.asphaltV.metalness;
+    // rain puddles fade in with the weather (Phase 3)
+    puddleMat.opacity = G.rainAmt * 0.88;
     // sun disc + warm glow riding the day cycle (low amber disc at dusk)
     if (sunDiscRef.current) {
       const ang = G.dayTime * Math.PI * 2 - Math.PI / 2;
@@ -435,6 +545,9 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       <primitive object={markings.holes} />
       <primitive object={markings.patches} />
       <primitive object={markings.drains} />
+      <primitive object={decals.arrows} />
+      <primitive object={decals.oils} />
+      <primitive object={decals.puddles} />
 
       {/* traffic lights at 8 intersections (cycling) */}
       {LIGHT_SPOTS.map(([ix, iz], i) => (
@@ -474,7 +587,15 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       <mesh position={[80, 0.04, -80]} receiveShadow><boxGeometry args={[32, 0.1, 32]} /><meshStandardMaterial map={grassTex} color="#a8c48e" roughness={1} /></mesh>
 
       {/* ======== BUILDINGS ======== */}
-      {buildings.map((b, i) => (
+      {buildings.map((b, i) => {
+        // which side faces the nearest street? (door + canopy + balconies go there)
+        const rv = ROAD_COORDS.reduce((a, c) => (Math.abs(c - b.x) < Math.abs(a - b.x) ? c : a), ROAD_COORDS[0]);
+        const rh = ROAD_COORDS.reduce((a, c) => (Math.abs(c - b.z) < Math.abs(a - b.z) ? c : a), ROAD_COORDS[0]);
+        const faceX = Math.abs(rv - b.x) < Math.abs(rh - b.z);
+        const fDir = faceX ? (Math.sign(rv - b.x) || 1) : (Math.sign(rh - b.z) || 1);
+        const fRot = faceX ? (fDir > 0 ? Math.PI / 2 : -Math.PI / 2) : (fDir > 0 ? 0 : Math.PI);
+        const fOff = faceX ? b.width / 2 : b.depth / 2;
+        return (
         <group key={i} position={[b.x, 0, b.z]}>
           <mesh position={[0, b.height / 2, 0]} castShadow receiveShadow>
             <boxGeometry args={[b.width, b.height, b.depth]} />
@@ -508,8 +629,50 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
               <mesh position={[0, 1.65, 0]} castShadow><coneGeometry args={[0.95, 0.5, 10]} /><meshStandardMaterial color="#5d4a38" flatShading /></mesh>
             </group>
           )}
+          {/* ---- Phase 3 facade detail ---- */}
+          {/* cornice bands at 1/3 and 2/3 height on taller blocks */}
+          {b.height > 16 && [0.38, 0.68].map((f) => (
+            <mesh key={f} position={[0, b.height * f, 0]}>
+              <boxGeometry args={[b.width + 0.24, 0.26, b.depth + 0.24]} /><meshStandardMaterial color={b.roof} roughness={0.85} />
+            </mesh>
+          ))}
+          {/* recessed entry: dark door slab + canopy on the street face */}
+          <group rotation={[0, fRot, 0]}>
+            <mesh position={[0, 1.15, fOff + 0.05]}>
+              <boxGeometry args={[1.5, 2.3, 0.12]} /><meshStandardMaterial color="#10151a" roughness={0.4} metalness={0.3} emissive="#ffca7a" emissiveIntensity={night * 0.35} />
+            </mesh>
+            <mesh position={[0, 2.52, fOff + 0.42]} rotation={[0.28, 0, 0]} castShadow>
+              <boxGeometry args={[2.3, 0.09, 1]} /><meshStandardMaterial color={i % 3 === 0 ? "#b3312c" : "#274b5e"} roughness={0.8} />
+            </mesh>
+            {/* wall-mounted AC condenser on the side wall (local +x side) */}
+            {i % 3 === 0 && (
+              <mesh position={[(faceX ? b.depth : b.width) / 2 + 0.16, b.height * 0.55, fOff * 0.35]} castShadow>
+                <boxGeometry args={[0.32, 0.65, 0.85]} /><meshStandardMaterial color="#aeb6bc" metalness={0.55} roughness={0.45} />
+              </mesh>
+            )}
+            {/* balcony slabs with railings on some mid-rises */}
+            {i % 4 === 1 && b.height > 13 && [0.42, 0.64].map((f) => (
+              <group key={f} position={[b.width * 0.22, b.height * f, fOff + 0.4]}>
+                <mesh castShadow><boxGeometry args={[2.1, 0.1, 0.85]} /><meshStandardMaterial color="#59616a" metalness={0.4} roughness={0.5} /></mesh>
+                <mesh position={[0, 0.32, 0.4]}><boxGeometry args={[2.1, 0.5, 0.05]} /><meshStandardMaterial color="#39434b" metalness={0.5} roughness={0.4} /></mesh>
+              </group>
+            ))}
+          </group>
+          {/* stepped annex on some towers — footprint variety (L/step massing) */}
+          {i % 9 === 4 && b.height > 20 && (
+            <group position={[b.width * 0.34, 0, b.depth * 0.3]}>
+              <mesh position={[0, b.height * 0.22, 0]} castShadow receiveShadow>
+                <boxGeometry args={[b.width * 0.52, b.height * 0.44, b.depth * 0.52]} />
+                <primitive object={buildingMats[i]} attach="material" />
+              </mesh>
+              <mesh position={[0, b.height * 0.45, 0]} castShadow>
+                <boxGeometry args={[b.width * 0.58, 0.26, b.depth * 0.58]} /><meshStandardMaterial color={b.roof} roughness={0.85} />
+              </mesh>
+            </group>
+          )}
         </group>
-      ))}
+        );
+      })}
       {/* suburb houses */}
       {houses.map((h, i) => (
         <group key={i} position={[h.x, 0, h.z]} rotation={[0, h.rot, 0]}>
@@ -894,9 +1057,8 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
         ))}
       </group>
 
-      {/* ======== parked motorcycles (props, non-drivable) ======== */}
+      {/* ======== parked motorcycle (prop — the beach one is rideable now) ======== */}
       {[
-        { pos: [8, 117] as const, rot: -0.4, color: "#c22e2e" },
         { pos: [-35, -29] as const, rot: 0.7, color: "#274268" },
       ].map((m, i) => (
         <group key={i} position={[m.pos[0], 0, m.pos[1]]} rotation={[0, m.rot, 0]}>
@@ -909,6 +1071,117 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
           <mesh position={[0, 1.12, 0.95]}><boxGeometry args={[0.55, 0.07, 0.07]} /><meshStandardMaterial color="#22262b" /></mesh>
         </group>
       ))}
+
+      {/* ======== Phase 3: Lina's Garage — exterior (enterable, see Interiors) ======== */}
+      <group position={[-25, 0, 106.5]}>
+        <mesh position={[0, 2.6, 0]} castShadow receiveShadow>
+          <boxGeometry args={[12, 5.2, 8]} /><meshStandardMaterial color="#b57e4e" roughness={0.9} />
+        </mesh>
+        <mesh position={[0, 5.35, 0]} castShadow><boxGeometry args={[12.4, 0.3, 8.4]} /><meshStandardMaterial color="#4c3b28" roughness={0.9} /></mesh>
+        {/* roller shutter (front, facing the Docks road) */}
+        <mesh position={[-2.2, 1.6, -4.06]}><boxGeometry args={[5, 3.2, 0.12]} /><meshStandardMaterial color="#7d8894" metalness={0.55} roughness={0.45} /></mesh>
+        {[-1.2, -0.5, 0.2, 0.9].map((y) => (
+          <mesh key={y} position={[-2.2, 1.6 + y, -4.13]}><boxGeometry args={[5, 0.05, 0.03]} /><meshStandardMaterial color="#59616a" metalness={0.5} roughness={0.5} /></mesh>
+        ))}
+        {/* personnel door — the way in */}
+        <mesh position={[3.4, 1.1, -4.06]}><boxGeometry args={[1.1, 2.2, 0.12]} /><meshStandardMaterial color="#22303a" roughness={0.5} metalness={0.3} /></mesh>
+        <mesh position={[3.4, 2.42, -4.1]}><boxGeometry args={[1.5, 0.35, 0.06]} /><meshStandardMaterial color="#ffca7a" emissive="#ffca7a" emissiveIntensity={night * 1.6 + 0.15} /></mesh>
+        {/* tyres + crates stacked beside the building */}
+        {[[6.8, -3], [6.8, -1.9], [7.6, -2.5]].map(([x, z], i) => (
+          <mesh key={i} position={[x, 0.31, z]} rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[0.31, 0.31, 0.22, 12]} /><meshStandardMaterial color="#17181a" roughness={0.95} /></mesh>
+        ))}
+        <mesh position={[-6.9, 0.45, -2.6]} castShadow><boxGeometry args={[0.95, 0.9, 0.95]} /><meshStandardMaterial color="#a3764f" roughness={0.9} /></mesh>
+      </group>
+
+      {/* ======== Phase 3 ground life: park paths + wet sand band ======== */}
+      <group position={[80, 0, -80]}>
+        <mesh position={[0, 0.045, 0]} receiveShadow><boxGeometry args={[34, 0.05, 2.6]} /><meshStandardMaterial color="#c9bb9e" roughness={1} /></mesh>
+        <mesh position={[0, 0.045, 0]} receiveShadow><boxGeometry args={[2.6, 0.05, 34]} /><meshStandardMaterial color="#c9bb9e" roughness={1} /></mesh>
+        <mesh position={[0, 0.05, 0]} receiveShadow><cylinderGeometry args={[3, 3, 0.05, 18]} /><meshStandardMaterial color="#c9bb9e" roughness={1} /></mesh>
+      </group>
+      <mesh position={[0, 0.045, 128.2]} receiveShadow>
+        <boxGeometry args={[292, 0.05, 4.4]} /><meshStandardMaterial color="#b08e5e" roughness={0.35} />
+      </mesh>
+
+      {/* ======== Phase 3 street props (instanced) ======== */}
+      <primitive object={streetProps.tufts} />
+      <primitive object={streetProps.bins} />
+      <primitive object={streetProps.mails} />
+      <primitive object={streetProps.planters} />
+      <primitive object={streetProps.planterBush} />
+      <primitive object={streetProps.cones} />
+
+      {/* bus stops x3: posts, roof, glass back, bench, sign */}
+      {[
+        { x: 27.7, z: -30, rot: Math.PI / 2 }, { x: -67.7, z: 14, rot: -Math.PI / 2 }, { x: 34, z: 67.7, rot: Math.PI },
+      ].map((s, i) => (
+        <group key={i} position={[s.x, 0, s.z]} rotation={[0, s.rot, 0]}>
+          {[-1.5, 1.5].map((x) => <mesh key={x} position={[x, 1.25, 0]} castShadow><boxGeometry args={[0.09, 2.5, 0.09]} /><meshStandardMaterial color="#39434b" metalness={0.6} roughness={0.4} /></mesh>)}
+          <mesh position={[0, 2.55, 0.1]} castShadow><boxGeometry args={[3.6, 0.08, 1.3]} /><meshStandardMaterial color="#274b5e" roughness={0.6} /></mesh>
+          <mesh position={[0, 1.3, -0.5]}><boxGeometry args={[3.4, 2, 0.04]} /><meshStandardMaterial color="#bcd6de" transparent opacity={0.32} roughness={0.1} metalness={0.4} /></mesh>
+          <mesh position={[0, 0.5, 0.15]} castShadow><boxGeometry args={[2.8, 0.08, 0.45]} /><meshStandardMaterial color="#6d4c33" roughness={0.85} /></mesh>
+          <mesh position={[1.95, 1.5, 0]}><cylinderGeometry args={[0.035, 0.035, 3, 6]} /><meshStandardMaterial color="#39434b" metalness={0.6} roughness={0.4} /></mesh>
+          <mesh position={[1.95, 2.9, 0]}><boxGeometry args={[0.55, 0.55, 0.05]} /><meshStandardMaterial color="#2e7fb8" emissive="#2e7fb8" emissiveIntensity={night * 0.7} /></mesh>
+        </group>
+      ))}
+
+      {/* dumpsters by the alleys */}
+      {[[-52, -38], [12, 52], [68, -32], [-14, -68]].map(([x, z], i) => (
+        <group key={i} position={[x, 0, z]} rotation={[0, i * 0.8, 0]}>
+          <mesh position={[0, 0.65, 0]} castShadow><boxGeometry args={[2.2, 1.3, 1.25]} /><meshStandardMaterial color="#2e5c46" roughness={0.7} metalness={0.35} /></mesh>
+          <mesh position={[0, 1.36, -0.1]} rotation={[-0.16, 0, 0]}><boxGeometry args={[2.2, 0.08, 1.15]} /><meshStandardMaterial color="#24493a" roughness={0.7} metalness={0.35} /></mesh>
+        </group>
+      ))}
+
+      {/* parked bicycles x4: torus wheels + tube frame */}
+      {[
+        { x: 12.5, z: 116.5, rot: 0.4 }, { x: -30, z: 26.9, rot: -0.2 }, { x: 52.5, z: -27.1, rot: 0.9 }, { x: -66.2, z: 86, rot: -0.6 },
+      ].map((b, i) => (
+        <group key={i} position={[b.x, 0, b.z]} rotation={[0, b.rot, 0.1]}>
+          {[-0.52, 0.52].map((dz) => (
+            <mesh key={dz} position={[0, 0.33, dz]}><torusGeometry args={[0.33, 0.028, 6, 14]} /><meshStandardMaterial color="#22262b" roughness={0.6} metalness={0.4} /></mesh>
+          ))}
+          <mesh position={[0, 0.55, -0.05]} rotation={[1.1, 0, 0]}><cylinderGeometry args={[0.03, 0.03, 0.75, 6]} /><meshStandardMaterial color={["#c22e2e", "#274268", "#39b56a", "#d99a3d"][i]} metalness={0.5} roughness={0.35} /></mesh>
+          <mesh position={[0, 0.78, -0.42]}><boxGeometry args={[0.24, 0.06, 0.3]} /><meshStandardMaterial color="#191b1d" /></mesh>
+          <mesh position={[0, 0.85, 0.55]}><boxGeometry args={[0.4, 0.05, 0.05]} /><meshStandardMaterial color="#22262b" /></mesh>
+        </group>
+      ))}
+
+      {/* fire hydrants */}
+      {[[27.6, 48], [-27.6, -52], [67.6, 22], [-67.6, -64], [12, 107.4], [-48, 107.4]].map(([x, z], i) => (
+        <group key={i} position={[x, 0, z]}>
+          <mesh position={[0, 0.32, 0]} castShadow><cylinderGeometry args={[0.13, 0.16, 0.64, 8]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+          <mesh position={[0, 0.7, 0]}><sphereGeometry args={[0.13, 8, 6]} /><meshStandardMaterial color="#a82323" roughness={0.5} /></mesh>
+          <mesh position={[0, 0.45, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.06, 0.06, 0.4, 6]} /><meshStandardMaterial color="#8f1d1d" roughness={0.5} /></mesh>
+        </group>
+      ))}
+
+      {/* newspaper boxes near the market row */}
+      {[[16.5, -33], [17.4, -33], [-23.5, 33.2], [56.5, -6.8]].map(([x, z], i) => (
+        <mesh key={i} position={[x, 0.5, z]} castShadow>
+          <boxGeometry args={[0.55, 1, 0.5]} /><meshStandardMaterial color={["#c22e2e", "#2e7fb8", "#d99a3d", "#39b56a"][i]} roughness={0.45} metalness={0.3} />
+        </mesh>
+      ))}
+
+      {/* ======== Phase 3 distance depth: far skyline silhouette ring +
+           a second, hazier bridge on the horizon ======== */}
+      <group>
+        {Array.from({ length: 26 }, (_, i) => {
+          const a = (i / 26) * Math.PI * 2 + 0.12;
+          const r = 238 + ((i * 37) % 22);
+          const h = 20 + ((i * 53) % 42);
+          return (
+            <mesh key={i} position={[Math.sin(a) * r, h / 2 - 2, Math.cos(a) * r]}>
+              <boxGeometry args={[15 + (i % 4) * 5, h, 12]} />
+              <meshBasicMaterial color="#546a76" fog={false} />
+            </mesh>
+          );
+        })}
+        <group position={[-150, 0, 225]} rotation={[0, 0.5, 0]}>
+          <mesh position={[0, 7, 0]}><boxGeometry args={[170, 2.2, 8]} /><meshBasicMaterial color="#475c66" fog={false} /></mesh>
+          {[-45, 45].map((x) => <mesh key={x} position={[x, 20, 0]}><boxGeometry args={[4, 28, 5]} /><meshBasicMaterial color="#475c66" fog={false} /></mesh>)}
+        </group>
+      </group>
     </group>
   );
 }

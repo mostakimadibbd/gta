@@ -86,6 +86,13 @@ export default function Vehicle(p: Props) {
       const throttle = (Number(k.has("w")) - Number(k.has("s"))) * power;
       const steering = Number(k.has("a")) - Number(k.has("d"));
       const next = physicsRef.current.stepVehicle(car.state, throttle, steering, k.has(" "), delta);
+      // ---- Phase 3: motorcycle character — harder launch, higher top end,
+      // tighter turning (heading bias applied post-step, arcade style) ----
+      if (car.kind === "motorcycle") {
+        if (throttle > 0 && !wrecked && !empty) next.speed = Math.min(29, next.speed + 7.5 * dt * throttle);
+        const sf = THREE.MathUtils.clamp(Math.abs(next.speed) / 4, 0.18, 1);
+        next.heading += steering * 2.0 * sf * dt * (next.speed < 0 ? -1 : 1);
+      }
       next.x = THREE.MathUtils.clamp(next.x, -122, 122);
       next.z = THREE.MathUtils.clamp(next.z, -122, 126);
       if (isBlocked(next.x, next.z, 1.3)) {
@@ -98,8 +105,8 @@ export default function Vehicle(p: Props) {
         next.x = car.state.x; next.z = car.state.z; next.speed = -car.state.speed * 0.25;
       } else wasBlocked.current = false;
       car.state = next;
-      // fuel drain while actually moving
-      if (Math.abs(next.speed) > 0.5 && car.fuel > 0) car.fuel = Math.max(0, car.fuel - dt * (0.1 + Math.abs(next.speed) * 0.018));
+      // fuel drain while actually moving (the bike's tank is small: % drains faster)
+      if (Math.abs(next.speed) > 0.5 && car.fuel > 0) car.fuel = Math.max(0, car.fuel - dt * (0.1 + Math.abs(next.speed) * 0.018) * (car.kind === "motorcycle" ? 1.7 : 1));
       // ---- refuel: parked at a pump, tank fills for cash ----
       let atPump = false;
       if (Math.abs(next.speed) < 1.2 && car.fuel < 99.5) {
@@ -178,7 +185,17 @@ export default function Vehicle(p: Props) {
     } else if (nearRef.current) { nearRef.current = false; refs.current.onNearVehicleChange(false); }
     G.cars.forEach((c, i) => {
       const g = groups.current[i]; if (!g) return;
-      g.position.set(c.state.x, 0, c.state.z); g.rotation.y = c.state.heading;
+      g.position.set(c.state.x, 0, c.state.z);
+      if (c.kind === "motorcycle") {
+        // bank into turns ∝ steering × speed; wheelie-lite pitch on launch
+        const active = G.driving && G.activeCarId === i && !paused;
+        const steer = active ? Number(keys.current.has("a")) - Number(keys.current.has("d")) : 0;
+        const sf = THREE.MathUtils.clamp(Math.abs(c.state.speed) / 22, 0, 1);
+        const lean = -steer * sf * 0.48;
+        const launching = active && keys.current.has("w") && c.state.speed > 0.5 && c.state.speed < 7;
+        g.rotation.order = "YXZ";
+        g.rotation.set(launching ? -0.1 : 0, c.state.heading, lean);
+      } else g.rotation.y = c.state.heading;
     });
   });
 

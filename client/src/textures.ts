@@ -145,9 +145,21 @@ export function facadeTexture(): THREE.CanvasTexture {
   const rnd = mulberry32(303);
   const [c, g] = canvas(512);
   grain(g, 512, 512, [216, 213, 207], 7, rnd);
-  // panel seams
+  // vertical light gradient: sun-caught top, shaded base — panels read as
+  // surfaces with depth instead of flat colour (Phase 3 facade pass)
+  const vgrad = g.createLinearGradient(0, 0, 0, 512);
+  vgrad.addColorStop(0, "rgba(255,252,244,0.20)"); vgrad.addColorStop(0.5, "rgba(255,255,255,0)");
+  vgrad.addColorStop(1, "rgba(30,28,24,0.22)");
+  g.fillStyle = vgrad; g.fillRect(0, 0, 512, 512);
+  // per-panel tonal variance (each cladding panel catches light differently)
+  for (let row = 0; row < 8; row++) for (let col = 0; col < 4; col++) {
+    const v = (rnd() - 0.5) * 0.13;
+    g.fillStyle = v > 0 ? `rgba(255,255,250,${v})` : `rgba(20,18,16,${-v})`;
+    g.fillRect(col * 128, row * 64, 128, 64);
+  }
+  // panel seams — dark groove + 1px highlight under it (embossed depth)
   g.fillStyle = "rgba(60,58,54,0.35)";
-  for (let y = 0; y <= 512; y += 64) g.fillRect(0, y, 512, 2);
+  for (let y = 0; y <= 512; y += 64) { g.fillRect(0, y, 512, 2); g.fillStyle = "rgba(255,255,255,0.20)"; g.fillRect(0, y + 2, 512, 1); g.fillStyle = "rgba(60,58,54,0.35)"; }
   for (let row = 0; row < 8; row++) for (let x = (row % 2) * 128; x <= 512; x += 256) g.fillRect(x, row * 64, 2, 64);
   // weather streaks
   for (let i = 0; i < 26; i++) {
@@ -176,6 +188,9 @@ export function brickTexture(): THREE.CanvasTexture {
       const shade = 216 + Math.floor((rnd() - 0.5) * 22);
       g.fillStyle = `rgb(${shade},${Math.floor(shade * 0.94)},${Math.floor(shade * 0.88)})`;
       g.fillRect(x * bw + off + 2, row * bh + 2, bw - 4, bh - 4);
+      // per-brick gradient: lit top edge, shadowed bottom edge (Phase 3)
+      g.fillStyle = "rgba(255,246,235,0.16)"; g.fillRect(x * bw + off + 2, row * bh + 2, bw - 4, 2);
+      g.fillStyle = "rgba(40,26,18,0.20)"; g.fillRect(x * bw + off + 2, row * bh + bh - 5, bw - 4, 3);
     }
   }
   stains(g, 512, 512, 4, "#6b5a48", 0.06, rnd);
@@ -340,12 +355,18 @@ export function grassTexture(): THREE.CanvasTexture {
   const rnd = mulberry32(111);
   const [c, g] = canvas(512);
   grain(g, 512, 512, [74, 104, 58], 15, rnd);
+  // mow stripes: subtle alternating bands (Phase 3 ground detail)
+  for (let i = 0; i < 8; i += 2) { g.fillStyle = "rgba(255,255,230,0.055)"; g.fillRect(0, i * 64, 512, 64); }
   for (let i = 0; i < 2600; i++) {
     g.strokeStyle = `rgba(${30 + rnd() * 40},${70 + rnd() * 50},${28 + rnd() * 26},0.5)`;
     const x = rnd() * 512, y = rnd() * 512;
     g.beginPath(); g.moveTo(x, y); g.lineTo(x + (rnd() - 0.5) * 3, y - 2 - rnd() * 3); g.stroke();
   }
   stains(g, 512, 512, 5, "#5d7038", 0.10, rnd);
+  // worn dirt patches — bare earth showing through (Phase 3)
+  stains(g, 512, 512, 6, "#6e5a3a", 0.16, rnd);
+  stains(g, 512, 512, 4, "#7d6a42", 0.12, rnd);
+  stains(g, 512, 512, 5, "#42582e", 0.14, rnd);
   _grass = finish(c, 26, 26);
   return _grass;
 }
@@ -413,6 +434,46 @@ export function tyreTexture(): THREE.CanvasTexture {
   g.fillStyle = "rgba(120,120,124,0.20)"; g.fillRect(0, 4, 256, 2); g.fillRect(0, 58, 256, 2); // sidewall rings
   _tyre = finish(c, 3, 1);
   return _tyre;
+}
+
+// ---- road arrow decal: worn white turn/straight arrow (Phase 3) ----
+let _arrow: THREE.CanvasTexture | undefined;
+export function arrowTexture(): THREE.CanvasTexture {
+  if (_arrow) return _arrow;
+  const rnd = mulberry32(1212);
+  const [c, g] = canvas(128, 256);
+  g.clearRect(0, 0, 128, 256);
+  g.fillStyle = "rgba(240,238,230,0.92)";
+  // shaft + head (pointing UP = toward canvas top)
+  g.fillRect(54, 92, 20, 150);
+  g.beginPath(); g.moveTo(64, 8); g.lineTo(116, 96); g.lineTo(80, 96); g.lineTo(80, 130); g.lineTo(48, 130); g.lineTo(48, 96); g.lineTo(12, 96); g.closePath(); g.fill();
+  // wear: knock out speckles so it reads as old paint
+  g.globalCompositeOperation = "destination-out";
+  for (let i = 0; i < 260; i++) { g.globalAlpha = 0.25 + rnd() * 0.5; g.fillRect(rnd() * 128, rnd() * 256, 1 + rnd() * 3, 1 + rnd() * 3); }
+  g.globalCompositeOperation = "source-over"; g.globalAlpha = 1;
+  const t = finish(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  _arrow = t;
+  return _arrow;
+}
+
+// ---- oil stain decal: soft dark blot with a rainbow-sheen rim (Phase 3) ----
+let _oil: THREE.CanvasTexture | undefined;
+export function oilTexture(): THREE.CanvasTexture {
+  if (_oil) return _oil;
+  const rnd = mulberry32(1313);
+  const [c, g] = canvas(128);
+  g.clearRect(0, 0, 128, 128);
+  for (let i = 0; i < 7; i++) {
+    const x = 34 + rnd() * 60, y = 34 + rnd() * 60, r = 14 + rnd() * 26;
+    const gr = g.createRadialGradient(x, y, 1, x, y, r);
+    gr.addColorStop(0, "rgba(12,12,16,0.55)"); gr.addColorStop(0.75, "rgba(14,14,18,0.30)"); gr.addColorStop(1, "rgba(14,14,18,0)");
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  const t = finish(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  _oil = t;
+  return _oil;
 }
 
 // ---- cloud puffs: overlapping soft blobs, warm-white (tinted at runtime) ----

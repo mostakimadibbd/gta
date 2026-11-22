@@ -88,6 +88,26 @@ body,
   font-size: 13px;
 }
 
+/* Phase 3: can't-afford / warning variant (e.g. villa price in red) */
+.interaction-prompt.warn {
+  border-color: #e0525270;
+  color: #ff9d9d;
+}
+
+/* Phase 3: pistol ammo counter in the HUD */
+.ammo-chip {
+  margin-top: 4px;
+  padding: 3px 9px;
+  border: 1px solid #f0c76770;
+  border-radius: 999px;
+  background: #18212dd9;
+  color: #ffe4a0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+
 .status-dot {
   display: inline-block;
   width: 7px;

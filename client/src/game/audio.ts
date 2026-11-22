@@ -70,6 +70,11 @@ export const sfx = {
     noiseBurst(0.18, 0.16, 300);
   },
   fuel() { blip(520, 0.09, "sine", 0.1); blip(660, 0.09, "sine", 0.1, 0.11); blip(880, 0.14, "triangle", 0.12, 0.22); },
+  // ---- Phase 3 combat / water ----
+  punch() { noiseBurst(0.09, 0.13, 1400); blip(180, 0.07, "sine", 0.08, 0, -70); }, // fist swish + body
+  shot() { noiseBurst(0.16, 0.4, 3400); blip(150, 0.14, "sawtooth", 0.2, 0, -95); noiseBurst(0.3, 0.1, 700, ); }, // pistol crack + tail
+  dryFire() { blip(1200, 0.04, "square", 0.07); blip(900, 0.05, "square", 0.06, 0.05); },
+  splash() { noiseBurst(0.45, 0.2, 900); blip(320, 0.3, "sine", 0.07, 0.05, -140); noiseBurst(0.3, 0.1, 1600); },
 };
 export function isMenuThemePlaying() { return themeTimer !== null; }
 // ---------------------------------------------------------------------------

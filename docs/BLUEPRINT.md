@@ -14,8 +14,10 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ✅ Landmark scenes: ferris wheel, beach + lifeguard hut, suburb houses + mansion, industrial port (cranes/containers/ships), airport scenery, highway gantry, nightclub exterior, countryside corner, "PORT SABLE" hillside sign
 - ✅ Bay Bridge over the harbour + hazy far-shore skyline (Phase 2, scenery)
 - ✅ Scenic hillside overlook with parked silver supercar (Phase 2)
-- 🟡 Safehouses — the pier spawn + hospital respawn exist; ownable safehouses planned (Phase 4)
-- ⬜ Building interiors (Phase 5 — big cost, only a few hero interiors)
+- ✅ Safehouses — buy the Sable Heights Villa ($7,500): respawn moves there and its drive is a garage save point (Phase 3)
+- 🟡 Building interiors — two hero interiors shipped: Lina's Garage + Club Solace, entered via door prompts (Phase 3); more interiors planned (Phase 5)
+- ✅ Facade & street detail pass: window depth/blinds/lit variance, cornices, doors + canopies, wall AC, balconies, stepped annexes; grass tufts, park paths, wet sand, road arrows + stop bars, oil stains, rain puddles, hydrants/mail/bus stops/dumpsters/bicycles (Phase 3)
+- ✅ Distance depth: far skyline silhouette ring + second bridge silhouette on the horizon (Phase 3)
 - ⬜ Second island / expanded map (Phase 6)
 
 ## 2. Characters
@@ -28,12 +30,12 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ⬜ Character customisation (clothes/hair shops) (Phase 5)
 
 ## 3. Vehicles
-- ✅ 11 drivable cars in 9 classes (sedan, hatch, coupe, pickup, van, supercar, muscle, SUV, classic) + gold mansion supercar
+- ✅ 11 drivable cars in 9 classes (sedan, hatch, coupe, pickup, van, supercar, muscle, SUV, classic) + rideable motorcycle + gold mansion supercar
 - ✅ Steal any parked car; traffic cars react/flee
 - ✅ Vehicle damage 0–100: engine smoke >60, power loss, wrecked at 100 (Phase 2)
 - ✅ Fuel per car, HUD gauge, 3 fuel stations that refill for cash (Phase 2)
 - ✅ Glossy paint with environment reflections, tread tyres, glowing lights; burnout/drift tyre smoke (Phase 2)
-- 🟡 Motorcycles — parked props only; rideable bikes planned (Phase 4)
+- ✅ Motorcycles — the beach Sable Stinger is rideable: seated rider, lean-in cornering, wheelie-lite launch, faster + tighter than cars, small tank (Phase 3)
 - ⬜ Boats you can drive (Phase 5) · ⬜ Vehicle customisation (Phase 5)
 
 ## 4. Police & Wanted
@@ -47,8 +49,8 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ⬜ Spike strips, police boats (Phase 5)
 
 ## 5. Combat
-- ⬜ Melee + firearms (Phase 4 — the current game is deliberately non-graphic: knock-aside collisions, no gore)
-- ⬜ Cover system, weapon wheel (Phase 4, with combat)
+- ✅ Combat lite (Phase 3): punch (click/J) with witness-based assault crime, peds tip over then flee; pistol pickups (villa + docks), hitscan fire with tracer/muzzle flash/sparks, ammo HUD — arcade, no gore
+- ⬜ Cover system, weapon wheel (Phase 5)
 - ✅ Non-lethal conflict today: wanted system, busted/wasted outcomes, fines & hospital bills
 
 ## 6. Missions & Story
@@ -63,7 +65,7 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ✅ Cash, mission payouts, collectible income
 - ✅ Spending: fines, hospital bills, fuel (Phase 2)
 - ✅ Lifetime earnings + fines tracked in SableBank (phone), persisted (Phase 2)
-- ⬜ Property/business ownership, car purchases (Phase 4–5)
+- ✅ Property ownership — Sable Heights Villa buyable for $7,500 at its gate; SableBank records the purchase; garage drive persists one car across sessions (Phase 3). Businesses/car purchases still planned (Phase 5)
 
 ## 8. Smartphone
 - ✅ Phone overlay (U key / 📱 button): Contacts, Messages, SableBank, Music, Maps, Themes (Phase 2)
@@ -75,8 +77,8 @@ official roadmap. Every item is marked honestly against the shipped game:*
 ## 9. Traffic AI
 - ✅ 12 traffic cars on the road grid, lane discipline, intersection turns
 - ✅ Traffic stops for the player, flees from crimes, honks (horn = B)
-- 🟡 Traffic ignores traffic lights (they cycle visually) — obeying lights planned (Phase 3)
-- ⬜ Rush-hour density waves (Phase 3)
+- 🟡 Traffic ignores traffic lights (they cycle visually) — obeying lights planned (Phase 4)
+- ⬜ Rush-hour density waves (Phase 4)
 
 ## 10. Immersion
 - ✅ Full day cycle (5 min), golden-hour opening, themes re-grade the whole city
@@ -85,7 +87,8 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ✅ Storms: lightning bolt + sky flash + delayed thunder (Phase 2)
 - ✅ Birds over the harbour, ambient helicopter, bobbing boats, club queue, streetlight halos (Phase 2)
 - ✅ Loading theme song: 102 BPM funk/coastal groove with sections + menu ambience (waves, gulls) (Phase 2)
-- ⬜ Swimming (Phase 4) · ⬜ Seasons (not planned — one eternal golden coast)
+- ✅ Swimming — wade into deep water at the beach/harbour and paddle; shore exit (Phase 3)
+- ⬜ Seasons (not planned — one eternal golden coast)
 
 ## 11. Multiplayer
 - 🟡 WebSocket relay server (Python/FastAPI): rooms, state sync, remote avatars, anti-teleport validation — works when a server URL is configured; Vercel can't host the socket server (use Render/Railway/Fly/Docker)
@@ -98,7 +101,8 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ✅ Poster loading screen with rotating tips, story/how-to panel (Phase 2)
 - ✅ 5 personal themes (T / 1–5), full keyboard shortcuts (H), pause/help dialogs
 - ✅ Mobile touch controls (joystick, pedals, action buttons)
-- ⬜ Controller/gamepad support (Phase 3)
+- ✅ First-person camera (V) — head-height on foot, over-the-hood in cars, drag to look (Phase 3)
+- ⬜ Controller/gamepad support (Phase 4)
 
 ## 13. Technical — Engine Note (honest)
 Harborfall's engine is **Three.js / React Three Fiber + a C++17 physics core
@@ -111,13 +115,14 @@ Unreal Engine 5 photorealism is **out of scope by design**: it cannot ship as
 an instant-play browser game on free hosting, which is Harborfall's whole
 distribution model. We chase "realistic-styled" — real proportions, textured
 materials, filmic light — inside the web stack instead.
+- ✅ Post-processing film grade: bloom, warm hue/contrast grade, film grain, vignette, SMAA — desktop only; auto-disabled on coarse-pointer/mobile devices (Phase 3)
 
 ## 14. Phase Plan
 - ✅ **Phase 1** — the city, driving, police, story, themes, desktop/web builds (shipped)
 - ✅ **Phase 2** — weather, police LOS/search + roadblocks + witnesses, damage & fuel, smartphone, NPC life, overlook + bay bridge, visual realism overhaul, character realism rebuild, poster loading screen, theme-song upgrade (this release)
-- ⬜ **Phase 3** — traffic obeys lights, rush hour, gamepad, performance pass
-- ⬜ **Phase 4** — combat (non-graphic melee first), rideable motorcycle, swimming, side activities, safehouses
-- ⬜ **Phase 5** — interiors (hero set), customisation, NPC memory, 6-star design review
+- ✅ **Phase 3** — visual round 2 (rounded sculpted cars, post-processing grade, facade/ground/prop detail, skyline ring) + rideable motorcycle, two enterable interiors (garage + club), swimming, first-person camera, combat lite (punch + pistol), buyable villa with garage save (this release)
+- ⬜ **Phase 4** — traffic obeys lights, rush hour, gamepad, side activities (races, taxi, tow)
+- ⬜ **Phase 5** — more interiors, customisation, NPC memory, businesses, 6-star design review
 - ⬜ **Phase 6** — multiplayer co-op, map expansion
 
-**Status tally:** ✅ Done 48 · 🟡 Partial 5 · ⬜ Planned 21
+**Status tally:** ✅ Done 56 · 🟡 Partial 4 · ⬜ Planned 17

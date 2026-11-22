@@ -118,8 +118,33 @@ export const FUEL_STATIONS: FuelStation[] = [
 // ---- Phase 2: hillside scenic overlook (final mood-board image) ----
 export const OVERLOOK = { x: -102, z: -114 };
 
+// ---- Phase 3: solid scenery buildings that are not in the generated
+// `buildings` array (garage exterior + Club Solace) ----
+export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[] = [
+  { x: -25, z: 106.5, hw: 6.1, hd: 4.1 }, // Lina's Garage exterior (Docks frontage)
+  { x: 44, z: 117, hw: 7.6, hd: 4.6 },   // Club Solace exterior
+];
+export const GARAGE_EXT_DOOR = { x: -25, z: 100.6 }; // prompt point, street side
+export const CLUB_EXT_DOOR = { x: 44, z: 110.2 };    // prompt point, beach side
+export const MANSION_GATE = { x: MANSION.x, z: MANSION.z + 8.2 };
+export const MANSION_PRICE = 7500;
+/** Mansion driveway pad — park here (owned) and the car is garage-saved. */
+export const MANSION_DRIVE = { x: MANSION.x + 4.4, z: MANSION.z + 4.4, hw: 3.6, hd: 2.6 };
+
+// ---- Phase 3: enterable interiors live in an offset pocket (z ≈ -175),
+// far outside the city grid. Player movement clamps to the room while
+// G.interior is set, so city collision never applies there.
+export interface InteriorDef { cx: number; cz: number; w: number; d: number; spawnIn: [number, number]; exitDoor: [number, number]; }
+export const INTERIORS: Record<"garage" | "club", InteriorDef> = {
+  garage: { cx: 0, cz: -175, w: 18, d: 13, spawnIn: [0, -171.2], exitDoor: [0, -169.4] },
+  club: { cx: 52, cz: -175, w: 22, d: 15, spawnIn: [52, -170.8], exitDoor: [52, -168.6] },
+};
+
 export function isBlocked(x: number, z: number, radius: number): boolean {
   if (Math.abs(x - MANSION.x) < 6.6 + radius && Math.abs(z - MANSION.z) < 4.6 + radius) return true;
+  for (const b of STATIC_BLOCKERS) {
+    if (Math.abs(x - b.x) < b.hw + radius && Math.abs(z - b.z) < b.hd + radius) return true;
+  }
   if (Math.abs(x) > WORLD_BOUND + 8 || z < -WORLD_BOUND - 8 || z > WATER_Z + 6) return true;
   for (const b of buildings) {
     if (Math.abs(x - b.x) < b.width / 2 + radius && Math.abs(z - b.z) < b.depth / 2 + radius) return true;
@@ -142,7 +167,7 @@ export function nearestIntersection(x: number, z: number): [number, number] {
 }
 
 // ---- Drivable parked cars (original model names, Harborfall range) ----
-export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic"; owned: boolean; }
+export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle"; owned: boolean; }
 export const CAR_SPAWNS: CarSpawn[] = [
   { id: 0, x: 3, z: 106, heading: Math.PI, color: "#1f7a72", model: "Sable Sprinter", kind: "sedan", owned: true },   // Rayan's own car at the pier
   { id: 1, x: -17, z: -40, heading: Math.PI / 2, color: "#d99a3d", model: "Harbor Hauler", kind: "pickup", owned: false },
@@ -155,4 +180,5 @@ export const CAR_SPAWNS: CarSpawn[] = [
   { id: 8, x: 97, z: 40, heading: Math.PI, color: "#946b2d", model: "Ferry Van", kind: "van", owned: false },
   { id: 9, x: -63, z: -20, heading: Math.PI / 2, color: "#6b3a4a", model: "Yardbird", kind: "hatch", owned: false },
   { id: 10, x: -99, z: -112, heading: -2.35, color: "#c8ccd2", model: "Gullwing GT-S", kind: "supercar", owned: false }, // silver supercar at the overlook
+  { id: 11, x: 8, z: 117, heading: -0.4, color: "#c22e2e", model: "Sable Stinger", kind: "motorcycle", owned: false }, // rideable bike at the beach (Phase 3)
 ];
