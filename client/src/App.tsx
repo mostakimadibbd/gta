@@ -15,8 +15,29 @@ import { G, resetAfterArrest, resetAfterWasted } from "./game/store";
 import { M, startPlay, endMission } from "./game/missionState";
 import { STORY_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, type DialogueLine, type MissionDef } from "./game/missions";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
-import { ROAD_COORDS, districtAt } from "./world";
+import { ROAD_COORDS, FUEL_STATIONS, districtAt } from "./world";
+import Weather from "./components/Weather";
+import { POSTER_URL } from "./posterData";
+import Phone from "./components/Phone";
+import { WEATHER_META, cycleWeather } from "./game/weather";
 import { audioTick, initAudio, sfx, startMenuTheme, stopMenuTheme, toggleMute } from "./game/audio";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+
+// Environment reflections (PMREM RoomEnvironment): the single biggest
+// "not cartoon" upgrade — car paint, glass towers and wet roads pick up
+// real reflections. Moderate intensity keeps the dusk grade in charge.
+function EnvSetup() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const rt = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    scene.environment = rt.texture;
+    scene.environmentIntensity = 0.5;
+    return () => { scene.environment = null; rt.dispose(); pmrem.dispose(); };
+  }, [gl, scene]);
+  return null;
+}
 
 const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
 const tmpV = new THREE.Vector3();
@@ -59,8 +80,26 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0 };
+
+const LOAD_TIPS = [
+  "Press E to enter a car — F works too.",
+  "Lose the cops by breaking line of sight, then stay hidden while they search.",
+  "T changes your personal theme. Keys 1–5 jump straight to one.",
+  "Watch the fuel gauge — pumps at the Docks, Ferry Quarter and East Yards refill for cash.",
+  "U opens your phone: contacts, messages, SableBank, music and themes.",
+  "Y forces the weather to change. Storms over the bay are… dramatic.",
+  "Rayan came home to free his brother Tamim from Solano's ledger. Six chapters.",
+  "Smash a car past 60% damage and it smokes; at 100% it's a wreck. Walk away.",
+  "Hold L to freeze the day cycle at golden hour.",
+  "Harbour tokens hide around the city — each one is worth $25.",
+];
+function FirstFrame({ onReady }: { onReady: () => void }) {
+  const done = useRef(false);
+  useFrame(() => { if (!done.current) { done.current = true; onReady(); } });
+  return null;
+}
 
 export default function App() {
   const playerPositionRef = useRef(G.playerPos);
@@ -94,7 +133,13 @@ export default function App() {
   const [starPulse, setStarPulse] = useState(false);
   const [ending, setEnding] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const [sceneReady, setSceneReady] = useState(false);
+  const [minWait, setMinWait] = useState(false);
+  const [tipIdx, setTipIdx] = useState(0);
+  const [showHow, setShowHow] = useState(false);
   const [nightBucket, setNightBucket] = useState(0);
+  const lastToastAt = useRef(0);
   const multiplayerRef = useRef<Multiplayer | null>(null);
   const serverUrl = import.meta.env.VITE_MULTIPLAYER_SERVER_URL;
   const minimapRef = useRef<HTMLCanvasElement>(null);
@@ -194,6 +239,7 @@ export default function App() {
       }
       g.fillStyle = "#3b82c4"; g.fillRect(0, (128 + 130) * S - 3, size, 5 * S); // water edge
       const dot = (x: number, z: number, col: string, r: number) => { g.fillStyle = col; g.beginPath(); g.arc((x + 130) * S, (z + 130) * S, r * S, 0, 7); g.fill(); };
+      for (const st of FUEL_STATIONS) dot(st.x, st.z, "#ffb703", 3); // fuel pumps
       for (const c of G.cars) dot(c.state.x, c.state.z, mm.car, 2.4);
       for (const c of G.traffic) dot(c.x, c.z, mm.car, 2);
       for (const c of G.cops) if (c.active) dot(c.x, c.z, mm.police, 3.4);
@@ -207,6 +253,7 @@ export default function App() {
     const id = window.setInterval(() => {
       const px = G.followPos.x, pz = G.followPos.z;
       const o = G.objective;
+      const myCar = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
       setHud({
         cash: G.cash, health: Math.round(G.health), wanted: G.wanted, speed: G.speedKph, tokens: tokenCountRef.current,
         objective: M.active && M.phase === "play" ? M.active.objectiveText : M.active ? M.active.title : "",
@@ -214,7 +261,10 @@ export default function App() {
         timer: Math.max(0, Math.ceil(M.timer)),
         chapter: M.storyDone ? "Story complete — free roam" : `Chapter ${Math.min(6, M.storyIndex + 1)}: ${STORY_MISSIONS[Math.min(5, M.storyIndex)]?.title ?? ""}`,
         district: districtAt(px, pz), driving: G.driving, bust: G.bustTimer, status: G.status, storyDone: M.storyDone,
+        weather: G.weather, weatherIcon: WEATHER_META[G.weather].icon,
+        fuel: myCar ? Math.round(myCar.fuel) : 100, damage: myCar ? Math.round(myCar.damage) : 0,
       });
+      if (G.toastAt !== lastToastAt.current) { lastToastAt.current = G.toastAt; if (G.toast) showPopup(G.toast); }
       if (G.health < prevHud.current.health) { setFlash(true); window.setTimeout(() => setFlash(false), 350); }
       if (G.wanted > prevHud.current.wanted) { setStarPulse(true); window.setTimeout(() => setStarPulse(false), 900); }
       prevHud.current = { health: G.health, wanted: G.wanted };
@@ -242,6 +292,8 @@ export default function App() {
       else if (key === "t") { const i = THEMES.findIndex((t) => t.id === theme.id); applyTheme(THEMES[(i + 1) % THEMES.length]); showPopup(`Theme: ${THEMES[(i + 1) % THEMES.length].name}`); }
       else if (["1", "2", "3", "4", "5"].includes(key)) { const t = THEMES[Number(key) - 1]; if (t) { applyTheme(t); showPopup(`Theme: ${t.name}`); } }
       else if (key === "m") setBigMap((v) => !v);
+      else if (key === "y") { cycleWeather(); showPopup(`Weather: ${G.weather}`); }
+      else if (key === "u") { setPhoneOpen((v) => !v); sfx.click(); }
       else if (key === "l") { G.dayPaused = !G.dayPaused; showPopup(G.dayPaused ? "Day cycle held (L to resume)" : "Day cycle running"); }
       else if (key === "n") { setMuted(toggleMute()); }
       else if (key === "c") { camFar.current = !camFar.current; showPopup(camFar.current ? "Camera: far" : "Camera: near"); }
@@ -255,7 +307,22 @@ export default function App() {
     return () => window.removeEventListener("keydown", down);
   }, [advanceDialogue, applyTheme, showHelp, showPopup, theme]);
 
-  const effectivePaused = paused || !!dialogue || !!hud.status || introIdx >= 0 || !started || showHelp;
+  const effectivePaused = paused || !!dialogue || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen;
+  // ---- poster loading screen: real first-frame signal + minimum display ----
+  const loaded = sceneReady && minWait;
+  useEffect(() => { const id = window.setTimeout(() => setMinWait(true), 1800); return () => window.clearTimeout(id); }, []);
+  useEffect(() => {
+    if (started) return;
+    const id = window.setInterval(() => setTipIdx((v) => (v + 1) % LOAD_TIPS.length), 2800);
+    return () => window.clearInterval(id);
+  }, [started]);
+  useEffect(() => {
+    if (started || !loaded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter") startGame(true); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [started, loaded]);
   const exitVehicle = useCallback((pos: THREE.Vector3) => { playerPositionRef.current.copy(pos); }, []);
   const handleRoomSubmit = (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); const r = roomName.trim(); if (r) connectToRoom(r); };
   // Opening theme ("Port Sable Sunset") on the start screen — browsers need a
@@ -269,7 +336,7 @@ export default function App() {
   }, [started]);
 
   const startGame = (story: boolean) => {
-    initAudio(); stopMenuTheme(); sfx.click(); setStarted(true);
+    initAudio(); sfx.playStart(); stopMenuTheme(); setStarted(true);
     if (story && M.storyIndex === 0 && !localStorage.getItem("harborfall-intro")) setIntroIdx(0);
     else if (story && M.storyIndex < 6) startMission(STORY_MISSIONS[M.storyIndex]);
   };
@@ -278,8 +345,10 @@ export default function App() {
 
   return (
     <main className={`game-shell ${shake ? "shake" : ""}`}>
-      <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 7, 124], fov: 58, near: 0.1, far: 420 }} gl={{ antialias: true, powerPreference: "high-performance" }}>
+      <Canvas shadows="soft" dpr={[1, 2]} camera={{ position: [0, 7, 124], fov: 58, near: 0.1, far: 420 }}
+        gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15, outputColorSpace: THREE.SRGBColorSpace }}>
         <Suspense fallback={null}>
+          <EnvSetup />
           <World theme={theme} night={nightBucket} />
           <Collectibles targetRef={followRef} paused={effectivePaused}
             onCollect={() => { tokenCountRef.current += 1; G.tokens = tokenCountRef.current; sfx.pickup(); showPopup("Harbour token +$25"); G.cash += 25; }} />
@@ -288,6 +357,8 @@ export default function App() {
             onNearVehicleChange={setNearVehicle} physicsRef={physicsRef} themeAccent={theme.carAccent} />
           <Player positionRef={playerPositionRef} rotationRef={playerRotationRef} driving={driving} paused={effectivePaused} shirt={theme.shirt} />
           <GameSystems paused={effectivePaused} physicsRef={physicsRef} theme={theme} cb={sysCb} tokenCountRef={tokenCountRef} />
+          <Weather paused={effectivePaused} theme={theme} />
+          <FirstFrame onReady={() => setSceneReady(true)} />
           {players.map((pl) => <RemoteAvatar key={pl.playerId} player={pl} />)}
           <CameraRig target={followRef} camFar={camFar} />
         </Suspense>
@@ -299,6 +370,7 @@ export default function App() {
           <div className="hud-topleft">
             <div className="hud-brand">HARBOR<span>FALL</span></div>
             <div className="hud-meta">{hud.district} · Port Sable · {theme.name}{hud.storyDone ? " · ★ Story Complete" : ""}</div>
+            <div className="weather-chip" title="Weather (Y to change)">{hud.weatherIcon} {hud.weather}</div>
             <canvas ref={minimapRef} className="minimap" width={148} height={148} aria-label="Minimap" />
             <div className="health-wrap"><div className="health-bar" style={{ width: `${hud.health}%` }} /><span>HP {hud.health}</span></div>
             {hud.bust > 0.2 && <div className="bust-bar"><div style={{ width: `${Math.min(100, (hud.bust / 3) * 100)}%` }} /></div>}
@@ -315,6 +387,13 @@ export default function App() {
           )}
           {nearVehicle && !driving && <p className="interaction-prompt">Press <b>E</b> to enter the car</p>}
           {driving && <div className="speedo"><div className="speedo-arc" style={{ ["--speed" as string]: `${Math.min(100, hud.speed / 1.4)}%` }} /><strong>{hud.speed}</strong><span>km/h</span></div>}
+          {driving && (
+            <div className="car-bars">
+              <div className="car-bar"><span>⛽</span><div className="car-bar-track"><div className={`car-bar-fill fuel ${hud.fuel < 20 ? "low" : ""}`} style={{ width: `${hud.fuel}%` }} /></div><b>{hud.fuel}%</b></div>
+              <div className="car-bar"><span>🔧</span><div className="car-bar-track"><div className={`car-bar-fill dmg ${hud.damage > 60 ? "bad" : ""}`} style={{ width: `${hud.damage}%` }} /></div><b>{hud.damage}%</b></div>
+            </div>
+          )}
+          <button type="button" className="phone-fab" aria-label="Open phone (U)" onClick={() => setPhoneOpen(true)}>📱</button>
           {popup && <div className="cash-popup">{popup}</div>}
           {banner && <div className={`mission-banner ${banner.ok ? "ok" : "bad"}`}>{banner.text}</div>}
           <div className="controls"><b>WASD</b> Move <i /><b>E/F</b> Car <i /><b>T</b> Theme <i /><b>M</b> Map <i /><b>H</b> Help <i /><b>ESC/P</b> Pause</div>
@@ -333,6 +412,7 @@ export default function App() {
           <div><span>Physics</span><strong>{physicsSource === "wasm" ? "WASM" : "JS"}</strong></div>
         </div>
         <p className="chapter-line">{hud.chapter}</p>
+        <p className="chapter-line">Weather: {hud.weatherIcon} {hud.weather} · Phone: press <b>U</b> 📱</p>
         <div className="panel-actions">
           {!M.storyDone && <button type="button" onClick={nextStory}>▶ Next story chapter</button>}
           <button type="button" onClick={nextRepeatable}>↻ Repeatable job</button>
@@ -365,24 +445,47 @@ export default function App() {
 
       <TouchControls driving={driving} onPause={() => setPaused((v) => !v)} />
 
+      <Phone open={phoneOpen && started} onClose={() => setPhoneOpen(false)} theme={theme} applyTheme={applyTheme}
+        onOpenMap={() => { setPhoneOpen(false); setBigMap(true); }}
+        onContact={(name, line, hint) => { setPhoneOpen(false); beginDialogue([{ who: name, text: line }, { who: name, text: hint }], () => {}); }} />
+
       {!started && (
-        <div className="start-screen">
-          <div className="start-art" aria-hidden="true"><div className="skyline" /><div className="sun-disc" /></div>
-          <h1 className="game-title">HARBOR<span>FALL</span></h1>
-          <p className="tagline">Port Sable · a harbour city of debts, cranes and second chances</p>
-          <p className="start-story">Rayan Kade returns after five years to free his brother Tamim from Victor Solano's debt ledger. Drive, earn, outrun the harbour patrol — and finish the story.</p>
-          <div className="start-actions">
-            <button type="button" className="big-btn" onClick={() => startGame(true)}>▶ Play Story</button>
-            <button type="button" className="big-btn ghost" onClick={() => startGame(false)}>Free Roam</button>
+        <div className="start-screen poster-screen">
+          <img className="poster-bg" src={POSTER_URL} alt="" aria-hidden="true" />
+          <div className="poster-shade" aria-hidden="true" />
+          <div className="poster-content">
+            <h1 className="game-title">HARBOR<span>FALL</span></h1>
+            <p className="tagline">Port Sable · a harbour city of debts, cranes and second chances</p>
+            {!loaded ? (
+              <div className="load-block">
+                <div className="load-bar"><div className="load-fill" style={{ width: sceneReady ? "86%" : "52%" }} /></div>
+                <p className="load-tip">💡 {LOAD_TIPS[tipIdx]}</p>
+                <p className="load-status">{sceneReady ? "Polishing the harbour…" : "Loading Port Sable…"}</p>
+              </div>
+            ) : (
+              <>
+                <div className="start-actions">
+                  <button type="button" className="big-btn" onClick={() => startGame(true)}>▶ Play Story</button>
+                  <button type="button" className="big-btn ghost" onClick={() => startGame(false)}>Free Roam</button>
+                </div>
+                <p className="press-enter">Press <b>Enter</b> / tap Play to start</p>
+                <button type="button" className="how-toggle" onClick={() => setShowHow((v) => !v)}>{showHow ? "Hide" : "How to play + story"}</button>
+                {showHow && (
+                  <div className="how-box">
+                    <p className="start-story">Rayan Kade returns after five years to free his brother Tamim from Victor Solano's debt ledger. Drive, earn, outrun the harbour patrol — and finish the story.</p>
+                    <p className="start-controls">WASD drive · E enter car · Shift sprint · Space jump/drift · B horn · U phone · Y weather · T theme · M map · H all shortcuts · Touch controls on mobile</p>
+                    <div className="theme-grid start-themes">
+                      {THEMES.map((t) => (
+                        <button key={t.id} type="button" className={t.id === theme.id ? "theme-btn active" : "theme-btn"} onClick={() => applyTheme(t)}>
+                          <span className="swatch" style={{ background: `linear-gradient(135deg, ${t.sky} 50%, ${t.css["--accent"]} 50%)` }} />{t.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
-          <div className="theme-grid start-themes">
-            {THEMES.map((t) => (
-              <button key={t.id} type="button" className={t.id === theme.id ? "theme-btn active" : "theme-btn"} onClick={() => applyTheme(t)}>
-                <span className="swatch" style={{ background: `linear-gradient(135deg, ${t.sky} 50%, ${t.css["--accent"]} 50%)` }} />{t.name}
-              </button>
-            ))}
-          </div>
-          <p className="start-controls">WASD drive · E enter car · Shift sprint · Space jump/drift · T theme · M map · H all shortcuts · Works on phone with touch controls</p>
         </div>
       )}
 
@@ -482,6 +585,10 @@ export default function App() {
               <div><dt>T</dt><dd>Cycle theme</dd></div><div><dt>1–5</dt><dd>Switch theme directly</dd></div>
               <div><dt>M</dt><dd>Big map</dd></div><div><dt>L</dt><dd>Hold / resume day cycle</dd></div>
               <div><dt>N</dt><dd>Mute / unmute</dd></div><div><dt>R</dt><dd>Respawn (busted/wasted) · restart mission</dd></div>
+              <div><dt>U</dt><dd>Smartphone (contacts · messages · bank · music · themes)</dd></div>
+              <div><dt>Y</dt><dd>Change the weather</dd></div>
+              <div><dt>⛽ Fuel</dt><dd>Cars burn fuel — park at a red FUEL canopy to refill for cash</dd></div>
+              <div><dt>🔧 Damage</dt><dd>Crashes damage your car; 100% = wrecked</dd></div>
               <div><dt>Enter</dt><dd>Confirm dialogue</dd></div><div><dt>Mouse drag / wheel</dt><dd>Orbit / zoom camera</dd></div>
             </dl>
             <button type="button" className="primary" onClick={() => setShowHelp(false)}>Close</button>

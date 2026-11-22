@@ -492,3 +492,64 @@ body,
 .touch-btn.pedal { border-radius:14px; height:72px; } .touch-btn.gas { background:#14532db8; border-color:#22c55e; }
 .game-shell canvas { touch-action:none; }
 @media (max-width:560px) { .dialogue-box { bottom:150px; } }
+
+/* ===== Phase 2: weather chip, car fuel/damage bars, phone FAB ===== */
+.weather-chip { display:inline-block; margin-top:5px; padding:3px 10px; border-radius:999px; background:#0b1418b8; border:1px solid var(--accent2); font-size:12.5px; font-weight:700; color:var(--hud-text); }
+.car-bars { position:absolute; right:22px; bottom:134px; width:170px; display:flex; flex-direction:column; gap:5px; background:#0b1418b8; border:1.5px solid var(--accent2); border-radius:10px; padding:8px 10px; }
+.car-bar { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--hud-text); }
+.car-bar b { min-width:34px; text-align:right; font-size:11.5px; }
+.car-bar-track { flex:1; height:8px; border-radius:99px; background:#ffffff26; overflow:hidden; }
+.car-bar-fill { height:100%; border-radius:99px; transition:width .3s; }
+.car-bar-fill.fuel { background:#f2b134; } .car-bar-fill.fuel.low { background:#ef4444; }
+.car-bar-fill.dmg { background:#7aa2ff; } .car-bar-fill.dmg.bad { background:#ef4444; }
+.phone-fab { position:absolute; right:22px; bottom:252px; width:46px; height:46px; border-radius:50%; border:1.5px solid var(--accent); background:var(--panel); font-size:21px; cursor:pointer; z-index:6; box-shadow:0 8px 22px #0009; }
+@media (pointer: coarse) { .car-bars { bottom:212px; right:14px; width:150px; } .phone-fab { bottom:308px; right:14px; } }
+
+/* ===== Phase 2: smartphone overlay ===== */
+.phone-wrap { position:absolute; inset:0; z-index:9; display:flex; align-items:center; justify-content:flex-end; padding:18px 26px; pointer-events:none; }
+.phone { pointer-events:auto; width:min(300px,86vw); height:min(600px,86dvh); background:#0a0f14; border:3px solid #2b3540; border-radius:38px; box-shadow:0 30px 70px #000c, inset 0 0 0 2px #000; display:flex; flex-direction:column; overflow:hidden; color:#eef4f2; font-size:14px; position:relative; }
+.phone-notch { width:110px; height:20px; background:#000; border-radius:0 0 14px 14px; margin:0 auto; flex:none; }
+.phone-status { display:flex; justify-content:space-between; padding:5px 16px 2px; font-size:11px; color:#9fb3ad; }
+.phone-back { align-self:flex-start; margin:6px 12px 0; background:none; border:none; color:var(--accent2); font-weight:700; cursor:pointer; font-size:13px; }
+.phone-home { padding:14px 16px; display:flex; flex-direction:column; gap:14px; overflow:auto; }
+.phone-clock { font-size:21px; font-weight:800; letter-spacing:.02em; }
+.phone-apps { display:grid; grid-template-columns:repeat(3,1fr); gap:14px 8px; }
+.phone-app { position:relative; display:flex; flex-direction:column; align-items:center; gap:5px; background:none; border:none; color:#eef4f2; font-size:11.5px; cursor:pointer; }
+.phone-app-icon { width:52px; height:52px; border-radius:15px; background:linear-gradient(145deg,#1d3a3f,#12262b); border:1px solid #ffffff2a; display:flex; align-items:center; justify-content:center; font-size:24px; }
+.phone-badge { position:absolute; top:-4px; right:8px; background:#e33; color:#fff; font-size:10px; font-weight:800; min-width:17px; height:17px; border-radius:99px; display:flex; align-items:center; justify-content:center; }
+.phone-tip { font-size:11.5px; color:#9fb3ad; line-height:1.45; margin:4px 0; }
+.phone-page { padding:10px 14px; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+.phone-page h3 { margin:2px 0 6px; font-size:16px; }
+.phone-row { display:flex; align-items:center; gap:11px; width:100%; text-align:left; background:#ffffff10; border:1px solid #ffffff1c; border-radius:13px; padding:9px 11px; color:#eef4f2; cursor:pointer; }
+.phone-row.active { border-color:var(--accent); }
+.phone-row small { display:block; color:#9fb3ad; font-size:11px; margin-top:1px; }
+.phone-avatar { flex:none; width:38px; height:38px; border-radius:50%; background:var(--accent2); color:#06231f; font-weight:800; display:flex; align-items:center; justify-content:center; font-size:13px; }
+.phone-call { margin-left:auto; }
+.phone-msg { background:#ffffff10; border:1px solid #ffffff1c; border-radius:13px; padding:9px 11px; }
+.phone-msg b { color:var(--accent); font-size:12.5px; } .phone-msg p { margin:3px 0 0; line-height:1.45; font-size:13px; }
+.bank-card { background:linear-gradient(140deg,#14524f,#0d2b2a); border:1px solid var(--accent2); border-radius:16px; padding:14px; display:flex; flex-direction:column; gap:3px; }
+.bank-card span { font-size:11px; color:#9fd8c8; text-transform:uppercase; letter-spacing:.08em; }
+.bank-card strong { font-size:30px; } .bank-card small { color:#9fb3ad; }
+.bank-row { display:flex; justify-content:space-between; background:#ffffff10; border-radius:10px; padding:8px 11px; font-size:13px; }
+.music-card { display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center; background:#ffffff10; border:1px solid #ffffff1c; border-radius:16px; padding:16px 12px; }
+.music-disc { font-size:44px; } .music-card small { color:#9fb3ad; line-height:1.4; }
+.phone-play { margin-top:8px; padding:10px 18px; border-radius:99px; }
+.phone-homebar { position:absolute; bottom:7px; left:50%; transform:translateX(-50%); width:110px; height:22px; background:none; border:none; cursor:pointer; }
+.phone-homebar::after { content:""; display:block; width:110px; height:4.5px; border-radius:99px; background:#ffffff59; margin:8px auto 0; }
+
+/* ===== Poster loading/start screen ===== */
+.poster-screen { justify-content:flex-end; background:#0a1418; padding:0; overflow:hidden; }
+.poster-bg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; animation:kenburns 26s ease-in-out infinite alternate; }
+@keyframes kenburns { from { transform:scale(1); } to { transform:scale(1.09) translateY(-1.5%); } }
+.poster-shade { position:absolute; inset:0; background:linear-gradient(180deg,#04100f26 30%,#04100f8c 58%,#04100ff2 88%); }
+.poster-content { position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; gap:10px; padding:20px 18px calc(20px + env(safe-area-inset-bottom)); width:100%; max-height:100%; overflow:auto; }
+.poster-content .game-title { font-size:clamp(40px,8.5vw,76px); }
+.poster-content .tagline { margin:0; color:#ffe9c9; text-shadow:0 2px 12px #000; }
+.load-block { width:min(430px,88vw); display:flex; flex-direction:column; gap:8px; align-items:center; margin-top:6px; }
+.load-bar { width:100%; height:11px; border-radius:99px; background:#ffffff2b; border:1px solid #ffffff40; overflow:hidden; }
+.load-fill { height:100%; border-radius:99px; background:linear-gradient(90deg,var(--accent2),var(--accent)); transition:width .9s ease; }
+.load-tip { margin:0; font-size:13.5px; color:#ffe9c9; min-height:20px; text-shadow:0 1px 8px #000; }
+.load-status { margin:0; font-size:11.5px; color:#bdc9ce; letter-spacing:.06em; text-transform:uppercase; }
+.press-enter { margin:0; font-size:12.5px; color:#bdc9ce; }
+.how-toggle { background:none; border:none; color:var(--accent2); font-weight:700; cursor:pointer; font-size:13px; text-decoration:underline; }
+.how-box { background:#04100fd9; border:1px solid var(--accent2); border-radius:14px; padding:13px 15px; display:flex; flex-direction:column; gap:9px; align-items:center; max-width:600px; }

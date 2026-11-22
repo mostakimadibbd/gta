@@ -78,6 +78,22 @@ export function asphaltTexture(): THREE.CanvasTexture {
     for (let s = 0; s < 6; s++) { x += (rnd() - 0.5) * 70; y += rnd() * 42; g.lineTo(x, y); }
     g.stroke();
   }
+  // scattered debris specks + wind-blown leaf dots (lived-in streets)
+  for (let i = 0; i < 420; i++) {
+    g.fillStyle = `rgba(${140 + rnd() * 60},${135 + rnd() * 50},${110 + rnd() * 40},${0.12 + rnd() * 0.2})`;
+    g.fillRect(rnd() * 512, rnd() * 512, 1 + rnd() * 2, 1 + rnd() * 2);
+  }
+  for (let i = 0; i < 46; i++) {
+    g.fillStyle = `rgba(${140 + rnd() * 60},${100 + rnd() * 40},${30 + rnd() * 30},${0.25 + rnd() * 0.3})`;
+    g.beginPath(); g.ellipse(rnd() * 512, rnd() * 512, 2 + rnd() * 2.5, 1.2 + rnd() * 1.4, rnd() * 3, 0, Math.PI * 2); g.fill();
+  }
+  g.strokeStyle = "rgba(16,16,18,0.4)"; g.lineWidth = 0.8;
+  for (let i = 0; i < 9; i++) {
+    let x = rnd() * 512, y = rnd() * 512;
+    g.beginPath(); g.moveTo(x, y);
+    for (let s2 = 0; s2 < 4; s2++) { x += (rnd() - 0.5) * 46; y += (rnd() - 0.5) * 46; g.lineTo(x, y); }
+    g.stroke();
+  }
   _asphalt = finish(c);
   return _asphalt;
 }
@@ -237,4 +253,182 @@ export function streetSignTexture(text: string): THREE.CanvasTexture {
   const t = finish(c);
   signCache.set(text, t);
   return t;
+}
+
+// ================================================================ VISUAL OVERHAUL
+// ---- skin: very subtle noise so faces/bodies don't read as flat plastic ----
+let _skin: THREE.CanvasTexture | undefined;
+export function skinTexture(): THREE.CanvasTexture {
+  if (_skin) return _skin;
+  const rnd = mulberry32(707);
+  const [c, g] = canvas(128);
+  grain(g, 128, 128, [242, 240, 238], 5, rnd);
+  _skin = finish(c, 1, 1);
+  return _skin;
+}
+
+// ---- faces: drawn features on a transparent canvas, applied to a small
+// curved plane on the front of the head — reads far better at gameplay
+// distance than geometry eyes, and costs one shared texture per variant.
+const faceCache = new Map<string, THREE.CanvasTexture>();
+export function faceTexture(variant: "m" | "f" | "beard"): THREE.CanvasTexture {
+  const hit = faceCache.get(variant);
+  if (hit) return hit;
+  const [c, g] = canvas(128, 128);
+  g.clearRect(0, 0, 128, 128);
+  // soft shading: cheek/jaw shadows + nose bridge shading
+  const sh = g.createRadialGradient(64, 74, 12, 64, 74, 62);
+  sh.addColorStop(0, "rgba(120,70,40,0)"); sh.addColorStop(1, "rgba(120,70,40,0.20)");
+  g.fillStyle = sh; g.fillRect(0, 0, 128, 128);
+  g.fillStyle = "rgba(120,70,40,0.16)";
+  g.beginPath(); g.ellipse(64, 58, 5, 12, 0, 0, Math.PI * 2); g.fill(); // nose shading
+  // brows
+  g.fillStyle = "rgba(30,20,14,0.85)";
+  g.fillRect(30, 36, 22, 4); g.fillRect(76, 36, 22, 4);
+  // eyes: white + iris + pupil + glint
+  for (const cx of [41, 87]) {
+    g.fillStyle = "#f4efe8"; g.beginPath(); g.ellipse(cx, 48, 10, 5.5, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#3a2a1c"; g.beginPath(); g.arc(cx, 48, 4.4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#0d0a08"; g.beginPath(); g.arc(cx, 48, 2.2, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#ffffff"; g.beginPath(); g.arc(cx - 1.4, 46.4, 1.2, 0, Math.PI * 2); g.fill();
+    if (variant === "f") { g.strokeStyle = "rgba(20,12,8,0.9)"; g.lineWidth = 1.6; g.beginPath(); g.moveTo(cx - 10, 47); g.quadraticCurveTo(cx, 41, cx + 10, 47); g.stroke(); }
+  }
+  // nostrils + mouth
+  g.fillStyle = "rgba(90,50,30,0.5)";
+  g.beginPath(); g.arc(59, 74, 1.7, 0, Math.PI * 2); g.arc(69, 74, 1.7, 0, Math.PI * 2); g.fill();
+  if (variant === "f") { g.fillStyle = "rgba(168,74,84,0.9)"; g.beginPath(); g.ellipse(64, 88, 11, 4.2, 0, 0, Math.PI * 2); g.fill(); }
+  else { g.fillStyle = "rgba(120,66,50,0.75)"; g.beginPath(); g.ellipse(64, 88, 9, 3, 0, 0, Math.PI * 2); g.fill(); }
+  g.fillStyle = "rgba(90,50,30,0.28)"; g.fillRect(52, 96, 24, 2); // mouth shadow line
+  if (variant === "beard") {
+    // jaw beard: dense short strokes around the lower face
+    const rnd = mulberry32(909);
+    g.strokeStyle = "rgba(28,20,14,0.88)"; g.lineWidth = 1.6;
+    for (let i = 0; i < 210; i++) {
+      const a = (rnd() - 0.5) * 1.9, r = 34 + rnd() * 16;
+      const x = 64 + Math.sin(a) * r, y = 80 + Math.cos(a) * r * 0.62 + rnd() * 6;
+      if (y < 84 || Math.abs(x - 64) < 12 && y < 92) continue;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + (rnd() - 0.5) * 2, y + 3.5); g.stroke();
+    }
+  }
+  const t = finish(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  faceCache.set(variant, t);
+  return t;
+}
+
+// ---- hair: strand streaks, tinted by material colour ----
+let _hair: THREE.CanvasTexture | undefined;
+export function hairTexture(): THREE.CanvasTexture {
+  if (_hair) return _hair;
+  const rnd = mulberry32(808);
+  const [c, g] = canvas(128);
+  grain(g, 128, 128, [225, 222, 218], 10, rnd);
+  for (let i = 0; i < 300; i++) {
+    g.strokeStyle = `rgba(40,32,26,${0.10 + rnd() * 0.16})`;
+    g.lineWidth = 1;
+    const x = rnd() * 128;
+    g.beginPath(); g.moveTo(x, rnd() * 30); g.lineTo(x + (rnd() - 0.5) * 5, 60 + rnd() * 68); g.stroke();
+  }
+  _hair = finish(c, 1, 1);
+  return _hair;
+}
+
+// ---- grass / sand ground textures (deeper, noisy — kills flat colour) ----
+let _grass: THREE.CanvasTexture | undefined;
+export function grassTexture(): THREE.CanvasTexture {
+  if (_grass) return _grass;
+  const rnd = mulberry32(111);
+  const [c, g] = canvas(512);
+  grain(g, 512, 512, [74, 104, 58], 15, rnd);
+  for (let i = 0; i < 2600; i++) {
+    g.strokeStyle = `rgba(${30 + rnd() * 40},${70 + rnd() * 50},${28 + rnd() * 26},0.5)`;
+    const x = rnd() * 512, y = rnd() * 512;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + (rnd() - 0.5) * 3, y - 2 - rnd() * 3); g.stroke();
+  }
+  stains(g, 512, 512, 5, "#5d7038", 0.10, rnd);
+  _grass = finish(c, 26, 26);
+  return _grass;
+}
+let _sand: THREE.CanvasTexture | undefined;
+export function sandTexture(): THREE.CanvasTexture {
+  if (_sand) return _sand;
+  const rnd = mulberry32(222);
+  const [c, g] = canvas(512);
+  grain(g, 512, 512, [216, 188, 132], 11, rnd, 0.01);
+  for (let i = 0; i < 130; i++) {
+    g.strokeStyle = `rgba(160,128,84,${0.08 + rnd() * 0.1})`;
+    const y = rnd() * 512;
+    g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(170, y + 8, 340, y - 8, 512, y + 4); g.stroke();
+  }
+  _sand = finish(c, 20, 2);
+  return _sand;
+}
+
+// ---- palm frond: feathered leaflets with alpha, one side of a bent plane ----
+let _frond: THREE.CanvasTexture | undefined;
+export function palmFrondTexture(): THREE.CanvasTexture {
+  if (_frond) return _frond;
+  const rnd = mulberry32(333);
+  const [c, g] = canvas(256, 128);
+  g.clearRect(0, 0, 256, 128);
+  g.strokeStyle = "#2c6e3e"; g.lineWidth = 5;
+  g.beginPath(); g.moveTo(2, 64); g.quadraticCurveTo(128, 52, 254, 84); g.stroke(); // midrib
+  for (let x = 12; x < 250; x += 7) {
+    const t = x / 256, len = 44 * Math.sin(Math.PI * Math.min(1, t * 1.15)) + 8;
+    const yBase = 64 - 12 * t + 20 * t * t;
+    g.strokeStyle = `rgba(${38 + rnd() * 22},${110 + rnd() * 34},${58 + rnd() * 20},0.95)`;
+    g.lineWidth = 2.6;
+    g.beginPath(); g.moveTo(x, yBase); g.lineTo(x + 9, yBase - len); g.stroke();
+    g.beginPath(); g.moveTo(x, yBase); g.lineTo(x + 9, yBase + len * 0.92); g.stroke();
+  }
+  const t = finish(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  _frond = t;
+  return _frond;
+}
+
+// ---- soft radial glow (sprites: lamps, police lights, sun, car lights) ----
+let _glow: THREE.CanvasTexture | undefined;
+export function glowTexture(): THREE.CanvasTexture {
+  if (_glow) return _glow;
+  const [c, g] = canvas(128);
+  const gr = g.createRadialGradient(64, 64, 2, 64, 64, 62);
+  gr.addColorStop(0, "rgba(255,255,255,0.9)"); gr.addColorStop(0.35, "rgba(255,255,255,0.32)"); gr.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  const t = finish(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  _glow = t;
+  return _glow;
+}
+
+// ---- tyre tread: wraps the wheel cylinder's side surface ----
+let _tyre: THREE.CanvasTexture | undefined;
+export function tyreTexture(): THREE.CanvasTexture {
+  if (_tyre) return _tyre;
+  const rnd = mulberry32(444);
+  const [c, g] = canvas(256, 64);
+  grain(g, 256, 64, [26, 26, 28], 6, rnd);
+  g.fillStyle = "rgba(0,0,0,0.55)";
+  for (let x = 0; x < 256; x += 16) { g.save(); g.translate(x + 8, 32); g.rotate(0.5); g.fillRect(-2.5, -30, 5, 60); g.restore(); }
+  g.fillStyle = "rgba(120,120,124,0.20)"; g.fillRect(0, 4, 256, 2); g.fillRect(0, 58, 256, 2); // sidewall rings
+  _tyre = finish(c, 3, 1);
+  return _tyre;
+}
+
+// ---- cloud puffs: overlapping soft blobs, warm-white (tinted at runtime) ----
+let _cloud: THREE.CanvasTexture | undefined;
+export function cloudTexture(): THREE.CanvasTexture {
+  if (_cloud) return _cloud;
+  const rnd = mulberry32(555);
+  const [c, g] = canvas(256, 128);
+  for (let i = 0; i < 16; i++) {
+    const x = 40 + rnd() * 176, y = 52 + rnd() * 30, r = 22 + rnd() * 30;
+    const gr = g.createRadialGradient(x, y, 2, x, y, r);
+    gr.addColorStop(0, "rgba(255,252,248,0.55)"); gr.addColorStop(1, "rgba(255,252,248,0)");
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  const t = finish(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  _cloud = t;
+  return _cloud;
 }

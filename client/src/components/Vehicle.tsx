@@ -3,8 +3,9 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { PhysicsEngine } from "../physics/GamePhysics";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
-import { isBlocked } from "../world";
-import { G, addCrime } from "../game/store";
+import { isBlocked, FUEL_STATIONS } from "../world";
+import { G, addCrime, toast } from "../game/store";
+import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
 
 interface Props {
@@ -22,10 +23,21 @@ import CarBody from "./CarBody";
 
 export default function Vehicle(p: Props) {
   const groups = useRef<Array<THREE.Group | null>>([]);
+  const smokeRefs = useRef<Array<THREE.Group | null>>([]);
   const keys = useRef(new Set<string>());
   const refs = useRef(p); refs.current = p;
   const nearRef = useRef(false);
   const wasBlocked = useRef(false);
+  const refuelTimer = useRef(0);
+  const warnedRef = useRef({ wrecked: false, empty: false });
+  // ---- burnout / drift tyre-smoke pool (white sprite puffs, rear wheels) ----
+  const puffRefs = useRef<Array<THREE.Sprite | null>>([]);
+  const puffs = useRef<Array<{ life: number; x: number; y: number; z: number }>>(
+    Array.from({ length: 22 }, () => ({ life: 0, x: 0, y: -10, z: 0 })));
+  const puffIdx = useRef(0);
+  const spawnAcc = useRef(0);
+  const skidCd = useRef(0);
+  const puffTex = glowTexture();
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -45,6 +57,9 @@ export default function Vehicle(p: Props) {
         G.cars.forEach((c, i) => { const d = (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2; if (d < bestD) { bestD = d; best = i; } });
         if (best >= 0) {
           G.activeCarId = best; G.driving = true; refs.current.onDrivingChange(true); sfx.door();
+          warnedRef.current = { wrecked: false, empty: false };
+          if (G.cars[best].damage >= 100) toast("This car is wrecked — it won't move. Find another ride.");
+          else if (G.cars[best].fuel <= 0.5) toast("This car is out of fuel. A fuel station can fill it — if you can push it there… (find another car)");
           if (!G.cars[best].owned && !G.cars[best].stolen) { G.cars[best].stolen = true; addCrime("steal"); sfx.crime(); }
           e.preventDefault();
         }
@@ -56,27 +71,105 @@ export default function Vehicle(p: Props) {
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
   }, []);
 
-  useFrame((_, delta) => {
+  useFrame(({ clock }, delta) => {
     const { paused, physicsRef, vehicleStateRef, vehiclePositionRef } = refs.current;
+    const dt = Math.min(delta, 0.05);
     if (G.driving && !paused && !G.dialogueActive && G.activeCarId >= 0) {
       const car = G.cars[G.activeCarId];
       const k = keys.current;
-      const throttle = Number(k.has("w")) - Number(k.has("s"));
+      // ---- Phase 2: damage + fuel shape the driving (arcade-forgiving) ----
+      const wrecked = car.damage >= 100;
+      const empty = car.fuel <= 0;
+      if (wrecked && !warnedRef.current.wrecked) { warnedRef.current.wrecked = true; toast("WRECKED — this car is done. Get out (E) and find another ride."); }
+      if (empty && !warnedRef.current.empty) { warnedRef.current.empty = true; toast("Out of fuel! Coast to a stop and find another car — fuel stations refill runners."); }
+      const power = wrecked || empty ? 0 : car.damage > 60 ? 0.55 : car.damage > 35 ? 0.82 : 1;
+      const throttle = (Number(k.has("w")) - Number(k.has("s"))) * power;
       const steering = Number(k.has("a")) - Number(k.has("d"));
       const next = physicsRef.current.stepVehicle(car.state, throttle, steering, k.has(" "), delta);
       next.x = THREE.MathUtils.clamp(next.x, -122, 122);
       next.z = THREE.MathUtils.clamp(next.z, -122, 126);
       if (isBlocked(next.x, next.z, 1.3)) {
-        if (!wasBlocked.current && Math.abs(car.state.speed) > 6) { G.eventQueue.push("shake", "hitwall"); G.health = Math.max(0, G.health - 4); }
+        if (!wasBlocked.current && Math.abs(car.state.speed) > 6) {
+          G.eventQueue.push("shake", "hitwall"); G.health = Math.max(0, G.health - 4);
+          car.damage = Math.min(100, car.damage + Math.min(18, Math.abs(car.state.speed) * 0.9));
+          sfx.crash();
+        }
         wasBlocked.current = true;
         next.x = car.state.x; next.z = car.state.z; next.speed = -car.state.speed * 0.25;
       } else wasBlocked.current = false;
       car.state = next;
+      // fuel drain while actually moving
+      if (Math.abs(next.speed) > 0.5 && car.fuel > 0) car.fuel = Math.max(0, car.fuel - dt * (0.1 + Math.abs(next.speed) * 0.018));
+      // ---- refuel: parked at a pump, tank fills for cash ----
+      let atPump = false;
+      if (Math.abs(next.speed) < 1.2 && car.fuel < 99.5) {
+        for (const st of FUEL_STATIONS) {
+          if ((st.x - next.x) ** 2 + (st.z - next.z) ** 2 < 8 ** 2) { atPump = true; break; }
+        }
+      }
+      if (atPump) {
+        refuelTimer.current += dt;
+        if (refuelTimer.current > 0.8) {
+          const missing = 100 - car.fuel;
+          const cost = Math.ceil(missing * 0.6);
+          const pay = Math.min(G.cash, cost);
+          car.fuel = pay >= cost ? 100 : car.fuel + pay / 0.6;
+          G.cash -= pay; sfx.fuel(); toast(pay > 0 ? `Refuelled — $${pay} at the pump` : "No cash for fuel!");
+          refuelTimer.current = 0;
+        }
+      } else refuelTimer.current = 0;
       vehicleStateRef.current = next;
       vehiclePositionRef.current.set(next.x, 0, next.z);
       G.followPos.set(next.x, 0, next.z);
       G.speedKph = Math.round(Math.abs(next.speed) * 3.6);
     } else if (!G.driving) G.speedKph = 0;
+    // ---- burnout / drift tyre smoke ----
+    skidCd.current = Math.max(0, skidCd.current - dt);
+    if (G.driving && !paused && G.activeCarId >= 0) {
+      const car = G.cars[G.activeCarId];
+      const k = keys.current;
+      const drifting = k.has(" ") && Math.abs(car.state.speed) > 6;
+      const burnout = k.has("w") && Math.abs(car.state.speed) < 3 && car.damage < 100 && car.fuel > 0;
+      if (drifting || burnout) {
+        spawnAcc.current += dt;
+        if (skidCd.current <= 0) { sfx.skid(); skidCd.current = 0.55; }
+        while (spawnAcc.current > 0.045) {
+          spawnAcc.current -= 0.045;
+          const h = car.state.heading;
+          const side = puffIdx.current % 2 === 0 ? -0.85 : 0.85;
+          const puff = puffs.current[puffIdx.current % puffs.current.length];
+          puffIdx.current += 1;
+          puff.life = 1;
+          puff.x = car.state.x + Math.cos(h) * side - Math.sin(h) * 1.35;
+          puff.z = car.state.z - Math.sin(h) * side - Math.cos(h) * 1.35;
+          puff.y = 0.35;
+        }
+      }
+    }
+    puffs.current.forEach((puff, i) => {
+      const sp = puffRefs.current[i]; if (!sp) return;
+      if (puff.life <= 0) { sp.visible = false; return; }
+      puff.life -= dt * 1.15;
+      puff.y += dt * 1.1;
+      sp.visible = puff.life > 0;
+      sp.position.set(puff.x, puff.y, puff.z);
+      const sc = 1.1 + (1 - puff.life) * 2.6;
+      sp.scale.set(sc, sc, 1);
+      (sp.material as THREE.SpriteMaterial).opacity = Math.max(0, puff.life) * 0.34;
+    });
+    // ---- engine smoke for damaged cars (damage > 60) ----
+    const tt = clock.elapsedTime;
+    G.cars.forEach((c, i) => {
+      const sm = smokeRefs.current[i]; if (!sm) return;
+      const show = c.damage > 60;
+      sm.visible = show;
+      if (show) {
+        const s = 0.8 + Math.sin(tt * 3.1 + i * 1.7) * 0.22 + (c.damage - 60) / 90;
+        sm.scale.setScalar(s);
+        sm.position.y = 1.05 + Math.sin(tt * 2.3 + i) * 0.12;
+        sm.children.forEach((ch, ci) => { const m = (ch as THREE.Mesh).material as THREE.MeshBasicMaterial; m.opacity = 0.16 + (c.damage - 60) / 160 + ci * 0.03; });
+      }
+    });
     // near-car prompt
     if (!G.driving) {
       const pl = refs.current.playerPositionRef.current;
@@ -96,10 +189,25 @@ export default function Vehicle(p: Props) {
         return (
           <group key={c.id} ref={(n) => { groups.current[i] = n; }} position={[c.state.x, 0, c.state.z]} rotation={[0, c.state.heading, 0]}>
             <CarBody kind={c.kind} color={c.color} />
+            {/* engine smoke (visible when damage > 60, animated in useFrame) */}
+            <group ref={(n) => { smokeRefs.current[i] = n; }} position={[0, 1.05, 1.25]} visible={false}>
+              {[0, 1, 2].map((j) => (
+                <mesh key={j} position={[j * 0.16 - 0.16, j * 0.34, j * 0.1]}>
+                  <sphereGeometry args={[0.3 + j * 0.13, 8, 6]} />
+                  <meshBasicMaterial color="#3a3f45" transparent opacity={0.2} depthWrite={false} />
+                </mesh>
+              ))}
+            </group>
             {isActive && <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[2.2, 2.45, 24]} /><meshBasicMaterial color={p.themeAccent} transparent opacity={0.85} /></mesh>}
           </group>
         );
       })}
+      {/* burnout / drift tyre-smoke puffs (world-space sprite pool) */}
+      {puffs.current.map((_, i) => (
+        <sprite key={i} ref={(n) => { puffRefs.current[i] = n; }} visible={false}>
+          <spriteMaterial map={puffTex} color="#e8e6e0" transparent opacity={0} depthWrite={false} />
+        </sprite>
+      ))}
     </>
   );
 }

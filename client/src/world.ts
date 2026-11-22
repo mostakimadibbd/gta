@@ -32,7 +32,7 @@ export function districtAt(x: number, z: number): string {
   return "Market Row";
 }
 
-const palette = ["#b98a5a", "#c49a68", "#8a7a5c", "#a3764f", "#93755a", "#bd9166", "#7d6a52", "#5a7d8a", "#3f6d8e", "#c96f4a", "#e0b36a", "#6a8a5f", "#9a5a6b", "#d9c9a3"];
+const palette = ["#a06a42", "#b57e4e", "#77644c", "#8f5f3d", "#7d6248", "#a87c52", "#5f5142", "#4a6d7c", "#33617f", "#b25a38", "#cf9a4e", "#59754e", "#84505c", "#c2ab7d"];
 const roofs = ["#14524f", "#0f4442", "#17605c", "#123f3e"];
 export const buildings: Building[] = [];
 export const trees: TreeSpot[] = [];
@@ -75,7 +75,7 @@ towerBlocks.forEach(([bx, bz], i) => {
   buildings.push({
     x: bx + 9, z: bz + 10, width: 11, depth: 11,
     height: 34 + ((i * 7) % 21), // 34–54u
-    color: "#5d94b8", roof: "#274b5e", district: "Downtown", glass: true,
+    color: "#3d7296", roof: "#274b5e", district: "Downtown", glass: true,
   });
 });
 // ---- Suburbs (west edge, Ferry Quarter): low houses with lawns/driveways
@@ -90,6 +90,7 @@ export const palms: { x: number; z: number; scale: number; lean: number }[] = []
 for (let x = -105; x <= 105; x += 21) palms.push({ x, z: 117.5, scale: 0.95 + rnd() * 0.35, lean: (rnd() - 0.5) * 0.24 });
 for (let z = -58; z <= 58; z += 29) { palms.push({ x: 27.6, z, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); palms.push({ x: -27.6, z: z + 14, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); }
 palms.push({ x: 14, z: 116, scale: 1.15, lean: 0.12 }, { x: -14, z: 116, scale: 1.1, lean: -0.1 });
+for (let x = -100; x <= 100; x += 25) { palms.push({ x: x + 6, z: 92.4, scale: 1.3 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.16 }); palms.push({ x: x - 6, z: 107.6, scale: 1.3 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.16 }); }
 
 // street trees + lamps along roads
 for (const c of ROAD_COORDS) {
@@ -106,6 +107,16 @@ export function isOnRoad(x: number, z: number): boolean {
 }
 
 export const MANSION = { x: -80, z: 90 }; // luxury house, SW block (plot cleared above)
+
+// ---- Phase 2: fuel stations (drive in slow, tank refills for cash) ----
+export interface FuelStation { x: number; z: number; name: string; }
+export const FUEL_STATIONS: FuelStation[] = [
+  { x: 27.5, z: 100, name: "Docks Fuel" },
+  { x: -53.5, z: -27, name: "Ferry Quarter Fuel" },
+  { x: 66, z: 47, name: "East Yards Fuel" },
+];
+// ---- Phase 2: hillside scenic overlook (final mood-board image) ----
+export const OVERLOOK = { x: -102, z: -114 };
 
 export function isBlocked(x: number, z: number, radius: number): boolean {
   if (Math.abs(x - MANSION.x) < 6.6 + radius && Math.abs(z - MANSION.z) < 4.6 + radius) return true;
@@ -143,4 +154,5 @@ export const CAR_SPAWNS: CarSpawn[] = [
   { id: 7, x: -23, z: -100, heading: 0, color: "#2e4a5a", model: "Harbor Hauler", kind: "pickup", owned: false },
   { id: 8, x: 97, z: 40, heading: Math.PI, color: "#946b2d", model: "Ferry Van", kind: "van", owned: false },
   { id: 9, x: -63, z: -20, heading: Math.PI / 2, color: "#6b3a4a", model: "Yardbird", kind: "hatch", owned: false },
+  { id: 10, x: -99, z: -112, heading: -2.35, color: "#c8ccd2", model: "Gullwing GT-S", kind: "supercar", owned: false }, // silver supercar at the overlook
 ];

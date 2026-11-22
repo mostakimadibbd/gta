@@ -4,16 +4,19 @@
 // wheels, lights, mirrors, plates, bumpers, exhaust. Facing +Z = front.
 import { useMemo } from "react";
 import * as THREE from "three";
+import { glowTexture, tyreTexture } from "../textures";
 
 export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic";
 
-const GLASS = new THREE.MeshStandardMaterial({ color: "#141f28", metalness: 0.5, roughness: 0.12 });
-const CHROME = new THREE.MeshStandardMaterial({ color: "#d7dce2", metalness: 0.9, roughness: 0.25 });
+const GLASS = new THREE.MeshStandardMaterial({ color: "#141f28", metalness: 0.5, roughness: 0.08, envMapIntensity: 1.3 });
+const CHROME = new THREE.MeshStandardMaterial({ color: "#d7dce2", metalness: 0.95, roughness: 0.16, envMapIntensity: 1.4 });
 const BUMPER = new THREE.MeshStandardMaterial({ color: "#22262b", metalness: 0.4, roughness: 0.5 });
-const TYRE = new THREE.MeshStandardMaterial({ color: "#141518", roughness: 0.92 });
+const TYRE = new THREE.MeshStandardMaterial({ color: "#8a8a8e", map: tyreTexture(), roughness: 0.94 });
 const RIM = new THREE.MeshStandardMaterial({ color: "#c9ced6", metalness: 0.85, roughness: 0.3 });
-const HEAD = new THREE.MeshStandardMaterial({ color: "#fff3cf", emissive: "#ffdf94", emissiveIntensity: 1.1 });
-const TAIL = new THREE.MeshStandardMaterial({ color: "#d21f2e", emissive: "#a30014", emissiveIntensity: 0.9 });
+const HEAD = new THREE.MeshStandardMaterial({ color: "#fff3cf", emissive: "#ffdf94", emissiveIntensity: 1.7 });
+const TAIL = new THREE.MeshStandardMaterial({ color: "#d21f2e", emissive: "#c00018", emissiveIntensity: 1.5 });
+const HEADGLOW = new THREE.SpriteMaterial({ map: glowTexture(), color: "#ffdf94", transparent: true, opacity: 0.32, depthWrite: false, blending: THREE.AdditiveBlending });
+const TAILGLOW = new THREE.SpriteMaterial({ map: glowTexture(), color: "#ff2a33", transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending });
 const PLATE = new THREE.MeshStandardMaterial({ color: "#eef1f4", roughness: 0.6 });
 const WHITEWALL = new THREE.MeshStandardMaterial({ color: "#e9e6dc", roughness: 0.7 });
 
@@ -45,6 +48,10 @@ function LightsBumpers({ w, len, y, classic }: { w: number; len: number; y: numb
       <mesh position={[-w * 0.32, y, len / 2 + 0.03]}><boxGeometry args={[0.36, 0.12, 0.06]} /><primitive object={HEAD} attach="material" /></mesh>
       <mesh position={[w * 0.32, y, len / 2 + 0.03]}><boxGeometry args={[0.36, 0.12, 0.06]} /><primitive object={HEAD} attach="material" /></mesh>
       <mesh position={[0, y, -len / 2 - 0.03]}><boxGeometry args={[w * 0.66, 0.09, 0.05]} /><primitive object={TAIL} attach="material" /></mesh>
+      {/* lens glow sprites (headlight halos + tail-light bloom) */}
+      <sprite position={[-w * 0.32, y, len / 2 + 0.12]} scale={[0.95, 0.95, 1]}><primitive object={HEADGLOW} attach="material" /></sprite>
+      <sprite position={[w * 0.32, y, len / 2 + 0.12]} scale={[0.95, 0.95, 1]}><primitive object={HEADGLOW} attach="material" /></sprite>
+      <sprite position={[0, y, -len / 2 - 0.12]} scale={[1.5, 0.8, 1]}><primitive object={TAILGLOW} attach="material" /></sprite>
       <mesh position={[0, y - 0.08, len / 2 + 0.05]}><boxGeometry args={[w + 0.08, 0.17, 0.16]} /><primitive object={bMat} attach="material" /></mesh>
       <mesh position={[0, y - 0.08, -len / 2 - 0.05]}><boxGeometry args={[w + 0.08, 0.17, 0.16]} /><primitive object={bMat} attach="material" /></mesh>
       <mesh position={[0, y - 0.02, -len / 2 - 0.14]}><boxGeometry args={[0.52, 0.15, 0.03]} /><primitive object={PLATE} attach="material" /></mesh>
@@ -65,7 +72,8 @@ function Mirrors({ w, y, z }: { w: number; y: number; z: number }) {
 }
 
 export default function CarBody({ kind, color, police }: { kind: CarKind; color: string; police?: boolean }) {
-  const paint = useMemo(() => new THREE.MeshStandardMaterial({ color, metalness: 0.55, roughness: 0.3 }), [color]);
+  // deep glossy paint: low roughness + strong environment reflections
+  const paint = useMemo(() => new THREE.MeshStandardMaterial({ color, metalness: 0.25, roughness: 0.27, envMapIntensity: 1.2 }), [color]);
   const classic = kind === "classic";
   let body: React.ReactNode = null;
   let wheels: React.ReactNode = null;

@@ -1,11 +1,13 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { buildings, trees, props, lamps, palms, houses, ROAD_COORDS, ROAD_WIDTH, WATER_Z, MANSION } from "../world";
+import { buildings, trees, props, lamps, palms, houses, ROAD_COORDS, ROAD_WIDTH, WATER_Z, MANSION, FUEL_STATIONS, OVERLOOK } from "../world";
+import { G } from "../game/store";
 import type { GameTheme } from "../themes";
 import {
   asphaltTexture, asphaltTextureH, concreteTexture, concreteTextureH,
   facadeTexture, brickTexture, containerTexture, streetSignTexture, neonSignTexture,
+  grassTexture, sandTexture, palmFrondTexture, glowTexture, cloudTexture,
 } from "../textures";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
@@ -41,11 +43,15 @@ function makeHillSignTexture(): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c); t.anisotropy = 4; return t;
 }
 function makeSkyTexture(): THREE.CanvasTexture {
+  // richer gradient: deep teal zenith → saturated azure → amber → coral
+  // horizon. Midday reads as rich blue, never the washed white of before
+  // (the pale mid-tones are gone; brightness is capped by the dome tint).
   const c = document.createElement("canvas"); c.width = 64; c.height = 512;
   const g = c.getContext("2d")!;
   const grad = g.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0, "#7fb6c4"); grad.addColorStop(0.52, "#cfd8ce");
-  grad.addColorStop(0.72, "#ffd9a0"); grad.addColorStop(0.82, "#ffb066"); grad.addColorStop(1, "#e88a4e");
+  grad.addColorStop(0, "#1d5f7a"); grad.addColorStop(0.34, "#3d8fa8");
+  grad.addColorStop(0.55, "#79b4c0"); grad.addColorStop(0.72, "#f2c184");
+  grad.addColorStop(0.85, "#ff9a5c"); grad.addColorStop(1, "#e2703a");
   g.fillStyle = grad; g.fillRect(0, 0, 64, 512);
   return new THREE.CanvasTexture(c);
 }
@@ -56,6 +62,12 @@ const SIGNS: { text: string; bg: string; fg: string; pos: [number, number, numbe
   { text: "SABLE FISH CO.", bg: "#274268", fg: "#ffe9a8", pos: [-80, 5, 93], rot: Math.PI },
   { text: "MARKET ROW", bg: "#946b2d", fg: "#ffffff", pos: [20, 6, 13], rot: 0 },
   { text: "FERRY AHOY", bg: "#17605c", fg: "#fef9c3", pos: [-93, 5, 60], rot: Math.PI / 2 },
+  // ---- Phase 2 billboards: original Port Sable brands ----
+  { text: "SABLE COLA — TASTE THE HARBOUR", bg: "#7a1f1f", fg: "#ffe9c9", pos: [-45, 9, -55], rot: 0.5 },
+  { text: "GULLWING GT — OWN THE COAST ROAD", bg: "#101c26", fg: "#9fd8e8", pos: [52, 9.5, -2], rot: -Math.PI / 2 },
+  { text: "HOTEL SABLE ★ BAY VIEW SUITES", bg: "#12303f", fg: "#f2c14e", pos: [8, 9, 55], rot: Math.PI },
+  { text: "PORT FERRY — CROSS THE BAY", bg: "#14532d", fg: "#eaf6ff", pos: [-52, 8.5, -112], rot: 0.25 },
+  { text: "LINA'S GARAGE — WE FIX ANYTHING", bg: "#2a2118", fg: "#ffb703", pos: [104, 9.5, 78], rot: -0.7 },
 ];
 const STREET_SIGNS = [
   { text: "HARBOUR AVE", pos: [26.8, 13.2] as const, rot: 0 },
@@ -67,34 +79,50 @@ const LIGHT_SPOTS: [number, number][] = [[-20, -20], [-20, 20], [20, -20], [20, 
 const CONTAINER_COLORS = ["#b3402e", "#2e5f8a", "#3f7a4d", "#c9711f", "#6a7076", "#7a4a6b"];
 
 function Tree({ x, z, scale }: { x: number; z: number; scale: number }) {
+  // rebuilt pine: tapered trunk + THREE jittered foliage layers (dark rich
+  // greens, smooth shading) + a rounded bush blob at the base on some trees
+  const j = (n: number) => ((Math.sin(x * 12.9898 + z * 78.233 + n * 37.7) * 43758.5453) % 1) * 0.16;
+  const bush = Math.abs(Math.sin(x * 3.1 + z * 1.7)) > 0.45;
   return (
     <group position={[x, 0, z]} scale={scale}>
-      <mesh position={[0, 0.9, 0]} castShadow><cylinderGeometry args={[0.16, 0.24, 1.8, 5]} /><meshStandardMaterial color="#76553b" flatShading /></mesh>
-      <mesh position={[0, 2.1, 0]} castShadow><coneGeometry args={[1.05, 2.1, 6]} /><meshStandardMaterial color="#2e7d5b" flatShading /></mesh>
-      <mesh position={[0, 2.9, 0]} castShadow><coneGeometry args={[0.72, 1.75, 6]} /><meshStandardMaterial color="#43a06a" flatShading /></mesh>
+      <mesh position={[0, 0.85, 0]} castShadow><cylinderGeometry args={[0.13, 0.22, 1.7, 7]} /><meshStandardMaterial color="#5f4630" roughness={0.95} /></mesh>
+      <mesh position={[j(1), 2.0, j(2)]} castShadow><coneGeometry args={[1.12, 2.2, 9]} /><meshStandardMaterial color="#1f5c3d" roughness={0.9} /></mesh>
+      <mesh position={[j(3), 2.85, j(4)]} castShadow><coneGeometry args={[0.88, 1.9, 9]} /><meshStandardMaterial color="#276e47" roughness={0.9} /></mesh>
+      <mesh position={[j(5), 3.6, j(6)]} castShadow><coneGeometry args={[0.6, 1.55, 9]} /><meshStandardMaterial color="#2f7d4f" roughness={0.9} /></mesh>
+      {bush && <mesh position={[0.85, 0.42, 0.5]} castShadow><icosahedronGeometry args={[0.55, 1]} /><meshStandardMaterial color="#24513a" roughness={0.95} /></mesh>}
+      {bush && <mesh position={[-0.7, 0.34, -0.55]} castShadow><icosahedronGeometry args={[0.44, 1]} /><meshStandardMaterial color="#2c5f42" roughness={0.95} /></mesh>}
     </group>
   );
 }
 
+// shared frond material (canvas palm-leaf alpha texture, double-sided)
+let _frondMat: THREE.MeshStandardMaterial | null = null;
+function frondMat(): THREE.MeshStandardMaterial {
+  if (!_frondMat) _frondMat = new THREE.MeshStandardMaterial({ map: palmFrondTexture(), alphaTest: 0.32, side: THREE.DoubleSide, roughness: 0.85, color: "#d8e8c8" });
+  return _frondMat;
+}
 function PalmTree({ x, z, scale, lean }: { x: number; z: number; scale: number; lean: number }) {
-  const topX = lean * 1.6;
+  // rebuilt palm: TALL curved trunk (4 stacked, offset segments) + crown of
+  // 8 feathered fronds — boulevard rows reach ~8-10u like the references
+  const topX = lean * 2.6;
   return (
     <group position={[x, 0, z]} scale={scale}>
-      {[0, 1, 2].map((i) => (
-        <mesh key={i} position={[lean * i * i * 0.22, 0.75 + i * 1.35, 0]} rotation={[0, 0, -lean * 0.55]} castShadow>
-          <cylinderGeometry args={[0.13 - i * 0.025, 0.17 - i * 0.025, 1.6, 6]} /><meshStandardMaterial color="#8a6b48" flatShading />
+      {[0, 1, 2, 3].map((i) => (
+        <mesh key={i} position={[lean * i * i * 0.16, 0.85 + i * 1.42, 0]} rotation={[0, 0, -lean * 0.5]} castShadow>
+          <cylinderGeometry args={[0.145 - i * 0.018, 0.175 - i * 0.018, 1.75, 7]} /><meshStandardMaterial color="#7d5f3d" roughness={0.95} />
         </mesh>
       ))}
-      <group position={[topX, 4.35, 0]}>
-        {[0, 1, 2, 3, 4, 5].map((k) => (
-          <group key={k} rotation={[0, (k * Math.PI) / 3, 0]}>
-            <mesh position={[1.05, -0.12, 0]} rotation={[0, 0, -0.42]}>
-              <planeGeometry args={[2.3, 0.55]} />
-              <meshStandardMaterial color="#3f9e57" side={THREE.DoubleSide} flatShading />
+      <group position={[topX, 6.15, 0]}>
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((k) => (
+          <group key={k} rotation={[0, (k * Math.PI) / 4 + (k % 2) * 0.2, 0]}>
+            <mesh position={[1.25, 0.1, 0]} rotation={[0, 0, -0.38 - (k % 3) * 0.09]} castShadow>
+              <planeGeometry args={[2.9, 1.05]} />
+              <primitive object={frondMat()} attach="material" />
             </mesh>
           </group>
         ))}
-        <mesh position={[0, -0.08, 0]}><sphereGeometry args={[0.17, 7, 6]} /><meshStandardMaterial color="#6b4a2f" /></mesh>
+        <mesh position={[0.12, -0.14, 0.06]}><sphereGeometry args={[0.15, 7, 6]} /><meshStandardMaterial color="#6b4a2f" roughness={0.9} /></mesh>
+        <mesh position={[-0.14, -0.17, -0.05]}><sphereGeometry args={[0.13, 7, 6]} /><meshStandardMaterial color="#75552f" roughness={0.9} /></mesh>
       </group>
     </group>
   );
@@ -137,6 +165,27 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
     neonSignTexture("CLUB SOLACE", "#2ee6c8"),
   ], []);
   const streetTex = useMemo(() => STREET_SIGNS.map((s) => streetSignTexture(s.text)), []);
+  const grassTex = useMemo(() => grassTexture(), []);
+  const sandTex = useMemo(() => sandTexture(), []);
+  const glowTexW = useMemo(() => glowTexture(), []);
+  const sunDiscRef = useRef<THREE.Group>(null);
+  const cloudGroup = useRef<THREE.Group>(null);
+  const cloudMaterial = useMemo(() => new THREE.SpriteMaterial({ map: cloudTexture(), transparent: true, opacity: 0.55, depthWrite: false, fog: false }), []);
+  const lampGlowMat = useRef<THREE.PointsMaterial>(null);
+  const lampGlowGeo = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    const arr = new Float32Array(lamps.length * 3);
+    lamps.forEach(([x, , z], i) => { arr[i * 3] = x; arr[i * 3 + 1] = 5.6; arr[i * 3 + 2] = z; });
+    g.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+    return g;
+  }, []);
+  const clouds = useMemo(() => Array.from({ length: 11 }, (_, i) => {
+    const a = (i / 11) * Math.PI * 2 + srnd() * 0.5;
+    const r = 70 + srnd() * 110;
+    return { x: Math.cos(a) * r, z: Math.sin(a) * r - 20, y: 58 + srnd() * 30, s: 46 + srnd() * 42, drift: 0.5 + srnd() * 0.7 };
+  }), []);
+  const fuelTex = useMemo(() => FUEL_STATIONS.map((s) => makeSignTexture(`⛽ FUEL · ${s.name.toUpperCase()}`, "#7a1f1f", "#ffe9c9", 512)), []);
+  const overlookTex = useMemo(() => makeSignTexture("PORT SABLE OVERLOOK", "#12303f", "#f2c14e", 512), []);
 
   // ---- ground materials (wet-look at night: roughness drops as night rises)
   const mats = useMemo(() => {
@@ -148,9 +197,9 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
     return {
       asphaltV: new THREE.MeshStandardMaterial({ map: aV, roughness: rough, metalness: 0.04 + night * 0.1 }),
       asphaltH: new THREE.MeshStandardMaterial({ map: aH, roughness: rough, metalness: 0.04 + night * 0.1 }),
-      concreteV: new THREE.MeshStandardMaterial({ map: cV, roughness: 0.95 }),
-      concreteH: new THREE.MeshStandardMaterial({ map: cH, roughness: 0.95 }),
-      curb: new THREE.MeshStandardMaterial({ map: cV, color: "#a09c92", roughness: 0.95 }),
+      concreteV: new THREE.MeshStandardMaterial({ map: cV, color: "#b0aa9e", roughness: 0.95 }),
+      concreteH: new THREE.MeshStandardMaterial({ map: cH, color: "#b0aa9e", roughness: 0.95 }),
+      curb: new THREE.MeshStandardMaterial({ map: cV, color: "#8f8a80", roughness: 0.95 }),
       edge: new THREE.MeshStandardMaterial({ color: "#e9e7de", roughness: 0.7, transparent: true, opacity: 0.78 }),
       yellow: new THREE.MeshStandardMaterial({ color: "#d9a41c", roughness: 0.7, transparent: true, opacity: 0.92 }),
     };
@@ -210,7 +259,7 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       let m = cache.get(key);
       if (!m) {
         m = kind === "glass"
-          ? new THREE.MeshStandardMaterial({ color: "#7fb0cc", map: facadeTexture(), roughness: 0.16, metalness: 0.55 })
+          ? new THREE.MeshStandardMaterial({ color: "#39657f", map: facadeTexture(), roughness: 0.1, metalness: 0.6, envMapIntensity: 1.25 })
           : new THREE.MeshStandardMaterial({ color: b.color, map: kind === "brick" ? brickTexture() : facadeTexture(), roughness: 0.92 });
         cache.set(key, m);
       }
@@ -271,6 +320,41 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
     }
     // club queue idle sway
     clubQueue.forEach((rig, i) => animateHumanoid(rig, 0, 0, t + i * 2.4));
+    // rain gloss: wet asphalt gets darker + shinier as rain builds up;
+    // at night in rain it goes near-mirror (target: wet neon streets)
+    const wet = 1 - G.rainAmt * (0.5 + night * 0.38);
+    let rough = (0.96 - night * 0.5) * wet;
+    if (night > 0.45 && G.rainAmt > 0.25) rough = Math.max(0.15, rough);
+    mats.asphaltV.roughness = rough;
+    mats.asphaltH.roughness = rough;
+    mats.asphaltV.metalness = 0.04 + night * 0.1 + G.rainAmt * 0.12;
+    mats.asphaltH.metalness = mats.asphaltV.metalness;
+    // sun disc + warm glow riding the day cycle (low amber disc at dusk)
+    if (sunDiscRef.current) {
+      const ang = G.dayTime * Math.PI * 2 - Math.PI / 2;
+      const el = Math.sin(ang);
+      sunDiscRef.current.position.set(Math.cos(ang) * 172, Math.max(4, el * 148), 46);
+      sunDiscRef.current.visible = el > -0.06;
+      const warm = THREE.MathUtils.clamp(1 - Math.abs(el) * 2.2, 0.25, 1);
+      sunDiscRef.current.children.forEach((ch) => {
+        const m = (ch as THREE.Mesh).material as THREE.MeshBasicMaterial | THREE.SpriteMaterial;
+        if ("color" in m) m.color.setHSL(0.09 + warm * 0.03, 0.85, 0.55 + (1 - warm) * 0.12);
+      });
+    }
+    // clouds: slow drift + dusk tint (warm coral at golden hour, grey in rain)
+    {
+      const ang2 = G.dayTime * Math.PI * 2 - Math.PI / 2;
+      const el2 = Math.sin(ang2);
+      const duskiness = THREE.MathUtils.clamp(1 - Math.abs(el2) * 2.4, 0, 1);
+      const base = new THREE.Color("#f4f6f8").lerp(new THREE.Color("#ffab7a"), duskiness * 0.75);
+      base.lerp(new THREE.Color("#5d6a76"), G.fogAmt * 0.55 + G.rainAmt * 0.3);
+      base.multiplyScalar(1 - night * 0.5);
+      cloudMaterial.color.copy(base);
+      cloudMaterial.opacity = 0.5 + G.fogAmt * 0.25;
+      if (cloudGroup.current) cloudGroup.current.position.x = (t * 0.55) % 30;
+    }
+    // streetlight glow halos (one Points draw): stronger on wet nights
+    if (lampGlowMat.current) lampGlowMat.current.opacity = night * (0.3 + G.rainAmt * 0.3);
   });
 
   return (
@@ -280,12 +364,34 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
         <sphereGeometry args={[195, 20, 14]} />
         <meshBasicMaterial ref={domeMat} map={skyTex} side={THREE.BackSide} fog={false} depthWrite={false} />
       </mesh>
-      {/* ground / grass */}
+      {/* sun disc + halo (positioned by the day cycle in useFrame) */}
+      <group ref={sunDiscRef}>
+        <mesh>
+          <circleGeometry args={[9, 24]} />
+          <meshBasicMaterial color="#ffd9a0" fog={false} depthWrite={false} transparent opacity={0.95} />
+        </mesh>
+        <sprite scale={[64, 64, 1]}>
+          <spriteMaterial map={glowTexW} color="#ffb066" transparent opacity={0.55} fog={false} depthWrite={false} blending={THREE.AdditiveBlending} />
+        </sprite>
+      </group>
+      {/* drifting clouds — soft billboards, tinted warm at dusk */}
+      <group ref={cloudGroup}>
+        {clouds.map((cl, i) => (
+          <sprite key={i} position={[cl.x, cl.y, cl.z]} scale={[cl.s, cl.s * 0.42, 1]}>
+            <primitive object={cloudMaterial} attach="material" />
+          </sprite>
+        ))}
+      </group>
+      {/* streetlight halos — single Points draw, opacity driven at night */}
+      <points geometry={lampGlowGeo} frustumCulled={false}>
+        <pointsMaterial ref={lampGlowMat} map={glowTexW} color={theme.lampGlow} size={6} transparent opacity={0} depthWrite={false} blending={THREE.AdditiveBlending} sizeAttenuation />
+      </points>
+      {/* ground / grass — deep noisy grass texture (no more flat green) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.09, 0]} receiveShadow>
-        <planeGeometry args={[290, 300]} /><meshStandardMaterial color="#5f7f52" />
+        <planeGeometry args={[290, 300]} /><meshStandardMaterial map={grassTex} roughness={1} />
       </mesh>
-      {/* beach sand */}
-      <mesh position={[0, 0.0, 121]} receiveShadow><boxGeometry args={[290, 0.1, 14]} /><meshStandardMaterial color="#e3c98f" /></mesh>
+      {/* beach sand — warm textured sand */}
+      <mesh position={[0, 0.0, 121]} receiveShadow><boxGeometry args={[290, 0.1, 14]} /><meshStandardMaterial map={sandTex} roughness={1} /></mesh>
       {/* harbour water (animated emissive shimmer) */}
       <mesh position={[0, -0.05, WATER_Z + 32]} receiveShadow>
         <boxGeometry args={[290, 0.08, 60]} />
@@ -365,7 +471,7 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       ))}
 
       {/* park lawn */}
-      <mesh position={[80, 0.04, -80]} receiveShadow><boxGeometry args={[32, 0.1, 32]} /><meshStandardMaterial color="#4c8a4f" /></mesh>
+      <mesh position={[80, 0.04, -80]} receiveShadow><boxGeometry args={[32, 0.1, 32]} /><meshStandardMaterial map={grassTex} color="#a8c48e" roughness={1} /></mesh>
 
       {/* ======== BUILDINGS ======== */}
       {buildings.map((b, i) => (
@@ -378,9 +484,30 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
             <boxGeometry args={[b.width + 0.06, b.height * 0.92, b.depth + 0.06]} />
             <primitive object={winMat} attach="material" />
           </mesh>
-          <mesh position={[0, b.height + 0.25, 0]} castShadow>
+          {/* darker ground-floor shopfront band — breaks the flat cube */}
+          <mesh position={[0, 1.32, 0]}>
+            <boxGeometry args={[b.width + 0.12, 2.64, b.depth + 0.12]} />
+            <meshStandardMaterial color="#2b3138" roughness={0.35} metalness={0.25} emissive="#ffca7a" emissiveIntensity={night * 0.22} />
+          </mesh>
+          {/* parapet trim band at the roofline */}
+          <mesh position={[0, b.height + 0.14, 0]} castShadow>
+            <boxGeometry args={[b.width + 0.34, 0.3, b.depth + 0.34]} /><meshStandardMaterial color={b.roof} roughness={0.85} />
+          </mesh>
+          <mesh position={[0, b.height + 0.42, 0]} castShadow>
             <boxGeometry args={[b.width * 0.7, 0.5, b.depth * 0.7]} /><meshStandardMaterial color={b.roof} flatShading />
           </mesh>
+          {/* rooftop props on some roofs: AC units + water tanks */}
+          {i % 4 === 0 && (
+            <mesh position={[b.width * 0.22, b.height + 0.55, b.depth * 0.18]} castShadow>
+              <boxGeometry args={[1.6, 0.85, 1.2]} /><meshStandardMaterial color="#9aa4ac" metalness={0.5} roughness={0.5} />
+            </mesh>
+          )}
+          {i % 7 === 3 && (
+            <group position={[-b.width * 0.24, b.height + 0.3, -b.depth * 0.2]}>
+              <mesh position={[0, 0.75, 0]} castShadow><cylinderGeometry args={[0.85, 0.85, 1.5, 10]} /><meshStandardMaterial color="#7a5c40" roughness={0.8} /></mesh>
+              <mesh position={[0, 1.65, 0]} castShadow><coneGeometry args={[0.95, 0.5, 10]} /><meshStandardMaterial color="#5d4a38" flatShading /></mesh>
+            </group>
+          )}
         </group>
       ))}
       {/* suburb houses */}
@@ -674,6 +801,98 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
           <primitive object={rig.group} />
         </group>
       ))}
+
+      {/* ======== FUEL STATIONS (Phase 2): canopy + pumps + sign ======== */}
+      {FUEL_STATIONS.map((st, i) => (
+        <group key={i} position={[st.x, 0, st.z]}>
+          <mesh position={[0, 0.05, 0]} receiveShadow><boxGeometry args={[9, 0.1, 7]} /><meshStandardMaterial color="#4a4d52" roughness={0.9} /></mesh>
+          {[-3.6, 3.6].map((x) => [-2.6, 2.6].map((z) => (
+            <mesh key={`${x}${z}`} position={[x, 1.8, z]} castShadow><cylinderGeometry args={[0.11, 0.11, 3.6, 6]} /><meshStandardMaterial color="#8a929a" metalness={0.6} roughness={0.4} /></mesh>
+          )))}
+          <mesh position={[0, 3.75, 0]} castShadow><boxGeometry args={[9.4, 0.35, 7.4]} /><meshStandardMaterial color="#7a1f1f" roughness={0.6} /></mesh>
+          <mesh position={[0, 3.52, 0]}><boxGeometry args={[9.5, 0.12, 7.5]} /><meshStandardMaterial color="#ffb703" emissive="#ffb703" emissiveIntensity={0.3 + night * 1.4} /></mesh>
+          {[-1.6, 1.6].map((x) => (
+            <group key={x} position={[x, 0, 0]}>
+              <mesh position={[0, 0.65, 0]} castShadow><boxGeometry args={[0.7, 1.3, 0.45]} /><meshStandardMaterial color="#c8ccd2" roughness={0.4} metalness={0.3} /></mesh>
+              <mesh position={[0, 0.95, 0.24]}><boxGeometry args={[0.45, 0.4, 0.03]} /><meshStandardMaterial color="#9fd8e8" emissive="#9fd8e8" emissiveIntensity={0.4 + night} /></mesh>
+              <mesh position={[0, 0.4, 0.24]}><boxGeometry args={[0.5, 0.18, 0.03]} /><meshStandardMaterial color="#7a1f1f" /></mesh>
+            </group>
+          ))}
+          <mesh position={[0, 2.6, 5.6]}><cylinderGeometry args={[0.07, 0.07, 5.2, 6]} /><meshStandardMaterial color="#39434b" /></mesh>
+          <mesh position={[0, 5.4, 5.6]}>
+            <planeGeometry args={[7.5, 1.9]} />
+            <meshStandardMaterial map={fuelTex[i]} emissive="#ffffff" emissiveMap={fuelTex[i]} emissiveIntensity={0.3 + night * 1.1} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* ======== SCENIC OVERLOOK (Phase 2 — the sunset mood-board shot) ======== */}
+      <group position={[OVERLOOK.x, 0, OVERLOOK.z]}>
+        <mesh position={[0, 0.05, 0]} receiveShadow><boxGeometry args={[17, 0.1, 10.5]} /><meshStandardMaterial color="#3c4148" roughness={0.85} /></mesh>
+        <mesh position={[0, 0.06, 4.6]}><boxGeometry args={[17, 0.02, 0.5]} /><meshStandardMaterial color="#e9e7de" roughness={0.7} /></mesh>
+        {/* guardrail along the drop edge */}
+        {[-7.5, -2.5, 2.5, 7.5].map((x) => (
+          <mesh key={x} position={[x, 0.55, -5]} castShadow><boxGeometry args={[0.14, 1.1, 0.14]} /><meshStandardMaterial color="#8a929a" metalness={0.6} roughness={0.4} /></mesh>
+        ))}
+        <mesh position={[0, 1.02, -5]}><boxGeometry args={[16.5, 0.16, 0.08]} /><meshStandardMaterial color="#aeb6bc" metalness={0.7} roughness={0.3} /></mesh>
+        <mesh position={[0, 0.55, -5]}><boxGeometry args={[16.5, 0.12, 0.06]} /><meshStandardMaterial color="#aeb6bc" metalness={0.7} roughness={0.3} /></mesh>
+        {/* bench facing the bay */}
+        <group position={[-5.5, 0, -3.4]} rotation={[0, Math.PI, 0]}>
+          <mesh position={[0, 0.46, 0.28]} receiveShadow><boxGeometry args={[1.9, 0.09, 0.5]} /><meshStandardMaterial color="#6d4c33" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.85, 0.52]}><boxGeometry args={[1.9, 0.5, 0.07]} /><meshStandardMaterial color="#6d4c33" roughness={0.9} /></mesh>
+          {[-0.8, 0.8].map((x) => <mesh key={x} position={[x, 0.23, 0.28]}><boxGeometry args={[0.09, 0.46, 0.42]} /><meshStandardMaterial color="#2c2f33" /></mesh>)}
+        </group>
+        {/* coin binoculars */}
+        <group position={[3.5, 0, -4.2]}>
+          <mesh position={[0, 0.65, 0]} castShadow><cylinderGeometry args={[0.09, 0.13, 1.3, 8]} /><meshStandardMaterial color="#9aa4ac" metalness={0.7} roughness={0.3} /></mesh>
+          <mesh position={[0, 1.45, 0]} castShadow><boxGeometry args={[0.55, 0.34, 0.4]} /><meshStandardMaterial color="#b8bfc4" metalness={0.7} roughness={0.25} /></mesh>
+          {[-0.14, 0.14].map((x) => (
+            <mesh key={x} position={[x, 1.45, -0.28]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.07, 0.09, 0.18, 8]} /><meshStandardMaterial color="#274b5e" roughness={0.15} /></mesh>
+          ))}
+        </group>
+        <mesh position={[-8.6, 1.5, 3.8]}><cylinderGeometry args={[0.06, 0.06, 3, 6]} /><meshStandardMaterial color="#39434b" /></mesh>
+        <mesh position={[-8.6, 3.2, 3.8]}>
+          <planeGeometry args={[5.6, 1.4]} />
+          <meshStandardMaterial map={overlookTex} emissive="#ffffff" emissiveMap={overlookTex} emissiveIntensity={0.25 + night * 0.8} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
+
+      {/* ======== BAY BRIDGE (Phase 2 scenery): suspension bridge over the
+           harbour toward a hazy far shore — pure backdrop, not drivable ======== */}
+      <group position={[64, 0, 0]}>
+        <mesh position={[0, 5.6, 163]} receiveShadow><boxGeometry args={[11, 0.8, 78]} /><meshStandardMaterial color="#3f464d" roughness={0.7} metalness={0.2} /></mesh>
+        <mesh position={[0, 6.05, 163]}><boxGeometry args={[11.3, 0.14, 78]} /><meshStandardMaterial color="#59616a" roughness={0.6} /></mesh>
+        {[-5.2, 5.2].map((x) => (
+          <group key={x}>
+            <mesh position={[x, 6.6, 163]}><boxGeometry args={[0.18, 1.1, 78]} /><meshStandardMaterial color="#aeb6bc" metalness={0.7} roughness={0.35} /></mesh>
+            {[140, 180].map((z) => (
+              <mesh key={z} position={[x, 15, z]} castShadow><boxGeometry args={[0.9, 19, 0.9]} /><meshStandardMaterial color="#7d8894" metalness={0.5} roughness={0.45} /></mesh>
+            ))}
+            <mesh position={[x, 24.6, 140]}><boxGeometry args={[1, 1, 1]} /><meshStandardMaterial color="#7d8894" /></mesh>
+            <mesh position={[x, 24.6, 180]}><boxGeometry args={[1, 1, 1]} /><meshStandardMaterial color="#7d8894" /></mesh>
+            {/* main cables: tower-top → deck anchors (thin rotated boxes) */}
+            <mesh position={[x, 15.5, 134]} rotation={[2.09, 0, 0]}><boxGeometry args={[0.14, 0.14, 24.2]} /><meshStandardMaterial color="#22262b" /></mesh>
+            <mesh position={[x, 15.5, 160]} rotation={[0.81, 0, 0]}><boxGeometry args={[0.14, 0.14, 29]} /><meshStandardMaterial color="#22262b" /></mesh>
+            <mesh position={[x, 15.5, 160]} rotation={[2.33, 0, 0]}><boxGeometry args={[0.14, 0.14, 29]} /><meshStandardMaterial color="#22262b" /></mesh>
+            <mesh position={[x, 15.5, 189]} rotation={[0.86, 0, 0]}><boxGeometry args={[0.14, 0.14, 27.9]} /><meshStandardMaterial color="#22262b" /></mesh>
+            {/* hangers */}
+            {[146, 154, 166, 174].map((z) => (
+              <mesh key={z} position={[x, 15.5, z]}><boxGeometry args={[0.07, 18, 0.07]} /><meshStandardMaterial color="#2c3138" /></mesh>
+            ))}
+          </group>
+        ))}
+        {[140, 160, 180].map((z) => (
+          <mesh key={z} position={[0, 2.2, z]}><boxGeometry args={[9, 5.2, 1.6]} /><meshStandardMaterial color="#5a646c" roughness={0.7} /></mesh>
+        ))}
+        {/* far shore silhouette across the bay */}
+        <mesh position={[-64, 0.4, 212]} receiveShadow><boxGeometry args={[290, 1.2, 26]} /><meshStandardMaterial color="#46604f" roughness={1} /></mesh>
+        {[-120, -88, -54, -20, 18, 52, 88, 124].map((x, i) => (
+          <mesh key={x} position={[x - 64, 5 + (i % 4) * 2.4, 214 + (i % 3) * 3]}>
+            <boxGeometry args={[13 + (i % 3) * 4, 10 + (i % 4) * 5, 9]} />
+            <meshStandardMaterial color="#33454f" roughness={0.9} emissive="#ffca7a" emissiveIntensity={night * 0.35} />
+          </mesh>
+        ))}
+      </group>
 
       {/* ======== parked motorcycles (props, non-drivable) ======== */}
       {[
