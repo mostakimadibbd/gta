@@ -15,7 +15,9 @@ export const PIER_SPAWN = { x: 0, z: 112 };
 export const HOSPITAL = { x: -100, z: 100 }; // respawn point (corner)
 export const GARAGE = { x: -40, z: -34 }; // Lina's garage marker area (roadside)
 
-export interface Building { x: number; z: number; width: number; depth: number; height: number; color: string; roof: string; district: string; }
+export interface Building { x: number; z: number; width: number; depth: number; height: number; color: string; roof: string; district: string; glass?: boolean; }
+export interface House { x: number; z: number; rot: number; color: string; roof: string; }
+export const houses: House[] = [];
 export interface TreeSpot { x: number; z: number; scale: number; }
 export interface PropSpot { x: number; z: number; kind: "bench" | "hydrant" | "crate"; rot: number; }
 
@@ -49,6 +51,7 @@ for (const bx of BLOCK_CENTERS) {
     }
     const spots: [number, number][] = [[-9, -9], [9, -9], [0, 10]];
     for (const [ox, oz] of spots) {
+      if (bx === -80 && bz === 80 && ox === 0 && oz === 10) continue; // mansion plot (SW block)
       if (rnd() < 0.12) { trees.push({ x: bx + ox, z: bz + oz, scale: 0.8 + rnd() * 0.4 }); continue; }
       const w = 9 + rnd() * 5, d = 9 + rnd() * 5;
       buildings.push({
@@ -65,6 +68,29 @@ for (const bx of BLOCK_CENTERS) {
     if (bz > 60) props.push({ x: bx + 12, z: bz - 15, kind: "crate", rot: rnd() });
   }
 }
+// ---- Downtown skyline: tall glass towers on free spots of central blocks
+// (generated building spots are (-9,-9), (9,-9), (0,10); towers use (9,10)).
+const towerBlocks: [number, number][] = [[0, 0], [-40, 0], [40, 0], [0, -40], [0, 40], [-40, -40], [40, 40], [-40, 40], [40, -40]];
+towerBlocks.forEach(([bx, bz], i) => {
+  buildings.push({
+    x: bx + 9, z: bz + 10, width: 11, depth: 11,
+    height: 34 + ((i * 7) % 21), // 34–54u
+    color: "#5d94b8", roof: "#274b5e", district: "Downtown", glass: true,
+  });
+});
+// ---- Suburbs (west edge, Ferry Quarter): low houses with lawns/driveways
+for (const bz of [-40, 0, 40]) {
+  houses.push({ x: -80 + 14, z: bz + 6, rot: -Math.PI / 2, color: "#e6ddcb", roof: "#8a4a3a" });
+  houses.push({ x: -80 - 14, z: bz + 12, rot: Math.PI / 2, color: "#cfdde8", roof: "#4a5a6a" });
+  houses.push({ x: -80 + 13, z: bz - 13, rot: -Math.PI / 2, color: "#efe3c2", roof: "#6a7a4a" });
+}
+// ---- Palm trees: beach row + harbour boulevard (visual only, thin trunks
+// are excluded from isBlocked so they never trap the player)
+export const palms: { x: number; z: number; scale: number; lean: number }[] = [];
+for (let x = -105; x <= 105; x += 21) palms.push({ x, z: 117.5, scale: 0.95 + rnd() * 0.35, lean: (rnd() - 0.5) * 0.24 });
+for (let z = -58; z <= 58; z += 29) { palms.push({ x: 27.6, z, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); palms.push({ x: -27.6, z: z + 14, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); }
+palms.push({ x: 14, z: 116, scale: 1.15, lean: 0.12 }, { x: -14, z: 116, scale: 1.1, lean: -0.1 });
+
 // street trees + lamps along roads
 for (const c of ROAD_COORDS) {
   for (let t = -110; t <= 110; t += 22) {
@@ -79,7 +105,10 @@ export function isOnRoad(x: number, z: number): boolean {
   return ROAD_COORDS.some((c) => Math.abs(x - c) < ROAD_WIDTH / 2 || Math.abs(z - c) < ROAD_WIDTH / 2);
 }
 
+export const MANSION = { x: -80, z: 90 }; // luxury house, SW block (plot cleared above)
+
 export function isBlocked(x: number, z: number, radius: number): boolean {
+  if (Math.abs(x - MANSION.x) < 6.6 + radius && Math.abs(z - MANSION.z) < 4.6 + radius) return true;
   if (Math.abs(x) > WORLD_BOUND + 8 || z < -WORLD_BOUND - 8 || z > WATER_Z + 6) return true;
   for (const b of buildings) {
     if (Math.abs(x - b.x) < b.width / 2 + radius && Math.abs(z - b.z) < b.depth / 2 + radius) return true;
@@ -87,6 +116,9 @@ export function isBlocked(x: number, z: number, radius: number): boolean {
   for (const t of trees) {
     const dx = x - t.x, dz = z - t.z;
     if (dx * dx + dz * dz < (radius + 0.7) ** 2) return true;
+  }
+  for (const h of houses) {
+    if (Math.abs(x - h.x) < 3.1 + radius && Math.abs(z - h.z) < 2.9 + radius) return true;
   }
   return false;
 }
@@ -99,15 +131,15 @@ export function nearestIntersection(x: number, z: number): [number, number] {
 }
 
 // ---- Drivable parked cars (original model names, Harborfall range) ----
-export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe"; owned: boolean; }
+export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic"; owned: boolean; }
 export const CAR_SPAWNS: CarSpawn[] = [
   { id: 0, x: 3, z: 106, heading: Math.PI, color: "#1f7a72", model: "Sable Sprinter", kind: "sedan", owned: true },   // Rayan's own car at the pier
   { id: 1, x: -17, z: -40, heading: Math.PI / 2, color: "#d99a3d", model: "Harbor Hauler", kind: "pickup", owned: false },
-  { id: 2, x: 23, z: 20, heading: -Math.PI / 2, color: "#7a4a2b", model: "Gullwing GT", kind: "coupe", owned: false },
-  { id: 3, x: -57, z: 60, heading: 0, color: "#4a6b8a", model: "Ferry Van", kind: "van", owned: false },
-  { id: 4, x: 63, z: -20, heading: Math.PI, color: "#8a3324", model: "Yardbird", kind: "hatch", owned: false },
+  { id: 2, x: 23, z: 20, heading: -Math.PI / 2, color: "#c22e2e", model: "Gullwing GT", kind: "supercar", owned: false },
+  { id: 3, x: -57, z: 60, heading: 0, color: "#4a6b8a", model: "Ferry Rover", kind: "suv", owned: false },
+  { id: 4, x: 63, z: -20, heading: Math.PI, color: "#8a3324", model: "Yardbird", kind: "muscle", owned: false },
   { id: 5, x: -97, z: -60, heading: Math.PI / 2, color: "#5c6650", model: "Sable Sprinter", kind: "sedan", owned: false },
-  { id: 6, x: 37, z: 80, heading: -Math.PI / 2, color: "#c7b299", model: "Dune Buggy '74", kind: "coupe", owned: false },
+  { id: 6, x: 37, z: 80, heading: -Math.PI / 2, color: "#3f7fae", model: "Dune Classic '74", kind: "classic", owned: false },
   { id: 7, x: -23, z: -100, heading: 0, color: "#2e4a5a", model: "Harbor Hauler", kind: "pickup", owned: false },
   { id: 8, x: 97, z: 40, heading: Math.PI, color: "#946b2d", model: "Ferry Van", kind: "van", owned: false },
   { id: 9, x: -63, z: -20, heading: Math.PI / 2, color: "#6b3a4a", model: "Yardbird", kind: "hatch", owned: false },

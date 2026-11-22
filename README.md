@@ -41,7 +41,7 @@ corrupt harbour boss's debt ledger.
   timer, glowing objective pillar in the world.
 - **Day cycle** — sun moves, dusk turns to night, windows and lamps glow.
 - **Personal themes** — 5 full-game themes (below), saved automatically.
-- **Audio / SFX** — all WebAudio-synthesised, no audio files: engine hum tied to speed, police siren wail while wanted, crash impact + thud, car horn (**B** on keyboard, HORN button on touch), door, jump/land, tyre skid, wanted-star sting, dialogue blips, UI clicks, pickup/cash chimes, mission-complete jingle, BUSTED sting and fail tone. **N** mutes everything.
+- **Audio / SFX + opening theme** — all WebAudio-synthesised, no audio files. The start screen plays **"Port Sable Sunset"**, an original opening theme composed for Harborfall (sunset synth-jazz: warm pads, sub bass, soft drums, sax-style lead — written for this game, not copied from any other game's music); it fades out when you press Play. In-game SFX: engine hum tied to speed, police siren wail while wanted, crash impact + thud, car horn (**B** on keyboard, HORN button on touch), door, jump/land, tyre skid, wanted-star sting, dialogue blips, UI clicks, pickup/cash chimes, mission-complete jingle, BUSTED sting and fail tone. **N** mutes everything, theme included.
 - **Multiplayer (optional)** — WebSocket rooms via the Python server;
   remote players render in your city. Single-player needs no server.
 
@@ -138,6 +138,13 @@ npm run dist:win   # or dist:mac — build on the target OS, or use GitHub Actio
 2. Set **Root Directory = `client`** (Framework Preset: Vite — `client/vercel.json` already sets build `npm run build`, output `dist`, SPA fallback).
 3. Click **Deploy** — done. Share the link; the game is fully playable with **no env vars** (single-player/offline).
 4. Optional multiplayer: host `server/` on any ASGI host with WebSockets, then add env var `VITE_MULTIPLAYER_SERVER_URL=wss://<your-server>/ws` and redeploy.
+
+**Server deploy (fixed — the server ships with a deploy pack for every host):**
+- **Render:** this repo's root `render.yaml` defines the `harborfall-server` web service automatically (rootDir `server`, health check `/health`).
+- **Railway / Heroku-style:** `server/Procfile` runs `uvicorn main:app` on `$PORT`; `server/runtime.txt` pins Python 3.12.
+- **Docker / Fly.io / any VPS:** `server/Dockerfile` (python:3.12-slim) — `docker build -t harborfall-server server/ && docker run -p 8765:8765 harborfall-server`.
+- **Vercel (HTTP/health only):** create a *separate* Vercel project with **Root Directory = `server`** — `server/vercel.json` routes everything to the FastAPI app. Note: Vercel serverless does not keep WebSockets open, so multiplayer needs Render/Railway/Fly/Docker above; the game itself is fully playable single-player without the server.
+- Dependencies are intentionally slim (`fastapi` + plain `uvicorn`) so installs never fail on native builds.
 
 A repo-root `vercel.json` is also included, so importing with the root as
 the project root works too (it builds `client/` explicitly).

@@ -7,6 +7,24 @@ import { ROAD_COORDS, isBlocked } from "../world";
 import { fallbackPhysics, type PhysicsEngine } from "../physics/GamePhysics";
 import type { GameTheme } from "../themes";
 import { sfx } from "../game/audio";
+import CarBody, { type CarKind } from "./CarBody";
+import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
+
+const TRAFFIC_KINDS: CarKind[] = ["sedan", "suv", "muscle", "sedan", "supercar", "classic", "pickup", "hatch", "coupe", "suv", "muscle", "sedan"];
+// Mood-board pedestrian variety: 10 outfit combos (male + female, tees,
+// tanks, hoodies, varsity, crop, shorts, caps, shades, tattoo sleeve…)
+const PED_OUTFITS = [
+  { gender: "m" as const, topStyle: "tee" as const, bottom: "#2b3440", bottomStyle: "jeans" as const, skin: "#c68863", hair: "#14100e", hairStyle: "cap" as const, sunglasses: false, cap: undefined as string | undefined, tattoo: false, necklace: false },
+  { gender: "f" as const, topStyle: "tank" as const, bottom: "#274268", bottomStyle: "jeans" as const, skin: "#f1c27d", hair: "#2d1d12", hairStyle: "bun" as const, sunglasses: false, cap: undefined, tattoo: false, necklace: true },
+  { gender: "m" as const, topStyle: "hoodie" as const, bottom: "#3a3f4a", bottomStyle: "jeans" as const, skin: "#ffdbac", hair: "#4a2f1a", hairStyle: "flat" as const, sunglasses: false, cap: undefined, tattoo: false, necklace: false },
+  { gender: "f" as const, topStyle: "crop" as const, bottom: "#e8e4da", bottomStyle: "shorts" as const, skin: "#e0ac69", hair: "#14100e", hairStyle: "ponytail" as const, sunglasses: true, cap: undefined, tattoo: false, necklace: false },
+  { gender: "m" as const, topStyle: "varsity" as const, bottom: "#232c38", bottomStyle: "jeans" as const, skin: "#6b4423", hair: "#14100e", hairStyle: "cap" as const, sunglasses: false, cap: "#b3312c", tattoo: false, necklace: false },
+  { gender: "f" as const, topStyle: "tee" as const, bottom: "#5c4a32", bottomStyle: "shorts" as const, skin: "#8d5524", hair: "#b5522a", hairStyle: "bun" as const, sunglasses: false, cap: undefined, tattoo: true, necklace: false },
+  { gender: "m" as const, topStyle: "tank" as const, bottom: "#313d33", bottomStyle: "jeans" as const, skin: "#e0ac69", hair: "#20242a", hairStyle: "flat" as const, sunglasses: true, cap: undefined, tattoo: true, necklace: true },
+  { gender: "f" as const, topStyle: "hoodie" as const, bottom: "#40342a", bottomStyle: "jeans" as const, skin: "#c68863", hair: "#4a2f1a", hairStyle: "ponytail" as const, sunglasses: false, cap: undefined, tattoo: false, necklace: false },
+  { gender: "m" as const, topStyle: "tee" as const, bottom: "#274268", bottomStyle: "shorts" as const, skin: "#f1c27d", hair: "#777777", hairStyle: "cap" as const, sunglasses: false, cap: "#274268", tattoo: false, necklace: true },
+  { gender: "f" as const, topStyle: "varsity" as const, bottom: "#2b3440", bottomStyle: "jeans" as const, skin: "#ffdbac", hair: "#2d1d12", hairStyle: "bun" as const, sunglasses: true, cap: undefined, tattoo: false, necklace: false },
+];
 
 export interface SysCallbacks {
   dialogue: (lines: { who: string; text: string }[], after: () => void) => void;
@@ -52,9 +70,19 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   initWorld();
   const trafficRefs = useRef<Array<THREE.Group | null>>([]);
   const pedRefs = useRef<Array<THREE.Group | null>>([]);
-  const pedArms = useRef<Array<[THREE.Group | null, THREE.Group | null]>>([]);
+  const pedRigs = useMemo<HumanoidRig[]>(() => G.peds.map((pd, i) => {
+    const o = PED_OUTFITS[i % PED_OUTFITS.length];
+    return buildHumanoid({
+      top: pd.color, sleeve: "#e8e4da", bottom: o.bottom, skin: o.skin, hair: o.hair,
+      shoes: i % 2 ? "#2a2019" : "#14161a", topStyle: o.topStyle, bottomStyle: o.bottomStyle,
+      gender: o.gender, hairStyle: o.hairStyle, sunglasses: o.sunglasses, cap: o.cap,
+      tattooSleeve: o.tattoo, necklace: o.necklace,
+    });
+  }), []);
   const copRefs = useRef<Array<THREE.Group | null>>([]);
   const copLights = useRef<Array<[THREE.Mesh | null, THREE.Mesh | null]>>([]);
+  const heliRef = useRef<THREE.Group>(null);
+  const heliRotor = useRef<THREE.Mesh>(null);
   const beam = useRef<THREE.Group>(null);
   const sun = useRef<THREE.DirectionalLight>(null);
   const amb = useRef<THREE.AmbientLight>(null);
@@ -243,10 +271,22 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.position.set(c.x, 0, c.z); g.rotation.y = c.heading; } });
       G.peds.forEach((pd, i) => {
         const g = pedRefs.current[i]; if (!g) return;
-        g.position.set(pd.x, Math.abs(Math.sin(pd.swing)) * 0.06, pd.z); g.rotation.y = pd.heading;
-        const arms = pedArms.current[i];
-        if (arms) { if (arms[0]) arms[0].rotation.x = Math.sin(pd.swing) * 0.6; if (arms[1]) arms[1].rotation.x = -Math.sin(pd.swing) * 0.6; }
+        g.position.set(pd.x, 0, pd.z); g.rotation.y = pd.heading;
+        const rig = pedRigs[i];
+        if (rig) animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
       });
+      // police helicopter at high heat: slow orbit above the player
+      if (heliRef.current) {
+        const show = G.wanted >= 4;
+        heliRef.current.visible = show;
+        if (show) {
+          const hx = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.x : G.playerPos.x;
+          const hz = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.z : G.playerPos.z;
+          heliRef.current.position.set(hx + Math.sin(tt * 0.35) * 11, 17 + Math.sin(tt * 0.8) * 1.3, hz + Math.cos(tt * 0.35) * 11);
+          heliRef.current.rotation.y = tt * 0.35 + Math.PI / 2;
+          if (heliRotor.current) heliRotor.current.rotation.y = tt * 30;
+        }
+      }
       G.cops.forEach((c, i) => {
         const g = copRefs.current[i]; if (!g) return;
         g.visible = c.active; g.position.set(c.x, 0, c.z); g.rotation.y = c.heading;
@@ -268,48 +308,42 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       <directionalLight ref={sun} castShadow position={[40, 50, 30]} intensity={theme.sunIntensity}
         shadow-mapSize-width={1024} shadow-mapSize-height={1024}
         shadow-camera-left={-70} shadow-camera-right={70} shadow-camera-top={70} shadow-camera-bottom={-70} shadow-bias={-0.00015} />
-      {/* traffic */}
+      {/* traffic — detailed bodies, classes cycle like the mood board */}
       {G.traffic.map((c, i) => (
         <group key={i} ref={(n) => { trafficRefs.current[i] = n; }} position={[c.x, 0, c.z]}>
-          <mesh position={[0, 0.6, 0]} castShadow><boxGeometry args={[1.95, 0.6, 3.5]} /><meshStandardMaterial color={c.color} flatShading metalness={0.2} roughness={0.45} /></mesh>
-          <mesh position={[0, 1.12, -0.1]} castShadow><boxGeometry args={[1.45, 0.5, 1.7]} /><meshStandardMaterial color="#cfe8ee" roughness={0.25} /></mesh>
-          {[-1, 1].map((s) => [-1, 1].map((a) => (
-            <mesh key={`${s}${a}`} position={[s * 1.02, 0.35, a * 1.1]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.34, 0.34, 0.2, 8]} /><meshStandardMaterial color="#1d2124" /></mesh>
-          )))}
+          <CarBody kind={TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} />
         </group>
       ))}
-      {/* pedestrians */}
+      {/* pedestrians — articulated humanoids with outfit variety */}
       {G.peds.map((pd, i) => (
         <group key={i} ref={(n) => { pedRefs.current[i] = n; }} position={[pd.x, 0, pd.z]}>
-          <mesh position={[0, 0.95, 0]} castShadow><capsuleGeometry args={[0.3, 0.62, 3, 6]} /><meshStandardMaterial color={pd.color} flatShading /></mesh>
-          <mesh position={[0, 1.62, 0]} castShadow><icosahedronGeometry args={[0.24, 1]} /><meshStandardMaterial color="#d5a77b" flatShading /></mesh>
-          <group ref={(n) => { (pedArms.current[i] ??= [null, null])[0] = n; }} position={[-0.38, 1.25, 0]}>
-            <mesh position={[0, -0.22, 0]}><capsuleGeometry args={[0.09, 0.36, 3, 5]} /><meshStandardMaterial color={pd.color} /></mesh>
-          </group>
-          <group ref={(n) => { (pedArms.current[i] ??= [null, null])[1] = n; }} position={[0.38, 1.25, 0]}>
-            <mesh position={[0, -0.22, 0]}><capsuleGeometry args={[0.09, 0.36, 3, 5]} /><meshStandardMaterial color={pd.color} /></mesh>
-          </group>
-          <mesh position={[-0.15, 0.3, 0]}><capsuleGeometry args={[0.11, 0.4, 3, 5]} /><meshStandardMaterial color="#2b3440" /></mesh>
-          <mesh position={[0.15, 0.3, 0]}><capsuleGeometry args={[0.11, 0.4, 3, 5]} /><meshStandardMaterial color="#2b3440" /></mesh>
+          {pedRigs[i] && <primitive object={pedRigs[i].group} />}
         </group>
       ))}
-      {/* police */}
+      {/* police — sedan body with livery + flashing light bar */}
       {G.cops.map((_c, i) => (
         <group key={i} ref={(n) => { copRefs.current[i] = n; }} visible={false}>
-          <mesh position={[0, 0.62, 0]} castShadow><boxGeometry args={[2, 0.62, 3.6]} /><meshStandardMaterial color="#101418" flatShading /></mesh>
-          <mesh position={[0, 0.62, 0]}><boxGeometry args={[2.02, 0.3, 1.7]} /><meshStandardMaterial color="#f5f5f5" flatShading /></mesh>
-          <mesh position={[0, 1.14, -0.1]} castShadow><boxGeometry args={[1.45, 0.5, 1.7]} /><meshStandardMaterial color="#9fc6d8" roughness={0.25} /></mesh>
-          <mesh position={[-0.45, 1.48, 0]} ref={(n) => { (copLights.current[i] ??= [null, null])[0] = n; }}>
+          <CarBody kind="sedan" color="#12161c" police />
+          <mesh position={[-0.45, 1.44, -0.1]} ref={(n) => { (copLights.current[i] ??= [null, null])[0] = n; }}>
             <boxGeometry args={[0.55, 0.16, 0.4]} /><meshStandardMaterial color="#ff2222" emissive="#ff2222" emissiveIntensity={2} />
           </mesh>
-          <mesh position={[0.45, 1.48, 0]} ref={(n) => { (copLights.current[i] ??= [null, null])[1] = n; }}>
+          <mesh position={[0.45, 1.44, -0.1]} ref={(n) => { (copLights.current[i] ??= [null, null])[1] = n; }}>
             <boxGeometry args={[0.55, 0.16, 0.4]} /><meshStandardMaterial color="#2266ff" emissive="#2266ff" emissiveIntensity={2} />
           </mesh>
-          {[-1, 1].map((s) => [-1, 1].map((a) => (
-            <mesh key={`${s}${a}`} position={[s * 1.03, 0.35, a * 1.15]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.34, 0.34, 0.2, 8]} /><meshStandardMaterial color="#111" /></mesh>
-          )))}
         </group>
       ))}
+      {/* police helicopter: appears at wanted >= 4, hovers near the player
+          with a searchlight cone (visual only) */}
+      <group ref={heliRef} visible={false}>
+        <mesh castShadow rotation={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[0.9, 2.2, 4, 8]} /><meshStandardMaterial color="#14181d" roughness={0.4} metalness={0.4} /></mesh>
+        <mesh position={[0, 0.1, -2.6]}><boxGeometry args={[0.28, 0.28, 2.6]} /><meshStandardMaterial color="#14181d" roughness={0.4} /></mesh>
+        <mesh ref={heliRotor} position={[0, 1.05, 0]}><boxGeometry args={[7.6, 0.05, 0.32]} /><meshStandardMaterial color="#0c0e10" /></mesh>
+        <mesh position={[0, 0.35, -3.8]} rotation={[0, 0, Math.PI / 2]}><boxGeometry args={[1.3, 0.05, 0.2]} /><meshStandardMaterial color="#0c0e10" /></mesh>
+        <mesh position={[0, -3.4, 0]}>
+          <coneGeometry args={[3.4, 6.4, 16, 1, true]} />
+          <meshBasicMaterial color="#ffeeb0" transparent opacity={0.16} side={THREE.DoubleSide} depthWrite={false} />
+        </mesh>
+      </group>
       {/* objective marker: glowing pillar + ring */}
       <group ref={beam} visible={false}>
         <mesh position={[0, 14, 0]}><cylinderGeometry args={[1.1, 1.1, 28, 12, 1, true]} /><meshBasicMaterial color="#ffb703" transparent opacity={0.35} side={THREE.DoubleSide} depthWrite={false} /></mesh>

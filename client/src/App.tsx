@@ -16,7 +16,7 @@ import { M, startPlay, endMission } from "./game/missionState";
 import { STORY_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, type DialogueLine, type MissionDef } from "./game/missions";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
 import { ROAD_COORDS, districtAt } from "./world";
-import { audioTick, initAudio, sfx, toggleMute } from "./game/audio";
+import { audioTick, initAudio, sfx, startMenuTheme, stopMenuTheme, toggleMute } from "./game/audio";
 
 const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
 const tmpV = new THREE.Vector3();
@@ -258,8 +258,18 @@ export default function App() {
   const effectivePaused = paused || !!dialogue || !!hud.status || introIdx >= 0 || !started || showHelp;
   const exitVehicle = useCallback((pos: THREE.Vector3) => { playerPositionRef.current.copy(pos); }, []);
   const handleRoomSubmit = (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); const r = roomName.trim(); if (r) connectToRoom(r); };
+  // Opening theme ("Port Sable Sunset") on the start screen — browsers need a
+  // user gesture before audio, so it starts on the first tap/keypress there.
+  useEffect(() => {
+    if (started) return;
+    const kick = () => { initAudio(); startMenuTheme(); };
+    window.addEventListener("pointerdown", kick);
+    window.addEventListener("keydown", kick);
+    return () => { window.removeEventListener("pointerdown", kick); window.removeEventListener("keydown", kick); };
+  }, [started]);
+
   const startGame = (story: boolean) => {
-    initAudio(); setStarted(true);
+    initAudio(); stopMenuTheme(); sfx.click(); setStarted(true);
     if (story && M.storyIndex === 0 && !localStorage.getItem("harborfall-intro")) setIntroIdx(0);
     else if (story && M.storyIndex < 6) startMission(STORY_MISSIONS[M.storyIndex]);
   };

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { isBlocked } from "../world";
 import { sfx } from "../game/audio";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
+import { buildHumanoid, animateHumanoid } from "../humanoid";
 
 type AnimationState = "Idle" | "Walk" | "Run" | "Driving";
 
@@ -17,10 +18,6 @@ interface PlayerProps {
 
 export default function Player({ positionRef, rotationRef, driving, paused, shirt = "#1f7a72" }: PlayerProps) {
   const root = useRef<THREE.Group>(null);
-  const leftArm = useRef<THREE.Group>(null);
-  const rightArm = useRef<THREE.Group>(null);
-  const leftLeg = useRef<THREE.Group>(null);
-  const rightLeg = useRef<THREE.Group>(null);
   const keys = useRef(new Set<string>());
   const jumpRequested = useRef(false);
   const jumpVelocity = useRef(0);
@@ -28,6 +25,18 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
   const animation = useRef<AnimationState>("Idle");
   const [animationLabel, setAnimationLabel] = useState<AnimationState>("Idle");
   const { camera } = useThree();
+
+  // Rayan: varsity jacket (chest follows the personal theme colour),
+  // dark jeans, black shoes, dark hair.
+  const rig = useMemo(() => buildHumanoid({
+    top: "#1f7a72", sleeve: "#22303a", bottom: "#232c38", skin: "#c68863",
+    hair: "#191008", shoes: "#101216", undershirt: "#e8e2d4",
+    topStyle: "varsity", bottomStyle: "jeans", gender: "m", hairStyle: "cap",
+  }), []);
+  useEffect(() => { rig.setTop(shirt); }, [rig, shirt]);
+
+  const phase = useRef(0);
+  const intensity = useRef(0);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -118,53 +127,16 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
       animation.current = nextAnimation;
       setAnimationLabel(nextAnimation);
     }
-    const swing = moving ? Math.sin(performance.now() * (running ? 0.014 : 0.009)) * 0.55 : 0;
-    if (leftArm.current) leftArm.current.rotation.x = swing;
-    if (rightArm.current) rightArm.current.rotation.x = -swing;
-    if (leftLeg.current) leftLeg.current.rotation.x = -swing;
-    if (rightLeg.current) rightLeg.current.rotation.x = swing;
+    // articulated walk/run cycle: thighs + knees + elbows, bob, idle life
+    if (moving) phase.current += dt * (running ? 11.5 : 8.4);
+    const target = driving ? 0 : moving ? (running ? 1 : 0.72) : 0;
+    intensity.current += (target - intensity.current) * Math.min(1, dt * 10);
+    animateHumanoid(rig, phase.current, intensity.current, performance.now() / 1000);
   });
 
   return (
     <group ref={root} visible={!driving}>
-      <group position={[0, 0.86, 0]}>
-        <mesh castShadow>
-          <capsuleGeometry args={[0.34, 0.72, 4, 6]} />
-          <meshStandardMaterial color={shirt} flatShading />
-        </mesh>
-        <mesh position={[0, 0.64, 0]} castShadow>
-          <icosahedronGeometry args={[0.27, 1]} />
-          <meshStandardMaterial color="#d5a77b" flatShading />
-        </mesh>
-        <mesh position={[0, 0.76, 0.16]}>
-          <boxGeometry args={[0.54, 0.12, 0.42]} />
-          <meshStandardMaterial color="#252e38" flatShading />
-        </mesh>
-        <group ref={leftArm} position={[-0.4, 0.24, 0]}>
-          <mesh position={[0, -0.25, 0]} castShadow>
-            <capsuleGeometry args={[0.1, 0.42, 3, 5]} />
-            <meshStandardMaterial color={shirt} />
-          </mesh>
-        </group>
-        <group ref={rightArm} position={[0.4, 0.24, 0]}>
-          <mesh position={[0, -0.25, 0]} castShadow>
-            <capsuleGeometry args={[0.1, 0.42, 3, 5]} />
-            <meshStandardMaterial color={shirt} />
-          </mesh>
-        </group>
-        <group ref={leftLeg} position={[-0.17, -0.43, 0]}>
-          <mesh position={[0, -0.24, 0]} castShadow>
-            <capsuleGeometry args={[0.12, 0.38, 3, 5]} />
-            <meshStandardMaterial color="#343c48" />
-          </mesh>
-        </group>
-        <group ref={rightLeg} position={[0.17, -0.43, 0]}>
-          <mesh position={[0, -0.24, 0]} castShadow>
-            <capsuleGeometry args={[0.12, 0.38, 3, 5]} />
-            <meshStandardMaterial color="#343c48" />
-          </mesh>
-        </group>
-      </group>
+      <primitive object={rig.group} />
       <group userData={{ animation: animationLabel }} />
     </group>
   );

@@ -18,10 +18,7 @@ interface Props {
   physicsRef: MutableRefObject<PhysicsEngine>;
   themeAccent: string;
 }
-const DIMS: Record<string, [number, number, number, number]> = {
-  // width, bodyH, length, cabinLen
-  sedan: [2, 0.62, 3.6, 1.8], hatch: [1.9, 0.7, 3.1, 1.9], coupe: [2, 0.5, 3.8, 1.4], pickup: [2.1, 0.75, 4.1, 1.2], van: [2.1, 1.05, 4.2, 2.6],
-};
+import CarBody from "./CarBody";
 
 export default function Vehicle(p: Props) {
   const groups = useRef<Array<THREE.Group | null>>([]);
@@ -95,23 +92,11 @@ export default function Vehicle(p: Props) {
   return (
     <>
       {G.cars.map((c, i) => {
-        const [w, h, len, cab] = DIMS[c.kind];
         const isActive = G.activeCarId === i;
         return (
           <group key={c.id} ref={(n) => { groups.current[i] = n; }} position={[c.state.x, 0, c.state.z]} rotation={[0, c.state.heading, 0]}>
-            <mesh position={[0, 0.35 + h / 2, 0]} castShadow><boxGeometry args={[w, h, len]} /><meshStandardMaterial color={c.color} flatShading metalness={0.25} roughness={0.4} /></mesh>
-            <mesh position={[0, 0.35 + h + 0.26, c.kind === "pickup" ? len / 2 - cab / 2 - 0.15 : -0.1]} castShadow>
-              <boxGeometry args={[w * 0.76, 0.52, cab]} /><meshStandardMaterial color="#bfe3ea" metalness={0.3} roughness={0.2} />
-            </mesh>
-            {c.kind === "pickup" && <mesh position={[0, 0.85, -len / 2 + 0.8]}><boxGeometry args={[w * 0.9, 0.3, 1.4]} /><meshStandardMaterial color="#5a4632" flatShading /></mesh>}
-            <mesh position={[0, 0.32, len / 2 + 0.02]}><boxGeometry args={[w * 0.85, 0.18, 0.1]} /><meshStandardMaterial color="#ffe9a8" emissive="#ffca7a" emissiveIntensity={0.9} /></mesh>
-            <mesh position={[0, 0.32, -len / 2 - 0.02]}><boxGeometry args={[w * 0.85, 0.18, 0.1]} /><meshStandardMaterial color="#ff4444" emissive="#cc0000" emissiveIntensity={0.6} /></mesh>
+            <CarBody kind={c.kind} color={c.color} />
             {isActive && <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[2.2, 2.45, 24]} /><meshBasicMaterial color={p.themeAccent} transparent opacity={0.85} /></mesh>}
-            {[-1, 1].map((s) => [-1, 1].map((a) => (
-              <mesh key={`${s}${a}`} position={[s * (w / 2 + 0.06), 0.36, a * (len / 2 - 0.65)]} rotation={[0, 0, Math.PI / 2]} castShadow>
-                <cylinderGeometry args={[0.36, 0.36, 0.22, 10]} /><meshStandardMaterial color="#1d2124" flatShading />
-              </mesh>
-            )))}
           </group>
         );
       })}
