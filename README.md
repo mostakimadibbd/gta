@@ -35,11 +35,23 @@ Terminal 2, install frontend dependencies and npm cache outside the workspace. T
 ```sh
 PROJECT_ROOT="/Users/mostakim/Downloads/vscode/gta"
 TMP_ROOT="/tmp/gta-web-game-temp"
+if ! command -v npm >/dev/null 2>&1; then
+  NODE_ARCH=$(uname -m)
+  case "$NODE_ARCH" in
+    arm64|aarch64) NODE_ARCH=arm64 ;;
+    x86_64) NODE_ARCH=x64 ;;
+    *) echo "Unsupported Node architecture: $NODE_ARCH" >&2; exit 1 ;;
+  esac
+  mkdir -p "$TMP_ROOT/node"
+  curl -fL "https://nodejs.org/dist/v22.17.1/node-v22.17.1-darwin-$NODE_ARCH.tar.gz" -o "$TMP_ROOT/node.tar.gz"
+  tar -xzf "$TMP_ROOT/node.tar.gz" -C "$TMP_ROOT/node" --strip-components=1
+fi
+export PATH="$TMP_ROOT/node/bin:$PATH"
 mkdir -p "$TMP_ROOT/client-deps"
 cp "$PROJECT_ROOT/client/package.json" "$TMP_ROOT/client-deps/package.json"
 npm --cache "$TMP_ROOT/npm-cache" install --prefix "$TMP_ROOT/client-deps"
 ln -s "$TMP_ROOT/client-deps/node_modules" "$PROJECT_ROOT/client/node_modules"
-trap 'rm "$PROJECT_ROOT/client/node_modules"' EXIT
+trap 'rm -f "$PROJECT_ROOT/client/node_modules"' EXIT
 cd "$PROJECT_ROOT/client"
 VITE_MULTIPLAYER_SERVER_URL=ws://localhost:8765 VITE_MULTIPLAYER_ROOM=downtown npm --cache "$TMP_ROOT/npm-cache" run dev -- --host 0.0.0.0
 ```
@@ -53,11 +65,12 @@ Run the same dependency setup from Terminal 2, then use:
 ```sh
 PROJECT_ROOT="/Users/mostakim/Downloads/vscode/gta"
 TMP_ROOT="/tmp/gta-web-game-temp"
+export PATH="$TMP_ROOT/node/bin:$PATH"
 mkdir -p "$TMP_ROOT/client-deps"
 cp "$PROJECT_ROOT/client/package.json" "$TMP_ROOT/client-deps/package.json"
 npm --cache "$TMP_ROOT/npm-cache" install --prefix "$TMP_ROOT/client-deps"
 ln -s "$TMP_ROOT/client-deps/node_modules" "$PROJECT_ROOT/client/node_modules"
-trap 'rm "$PROJECT_ROOT/client/node_modules"' EXIT
+trap 'rm -f "$PROJECT_ROOT/client/node_modules"' EXIT
 cd "$PROJECT_ROOT/client"
 npm --cache "$TMP_ROOT/npm-cache" run build
 ```

@@ -101,7 +101,7 @@ export default function App() {
         position: [position.x, position.y, position.z],
         rotation: [playerRotationRef.current.x, playerRotationRef.current.y, playerRotationRef.current.z],
         car: driving ? {
-          position: [vehicle.x, 0.65, vehicle.z],
+          position: [vehicle.x, 0, vehicle.z],
           rotation: [0, vehicle.heading, 0],
         } : null,
       };
@@ -150,7 +150,7 @@ export default function App() {
           />
           <Player positionRef={playerPositionRef} rotationRef={playerRotationRef} driving={driving} />
           <RemotePlayers players={players} />
-          <CameraTarget target={playerPositionRef} />
+          <CameraTarget target={driving ? vehiclePositionRef : playerPositionRef} />
         </Suspense>
       </Canvas>
       <section className="hud" aria-label="Game status and controls">
