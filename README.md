@@ -1,53 +1,79 @@
 # Low-poly multiplayer driving MVP
 
-Everything for this project lives in `/tmp/gta-web-game`. The Vite client builds to static files in `client/dist`; the Python WebSocket server is a separate process and must be hosted separately from Vercel.
+The project source lives in this selected workspace. Frontend production files are built to `client/dist`; Python virtual environments, npm dependencies/caches, test programs, and temporary Wasm output can stay under `/tmp/gta-web-game-temp`. The Python WebSocket service is hosted separately from the Vercel static frontend.
 
 ## Prerequisites
 
 - Node.js 20+ and npm
-- Python 3.10+
-- Optional: Emscripten (`emcc`) to compile the native physics module to WebAssembly
+- Python 3.9+
+- Optional: Emscripten (`emcc`) to compile the physics module to WebAssembly
 
-## Create and run the test environment
-
-From a terminal, run:
+Set paths once in each terminal (the selected workspace path below is this checkout):
 
 ```sh
-mkdir -p /tmp/gta-web-game
-cd /tmp/gta-web-game
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r server/requirements.txt
-python server/main.py
+PROJECT_ROOT="/Users/mostakim/Downloads/vscode/gta"
+TMP_ROOT="/tmp/gta-web-game-temp"
+mkdir -p "$TMP_ROOT"
 ```
 
-In a second terminal, start the frontend:
+## Run the multiplayer test environment
+
+Terminal 1, create a temporary Python environment and start the server:
 
 ```sh
-cd /tmp/gta-web-game/client
-npm install
-VITE_MULTIPLAYER_SERVER_URL=ws://localhost:8765 VITE_MULTIPLAYER_ROOM=downtown npm run dev -- --host 0.0.0.0
+PROJECT_ROOT="/Users/mostakim/Downloads/vscode/gta"
+TMP_ROOT="/tmp/gta-web-game-temp"
+mkdir -p "$TMP_ROOT"
+TMPDIR="$TMP_ROOT" python3 -m venv "$TMP_ROOT/venv"
+"$TMP_ROOT/venv/bin/python" -m pip install --cache-dir "$TMP_ROOT/pip-cache" -r "$PROJECT_ROOT/server/requirements.txt"
+cd "$PROJECT_ROOT"
+"$TMP_ROOT/venv/bin/python" server/main.py
 ```
 
-Open the Vite URL (normally `http://localhost:5173`) in two browser tabs to test multiplayer. Without `VITE_MULTIPLAYER_SERVER_URL`, the game remains playable offline.
-
-## Build and deploy
+Terminal 2, install frontend dependencies and npm cache outside the workspace. The temporary symlink is removed automatically after the build command:
 
 ```sh
-cd /tmp/gta-web-game/client
-npm run build
+PROJECT_ROOT="/Users/mostakim/Downloads/vscode/gta"
+TMP_ROOT="/tmp/gta-web-game-temp"
+mkdir -p "$TMP_ROOT/client-deps"
+cp "$PROJECT_ROOT/client/package.json" "$TMP_ROOT/client-deps/package.json"
+npm --cache "$TMP_ROOT/npm-cache" install --prefix "$TMP_ROOT/client-deps"
+ln -s "$TMP_ROOT/client-deps/node_modules" "$PROJECT_ROOT/client/node_modules"
+trap 'rm "$PROJECT_ROOT/client/node_modules"' EXIT
+cd "$PROJECT_ROOT/client"
+VITE_MULTIPLAYER_SERVER_URL=ws://localhost:8765 VITE_MULTIPLAYER_ROOM=downtown npm --cache "$TMP_ROOT/npm-cache" run dev -- --host 0.0.0.0
 ```
 
-The static site is emitted to `client/dist`, configured as Vercel's output directory by `client/vercel.json`. Set `VITE_MULTIPLAYER_SERVER_URL` in the Vercel project to the public `wss://` URL of a separately hosted Python server. You can optionally set `VITE_MULTIPLAYER_ROOM`; it defaults to `downtown`.
+Open the Vite URL (normally `http://localhost:5173`) in two browser tabs. Without `VITE_MULTIPLAYER_SERVER_URL`, the game remains playable offline.
 
-To compile the optional WebAssembly physics engine (requires Emscripten):
+## Verify and build for Vercel
+
+Run the same dependency setup from Terminal 2, then use:
 
 ```sh
-cd /tmp/gta-web-game
+PROJECT_ROOT="/Users/mostakim/Downloads/vscode/gta"
+TMP_ROOT="/tmp/gta-web-game-temp"
+mkdir -p "$TMP_ROOT/client-deps"
+cp "$PROJECT_ROOT/client/package.json" "$TMP_ROOT/client-deps/package.json"
+npm --cache "$TMP_ROOT/npm-cache" install --prefix "$TMP_ROOT/client-deps"
+ln -s "$TMP_ROOT/client-deps/node_modules" "$PROJECT_ROOT/client/node_modules"
+trap 'rm "$PROJECT_ROOT/client/node_modules"' EXIT
+cd "$PROJECT_ROOT/client"
+npm --cache "$TMP_ROOT/npm-cache" run build
+```
+
+The expected deployment output is `client/dist`, configured in `client/vercel.json`. Set `VITE_MULTIPLAYER_SERVER_URL` in the Vercel project to the public `wss://` URL of a separately hosted Python server. `VITE_MULTIPLAYER_ROOM` is optional and defaults to `downtown`.
+
+To compile and test WebAssembly without leaving generated files in the workspace, run:
+
+```sh
+PROJECT_ROOT="/Users/mostakim/Downloads/vscode/gta"
+TMP_ROOT="/tmp/gta-web-game-temp"
+cd "$PROJECT_ROOT"
 ./scripts/build-physics.sh
 ```
 
-This writes `physics.js` and `physics.wasm` to `client/public/physics/`. The frontend detects and uses those files when present; otherwise it runs the matching TypeScript physics fallback.
+That command writes `physics.js` and `physics.wasm` under `/tmp/gta-web-game-temp/wasm`. For a production build that should include the Wasm engine, run `./scripts/build-physics.sh --deploy`; it writes the two runtime files to `client/public/physics/`. The frontend otherwise uses its TypeScript physics fallback.
 
 ## Controls
 

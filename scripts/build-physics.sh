@@ -2,7 +2,18 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-OUTPUT_DIR="$ROOT_DIR/client/public/physics"
+case "${1:-}" in
+  "")
+    OUTPUT_DIR="/tmp/gta-web-game-temp/wasm"
+    ;;
+  --deploy)
+    OUTPUT_DIR="$ROOT_DIR/client/public/physics"
+    ;;
+  *)
+    printf '%s\n' "Usage: $0 [--deploy]" >&2
+    exit 2
+    ;;
+esac
 
 if ! command -v emcc >/dev/null 2>&1; then
   printf '%s\n' "emcc was not found. Install and activate the Emscripten SDK, then rerun this script." >&2

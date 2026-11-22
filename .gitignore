@@ -1,0 +1,5 @@
+client/node_modules/
+client/dist/
+client/public/physics/
+client/*.tsbuildinfo
+server/__pycache__/
