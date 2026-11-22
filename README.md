@@ -49,7 +49,8 @@ fi
 export PATH="$TMP_ROOT/node/bin:$PATH"
 mkdir -p "$TMP_ROOT/client-deps"
 cp "$PROJECT_ROOT/client/package.json" "$TMP_ROOT/client-deps/package.json"
-npm --cache "$TMP_ROOT/npm-cache" install --prefix "$TMP_ROOT/client-deps"
+cd "$TMP_ROOT/client-deps"
+npm --cache "$TMP_ROOT/npm-cache" install
 ln -s "$TMP_ROOT/client-deps/node_modules" "$PROJECT_ROOT/client/node_modules"
 trap 'rm -f "$PROJECT_ROOT/client/node_modules"' EXIT
 cd "$PROJECT_ROOT/client"
@@ -68,7 +69,8 @@ TMP_ROOT="/tmp/gta-web-game-temp"
 export PATH="$TMP_ROOT/node/bin:$PATH"
 mkdir -p "$TMP_ROOT/client-deps"
 cp "$PROJECT_ROOT/client/package.json" "$TMP_ROOT/client-deps/package.json"
-npm --cache "$TMP_ROOT/npm-cache" install --prefix "$TMP_ROOT/client-deps"
+cd "$TMP_ROOT/client-deps"
+npm --cache "$TMP_ROOT/npm-cache" install
 ln -s "$TMP_ROOT/client-deps/node_modules" "$PROJECT_ROOT/client/node_modules"
 trap 'rm -f "$PROJECT_ROOT/client/node_modules"' EXIT
 cd "$PROJECT_ROOT/client"
