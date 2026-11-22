@@ -539,7 +539,12 @@ body,
 
 /* ===== Poster loading/start screen ===== */
 .poster-screen { justify-content:flex-end; background:#0a1418; padding:0; overflow:hidden; }
-.poster-bg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; animation:kenburns 26s ease-in-out infinite alternate; }
+.poster-bg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 1.4s ease-in-out; }
+.poster-bg.active { opacity:1; animation:kenburns 9s ease-in-out infinite alternate; }
+.poster-caption { position:absolute; top:calc(14px + env(safe-area-inset-top)); left:16px; z-index:2; display:flex; flex-direction:column; gap:7px; color:#ffe9c9; font-size:13px; letter-spacing:.14em; text-transform:uppercase; text-shadow:0 2px 10px #000; }
+.poster-dots { display:flex; gap:6px; }
+.poster-dots i { width:16px; height:3px; border-radius:2px; background:#ffffff40; transition:background .6s; }
+.poster-dots i.on { background:#ffb84d; }
 @keyframes kenburns { from { transform:scale(1); } to { transform:scale(1.09) translateY(-1.5%); } }
 .poster-shade { position:absolute; inset:0; background:linear-gradient(180deg,#04100f26 30%,#04100f8c 58%,#04100ff2 88%); }
 .poster-content { position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; gap:10px; padding:20px 18px calc(20px + env(safe-area-inset-bottom)); width:100%; max-height:100%; overflow:auto; }

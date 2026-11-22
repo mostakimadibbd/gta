@@ -17,7 +17,7 @@ import { STORY_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, type DialogueLi
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
 import { ROAD_COORDS, FUEL_STATIONS, districtAt } from "./world";
 import Weather from "./components/Weather";
-import { POSTER_URL } from "./posterData";
+import { POSTER_PANELS } from "./posterData";
 import Phone from "./components/Phone";
 import { WEATHER_META, cycleWeather } from "./game/weather";
 import { audioTick, initAudio, sfx, startMenuTheme, stopMenuTheme, toggleMute } from "./game/audio";
@@ -137,6 +137,7 @@ export default function App() {
   const [sceneReady, setSceneReady] = useState(false);
   const [minWait, setMinWait] = useState(false);
   const [tipIdx, setTipIdx] = useState(0);
+  const [posterIdx, setPosterIdx] = useState(0);
   const [showHow, setShowHow] = useState(false);
   const [nightBucket, setNightBucket] = useState(0);
   const lastToastAt = useRef(0);
@@ -316,6 +317,15 @@ export default function App() {
     const id = window.setInterval(() => setTipIdx((v) => (v + 1) % LOAD_TIPS.length), 2800);
     return () => window.clearInterval(id);
   }, [started]);
+  // Poster slideshow: the crew panel opens and holds, then the rest of the
+  // key-art panels crossfade in one by one (GTA loading-screen style).
+  useEffect(() => {
+    if (started) return;
+    const id = window.setTimeout(() => {
+      setPosterIdx((v) => (v + 1) % POSTER_PANELS.length);
+    }, posterIdx === 0 ? 6000 : 4200);
+    return () => window.clearTimeout(id);
+  }, [started, posterIdx]);
   useEffect(() => {
     if (started || !loaded) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter") startGame(true); };
@@ -451,8 +461,14 @@ export default function App() {
 
       {!started && (
         <div className="start-screen poster-screen">
-          <img className="poster-bg" src={POSTER_URL} alt="" aria-hidden="true" />
+          {POSTER_PANELS.map((panel, i) => (
+            <img key={panel.caption} className={i === posterIdx ? "poster-bg active" : "poster-bg"} src={panel.src} alt="" aria-hidden="true" />
+          ))}
           <div className="poster-shade" aria-hidden="true" />
+          <div className="poster-caption" aria-hidden="true">
+            <span>{POSTER_PANELS[posterIdx].caption}</span>
+            <span className="poster-dots">{POSTER_PANELS.map((panel, i) => (<i key={panel.caption} className={i === posterIdx ? "on" : ""} />))}</span>
+          </div>
           <div className="poster-content">
             <h1 className="game-title">HARBOR<span>FALL</span></h1>
             <p className="tagline">Port Sable · a harbour city of debts, cranes and second chances</p>
