@@ -1,0 +1,28 @@
+{
+  "name": "harborfall-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Harborfall — Port Sable (desktop shell for Windows + macOS)",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:all": "electron-builder --win nsis --mac dmg"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.portsable.game",
+    "productName": "Harborfall",
+    "directories": { "output": "release", "buildResources": "build" },
+    "files": ["main.cjs", "package.json"],
+    "extraResources": [{ "from": "../client/dist", "to": "client", "filter": ["**/*"] }],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "build/icon.png" },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true },
+    "mac": { "target": [{ "target": "dmg", "arch": ["universal"] }], "icon": "build/icon.png", "category": "public.app-category.games" },
+    "dmg": { "window": { "width": 540, "height": 380 } }
+  }
+}

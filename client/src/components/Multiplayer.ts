@@ -17,7 +17,8 @@ type Message =
   | { type: "player_joined"; playerId: string }
   | { type: "player_left"; playerId: string }
   | { type: "state"; playerId: string; state: NetworkState }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "event"; playerId: string; event: string; data: Record<string, unknown> };
 
 export class Multiplayer {
   private socket: WebSocket | null = null;
@@ -84,6 +85,13 @@ export class Multiplayer {
     socket.addEventListener("error", () => {
       if (this.socket === socket) this.onStatus("Connection error");
     });
+  }
+
+  /** Relay a gameplay event (crime / mission) to the room. Server validates + rebroadcasts. */
+  sendEvent(event: string, data: Record<string, unknown>): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({ type: "event", event, data }));
+    }
   }
 
   sendState(state: NetworkState): void {

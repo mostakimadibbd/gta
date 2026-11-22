@@ -28,7 +28,7 @@ emcc "$ROOT_DIR/src/cpp/physics.cpp" \
   -s EXPORT_ES6=1 \
   -s ENVIRONMENT=web \
   -s ALLOW_MEMORY_GROWTH=1 \
-  -s 'EXPORTED_FUNCTIONS=["_malloc","_free","_step_vehicle","_distance_squared"]' \
+  -s 'EXPORTED_FUNCTIONS=["_malloc","_free","_step_vehicle","_distance_squared","_collide_aabb","_resolve_aabb","_step_pedestrian"]' \
   -s 'EXPORTED_RUNTIME_METHODS=["cwrap","HEAPF64"]' \
   -o "$OUTPUT_DIR/physics.js"
 

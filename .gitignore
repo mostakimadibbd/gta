@@ -2,3 +2,8 @@ client/node_modules/
 client/dist/
 client/*.tsbuildinfo
 server/__pycache__/
+desktop/node_modules/
+desktop/release/
+.vercel/
+*.tsbuildinfo
+client/public/physics/

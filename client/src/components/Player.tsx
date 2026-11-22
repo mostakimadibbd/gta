@@ -11,9 +11,10 @@ interface PlayerProps {
   rotationRef: MutableRefObject<THREE.Vector3>;
   driving: boolean;
   paused: boolean;
+  shirt?: string;
 }
 
-export default function Player({ positionRef, rotationRef, driving, paused }: PlayerProps) {
+export default function Player({ positionRef, rotationRef, driving, paused, shirt = "#1f7a72" }: PlayerProps) {
   const root = useRef<THREE.Group>(null);
   const leftArm = useRef<THREE.Group>(null);
   const rightArm = useRef<THREE.Group>(null);
@@ -126,7 +127,7 @@ export default function Player({ positionRef, rotationRef, driving, paused }: Pl
       <group position={[0, 0.86, 0]}>
         <mesh castShadow>
           <capsuleGeometry args={[0.34, 0.72, 4, 6]} />
-          <meshStandardMaterial color="#3977a8" flatShading />
+          <meshStandardMaterial color={shirt} flatShading />
         </mesh>
         <mesh position={[0, 0.64, 0]} castShadow>
           <icosahedronGeometry args={[0.27, 1]} />
@@ -139,13 +140,13 @@ export default function Player({ positionRef, rotationRef, driving, paused }: Pl
         <group ref={leftArm} position={[-0.4, 0.24, 0]}>
           <mesh position={[0, -0.25, 0]} castShadow>
             <capsuleGeometry args={[0.1, 0.42, 3, 5]} />
-            <meshStandardMaterial color="#3977a8" />
+            <meshStandardMaterial color={shirt} />
           </mesh>
         </group>
         <group ref={rightArm} position={[0.4, 0.24, 0]}>
           <mesh position={[0, -0.25, 0]} castShadow>
             <capsuleGeometry args={[0.1, 0.42, 3, 5]} />
-            <meshStandardMaterial color="#3977a8" />
+            <meshStandardMaterial color={shirt} />
           </mesh>
         </group>
         <group ref={leftLeg} position={[-0.17, -0.43, 0]}>

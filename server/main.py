@@ -11,24 +11,61 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("gta-server")
+logger = logging.getLogger("harborfall-server")
 
-app = FastAPI(title="City Drive Multiplayer API", version="1.0.0")
+app = FastAPI(title="Harborfall Multiplayer API", version="2.0.0")
 ROOMS: dict[str, dict[str, WebSocket]] = {}
 PLAYER_STATES: dict[str, dict[str, dict[str, Any]]] = {}
 CLIENTS: dict[WebSocket, tuple[str, str]] = {}
+LAST_STATE: dict[tuple[str, str], tuple[float, list[float]]] = {}
+MAX_SPEED_UNITS_PER_SEC = 40.0  # generous arcade cap (car max ~24 u/s + margin)
+WORLD_LIMIT = 150.0
+
+
+def state_plausible(room_id: str, player_id: str, state: dict[str, Any]) -> bool:
+    """Reject NaN/out-of-world positions and teleports faster than MAX_SPEED.
+
+    Keeps an honest-but-fast sanity gate: legitimate arcade movement always
+    passes; a client jumping hundreds of units between 50 ms updates is
+    dropped (state not stored/relayed) rather than trusted.
+    """
+    import time
+
+    position = state.get("car", {}).get("position") if state.get("car") else state.get("position")
+    if not _valid_vector(position):
+        return False
+    x, _y, z = position
+    if abs(x) > WORLD_LIMIT or abs(z) > WORLD_LIMIT:
+        return False
+    key = (room_id, player_id)
+    now = time.monotonic()
+    last = LAST_STATE.get(key)
+    LAST_STATE[key] = (now, list(position))
+    if last is None:
+        return True
+    last_time, last_pos = last
+    dt = max(now - last_time, 0.001)
+    dist = math.hypot(x - last_pos[0], z - last_pos[2])
+    # Small grace distance for spawn/respawn jumps.
+    return dist <= MAX_SPEED_UNITS_PER_SEC * dt + 6.0
 MAX_MESSAGE_SIZE = 64 * 1024
 MAX_PLAYERS_PER_ROOM = 32
 
 
 @app.get("/")
 async def index() -> dict[str, str]:
-    return {"service": "city-drive-multiplayer", "status": "ok", "websocket": "/ws"}
+    return {"service": "harborfall-multiplayer", "status": "ok", "websocket": "/ws"}
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "game": "harborfall",
+        "rooms": len(ROOMS),
+        "players": sum(len(members) for members in ROOMS.values()),
+        "roomDetail": {room_id: len(members) for room_id, members in ROOMS.items()},
+    }
 
 
 async def send_json(connection: WebSocket, payload: dict[str, Any]) -> None:
@@ -160,10 +197,36 @@ async def handle_message(connection: WebSocket, raw_message: str) -> None:
             await send_json(connection, {"type": "error", "message": "Player state has an invalid shape."})
             return
         room_id, player_id = membership
+        if not state_plausible(room_id, player_id, state):
+            await send_json(connection, {"type": "error", "message": "State rejected: implausible movement (speed/teleport check)."})
+            return
         PLAYER_STATES.setdefault(room_id, {})[player_id] = state
         await broadcast(
             room_id,
             {"type": "state", "playerId": player_id, "state": state},
+            exclude=connection,
+        )
+    elif message_type == "event":
+        membership = CLIENTS.get(connection)
+        if membership is None:
+            await send_json(connection, {"type": "error", "message": "Join a room before sending events."})
+            return
+        event = str(payload.get("event") or "")[:32]
+        data = payload.get("data")
+        if event not in ("crime", "mission", "wanted", "chat") or not isinstance(data, dict):
+            await send_json(connection, {"type": "error", "message": "Unknown or malformed event."})
+            return
+        # Clamp relayed numbers so a client cannot spoof absurd values.
+        clean: dict[str, Any] = {}
+        for key, value in list(data.items())[:8]:
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                clean[str(key)[:24]] = max(-1_000_000, min(1_000_000, value))
+            elif isinstance(value, str):
+                clean[str(key)[:24]] = value[:80]
+        room_id, player_id = membership
+        await broadcast(
+            room_id,
+            {"type": "event", "playerId": player_id, "event": event, "data": clean},
             exclude=connection,
         )
     else:
