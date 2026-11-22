@@ -29,19 +29,30 @@ export class Multiplayer {
   ) {}
 
   connect(url: string, roomId: string): void {
+    let socketUrl: URL;
     try {
-      this.socket = new WebSocket(url);
+      socketUrl = new URL(url, window.location.href);
+      if (socketUrl.protocol === "http:") socketUrl.protocol = "ws:";
+      if (socketUrl.protocol === "https:") socketUrl.protocol = "wss:";
+      if (socketUrl.protocol !== "ws:" && socketUrl.protocol !== "wss:") {
+        throw new Error("The multiplayer URL must use ws:// or wss://.");
+      }
+      if (!socketUrl.pathname.endsWith("/ws")) {
+        socketUrl.pathname = `${socketUrl.pathname.replace(/\/$/, "")}/ws`;
+      }
+      this.socket = new WebSocket(socketUrl);
     } catch (error) {
       this.onStatus(`Connection failed: ${String(error)}`);
       return;
     }
+    const socket = this.socket;
     const players = new Map<string, RemotePlayer>();
     this.onStatus("Connecting");
-    this.socket.addEventListener("open", () => {
-      this.onStatus("Connected");
-      this.socket?.send(JSON.stringify({ type: "join", roomId, playerId: this.playerId }));
+    socket.addEventListener("open", () => {
+      this.onStatus(`Joining ${roomId}`);
+      socket.send(JSON.stringify({ type: "join", roomId, playerId: this.playerId }));
     });
-    this.socket.addEventListener("message", (event: MessageEvent<string>) => {
+    socket.addEventListener("message", (event: MessageEvent<string>) => {
       let message: Message;
       try {
         message = JSON.parse(event.data) as Message;
@@ -52,6 +63,7 @@ export class Multiplayer {
       if (message.type === "joined") {
         players.clear();
         for (const player of message.players) players.set(player.playerId, player);
+        this.onStatus(`Connected to ${message.roomId}`);
         this.publish(players);
       } else if (message.type === "player_joined") {
         players.set(message.playerId, { playerId: message.playerId });
@@ -66,8 +78,12 @@ export class Multiplayer {
         this.onStatus(`Server: ${message.message}`);
       }
     });
-    this.socket.addEventListener("close", () => this.onStatus("Disconnected"));
-    this.socket.addEventListener("error", () => this.onStatus("Connection error"));
+    socket.addEventListener("close", () => {
+      if (this.socket === socket) this.onStatus("Disconnected");
+    });
+    socket.addEventListener("error", () => {
+      if (this.socket === socket) this.onStatus("Connection error");
+    });
   }
 
   sendState(state: NetworkState): void {
@@ -77,8 +93,9 @@ export class Multiplayer {
   }
 
   disconnect(): void {
-    this.socket?.close();
+    const socket = this.socket;
     this.socket = null;
+    socket?.close();
   }
 
   private publish(players: Map<string, RemotePlayer>): void {

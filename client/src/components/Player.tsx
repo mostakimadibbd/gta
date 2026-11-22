@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { isBlocked } from "../world";
+import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
 
 type AnimationState = "Idle" | "Walk" | "Run" | "Driving";
 
@@ -9,15 +10,17 @@ interface PlayerProps {
   positionRef: MutableRefObject<THREE.Vector3>;
   rotationRef: MutableRefObject<THREE.Vector3>;
   driving: boolean;
+  paused: boolean;
 }
 
-export default function Player({ positionRef, rotationRef, driving }: PlayerProps) {
+export default function Player({ positionRef, rotationRef, driving, paused }: PlayerProps) {
   const root = useRef<THREE.Group>(null);
   const leftArm = useRef<THREE.Group>(null);
   const rightArm = useRef<THREE.Group>(null);
   const leftLeg = useRef<THREE.Group>(null);
   const rightLeg = useRef<THREE.Group>(null);
   const keys = useRef(new Set<string>());
+  const jumpRequested = useRef(false);
   const jumpVelocity = useRef(0);
   const grounded = useRef(true);
   const animation = useRef<AnimationState>("Idle");
@@ -26,13 +29,15 @@ export default function Player({ positionRef, rotationRef, driving }: PlayerProp
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
+      if (paused || isInteractiveTarget(event.target)) return;
+      const key = normalizeGameKey(event.key);
       if (["w", "a", "s", "d", "shift", " "].includes(key)) {
         event.preventDefault();
         keys.current.add(key);
+        if (key === " " && !event.repeat) jumpRequested.current = true;
       }
     };
-    const onKeyUp = (event: KeyboardEvent) => keys.current.delete(event.key.toLowerCase());
+    const onKeyUp = (event: KeyboardEvent) => keys.current.delete(normalizeGameKey(event.key));
     const onBlur = () => keys.current.clear();
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -42,7 +47,13 @@ export default function Player({ positionRef, rotationRef, driving }: PlayerProp
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
     };
-  }, []);
+  }, [paused]);
+
+  useEffect(() => {
+    if (!paused) return;
+    keys.current.clear();
+    jumpRequested.current = false;
+  }, [paused]);
 
   useEffect(() => {
     const next = driving ? "Driving" : animation.current === "Driving" ? "Idle" : animation.current;
@@ -51,7 +62,7 @@ export default function Player({ positionRef, rotationRef, driving }: PlayerProp
   }, [driving]);
 
   useFrame((_, delta) => {
-    if (!root.current) return;
+    if (!root.current || paused) return;
     const dt = Math.min(delta, 0.05);
     const pressed = keys.current;
     let moving = false;
@@ -79,9 +90,12 @@ export default function Player({ positionRef, rotationRef, driving }: PlayerProp
         root.current.rotation.y = Math.atan2(movement.x, movement.z);
       }
 
-      if (pressed.has(" ") && grounded.current) {
-        jumpVelocity.current = 7.5;
-        grounded.current = false;
+      if (jumpRequested.current) {
+        if (grounded.current) {
+          jumpVelocity.current = 7.5;
+          grounded.current = false;
+        }
+        jumpRequested.current = false;
       }
       if (!grounded.current) {
         jumpVelocity.current -= 20 * dt;

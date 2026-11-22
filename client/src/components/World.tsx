@@ -1,4 +1,4 @@
-import { buildings } from "../world";
+import { buildings, trees } from "../world";
 
 function Streetlight({ position }: { position: [number, number, number] }) {
   return (
@@ -14,6 +14,25 @@ function Streetlight({ position }: { position: [number, number, number] }) {
       <mesh position={[0.95, 5.42, 0]}>
         <boxGeometry args={[0.42, 0.18, 0.32]} />
         <meshStandardMaterial color="#ffe8a3" emissive="#ffc857" emissiveIntensity={0.55} />
+      </mesh>
+    </group>
+  );
+}
+
+function Tree({ x, z, scale }: { x: number; z: number; scale: number }) {
+  return (
+    <group position={[x, 0, z]} scale={scale}>
+      <mesh position={[0, 0.9, 0]} castShadow>
+        <cylinderGeometry args={[0.16, 0.24, 1.8, 5]} />
+        <meshStandardMaterial color="#76553b" flatShading />
+      </mesh>
+      <mesh position={[0, 2.1, 0]} castShadow>
+        <coneGeometry args={[1.05, 2.1, 6]} />
+        <meshStandardMaterial color="#456c4b" flatShading />
+      </mesh>
+      <mesh position={[0, 2.9, 0]} castShadow>
+        <coneGeometry args={[0.72, 1.75, 6]} />
+        <meshStandardMaterial color="#628b58" flatShading />
       </mesh>
     </group>
   );
@@ -74,6 +93,9 @@ export default function World() {
             <meshStandardMaterial color="#28333b" />
           </mesh>
         </group>
+      ))}
+      {trees.map((tree) => (
+        <Tree key={`${tree.x}-${tree.z}`} {...tree} />
       ))}
       {lamps.map((position, index) => (
         <Streetlight key={index} position={position} />
