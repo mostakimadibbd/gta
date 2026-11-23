@@ -57,6 +57,7 @@ void vehicle_body(double h0, double h1, double h2, double h3,
 void debris_step(double x, double y, double z, double vx, double vy, double vz,
                  double ground_y, double restitution, double ground_keep,
                  double delta_time, double* output);
+void ragdoll_step(double* pos, double* prev, double ground_y, double delta_time);
 void swim_step(double phase, double target_speed, double prev_speed,
                double delta_time, double* output);
 }
@@ -297,6 +298,60 @@ int main() {
     check("swim_step speed relaxes toward target", std::fabs(speed - 2.4) < 0.05);
     check("swim_step bob bounded + outputs finite", bob_ok);
     check("swim_step surge in range", out[1] >= 0.72 && out[1] <= 1.0);
+  }
+
+  // ragdoll_step (Phase 14): a verlet skeleton seeded in the rig's
+  // standing pose (pelvis .95, chest 1.45, head 1.74, shoulders
+  // ±.262/1.50, knees ±.096/.46, feet ±.096/.02), dropped 2u, must
+  // settle ON the ground with its bones intact; seeded with an
+  // impact velocity it must slide and friction-stop.
+  {
+    const double kPose[39] = {
+      0, 0.95, 0,   0, 1.45, 0,   0, 1.74, 0,
+      -0.262, 1.50, 0,  -0.262, 1.13, 0,  -0.262, 0.76, 0,
+      0.262, 1.50, 0,   0.262, 1.13, 0,   0.262, 0.76, 0,
+      -0.096, 0.46, 0,  -0.096, 0.02, 0.02,
+      0.096, 0.46, 0,   0.096, 0.02, 0.02,
+    };
+    const double kR[13] = {0.14, 0.14, 0.15, 0.09, 0.06, 0.05, 0.09,
+                           0.06, 0.05, 0.06, 0.05, 0.06, 0.05};
+    double pos[39], prev[39];
+    for (int i = 0; i < 39; ++i) { pos[i] = kPose[i]; prev[i] = kPose[i]; }
+    for (int i = 0; i < 13; ++i) { pos[i * 3 + 1] += 2.0; prev[i * 3 + 1] += 2.0; }
+    bool finite = true, above = true;
+    for (int s = 0; s < 150; ++s) {
+      ragdoll_step(pos, prev, 0.0, 1.0 / 60.0);
+      for (int i = 0; i < 39; ++i) if (!is_finite(pos[i]) || !is_finite(prev[i])) finite = false;
+      for (int i = 0; i < 13; ++i) if (pos[i * 3 + 1] < kR[i] - 0.02) above = false;
+    }
+    check("ragdoll_step stays finite + never sinks through the ground", finite && above);
+    const auto bone = [&](int a, int b) {
+      const double dx = pos[b * 3] - pos[a * 3], dy = pos[b * 3 + 1] - pos[a * 3 + 1], dz = pos[b * 3 + 2] - pos[a * 3 + 2];
+      return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+    check("ragdoll_step settles: pelvis rests near its radius",
+          pos[1] > 0.10 && pos[1] < 0.45 && pos[31] < 0.2 && pos[37] < 0.2);
+    check("ragdoll_step keeps its bones (chest/shoulders/shin)",
+          std::fabs(bone(0, 1) - 0.50) < 0.09 && std::fabs(bone(3, 6) - 0.524) < 0.09 &&
+              std::fabs(bone(9, 10) - 0.44) < 0.09 && std::fabs(bone(4, 5) - 0.37) < 0.09);
+    // impact slide: same pose at ground level, prev pushed back so
+    // the skeleton launches at +8 u/s along +x — it must travel and
+    // then friction must stop it
+    for (int i = 0; i < 39; ++i) { pos[i] = kPose[i]; prev[i] = kPose[i]; }
+    for (int i = 0; i < 13; ++i) prev[i * 3] -= 8.0 / 60.0;
+    for (int s = 0; s < 150; ++s) ragdoll_step(pos, prev, 0.0, 1.0 / 60.0);
+    const double slide = pos[0];
+    const double end_speed = std::fabs(pos[0] - prev[0]) * 60.0;
+    check("ragdoll_step impact slide travels then friction-stops",
+          slide > 0.8 && end_speed < 0.6 && is_finite(slide));
+    // a scrambled pose must not explode over a long run
+    for (int i = 0; i < 39; ++i) { pos[i] = kPose[i] + ((i * 37) % 11 - 5) * 0.13; prev[i] = pos[i]; }
+    bool stable = true;
+    for (int s = 0; s < 600; ++s) {
+      ragdoll_step(pos, prev, 0.0, 1.0 / 60.0);
+      for (int i = 0; i < 39; ++i) if (!is_finite(pos[i]) || std::fabs(pos[i]) > 60.0) stable = false;
+    }
+    check("ragdoll_step scrambled pose stays stable for 10 s", stable);
   }
 
   if (failures == 0) {

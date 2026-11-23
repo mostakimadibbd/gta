@@ -1,5 +1,5 @@
 // Harborfall — Phase 8 "The 500 Sweep, Round 2": fishing, the Lantern
-// Park outdoor gym, NPC-memory watchers (invest hourly tick + reputation
+// Sable Fitness gym (Phase 14: indoors), NPC-memory watchers (invest hourly tick + reputation
 // decay live here; the recognition behaviour itself is in GameSystems),
 // the Thread & Tide clothing counter, and Lina's tow work. Prompts
 // follow the established chain — Interiors, Interactions, Phase7, then
@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, toast, bark, persistSkills, persistZoneRep } from "../game/store";
+import { isBind } from "../game/keybinds";
 import { J, jobStats, persistJobStats } from "../game/jobs";
 import { ECO } from "../game/economy";
 import { INV, tickInvest, persistInvest } from "../game/invest";
@@ -41,10 +42,10 @@ export default function Phase8Systems() {
 
   useEffect(() => {
     const dn = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e" && !e.repeat) { eDownAt.current = performance.now() / 1000; eHeld.current = true; }
+      if (isBind(e, "interact") && !e.repeat) { eDownAt.current = performance.now() / 1000; eHeld.current = true; }
     };
     const up = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e") {
+      if (isBind(e, "interact")) {
         // a short tap at the clothing counter = browse to the next piece
         if (atShop.current && eDownAt.current > 0 && performance.now() / 1000 - eDownAt.current < 0.35) {
           clothIdx.current = (clothIdx.current + 1) % CLOTHING_ITEMS.length;
@@ -169,13 +170,16 @@ export default function Phase8Systems() {
       if (show) bobberRef.current.position.set(F.castX, 0.1 + Math.sin(t * 2.2) * 0.04 - (F.phase === "bite" ? 0.09 : 0), F.castZ);
     }
 
-    // ================= GYM (Lantern Park outdoor corner) =================
+    // ================= GYM (Phase 14: Sable Fitness interior) =================
+    // station coords live inside the gym pocket, so the find only ever
+    // matches indoors; gymOk replaces onFoot for the two gym branches
+    const gymOk = !G.driving && !G.status && !G.dialogueActive && G.interior === "gym";
     const station = GYM_STATIONS.find((s) => (px - s.x) ** 2 + (pz - s.z) ** 2 < 2.6 ** 2) ?? null;
     if (GYM.active) {
       const st = GYM.active;
-      if (!onFoot || (px - st.x) ** 2 + (pz - st.z) ** 2 > 3.4 ** 2) {
+      if (!gymOk || (px - st.x) ** 2 + (pz - st.z) ** 2 > 3.4 ** 2) {
         GYM.active = null;
-        toast("Session cut — no refund. The park gym keeps your ten bucks.");
+        toast("Session cut — no refund. Sable Fitness keeps your ten bucks.");
       } else {
         GYM.marker += GYM.dir * dt * 1.15;
         if (GYM.marker >= 1) { GYM.marker = 1; GYM.dir = -1; }
@@ -196,15 +200,15 @@ export default function Phase8Systems() {
               sfx.complete();
               GYM.active = null;
             }
-          } else { sfx.dryFire(); bark("Park trainer", "Timing! Watch the marker, hit the green."); }
+          } else { sfx.dryFire(); bark("Gym trainer", "Timing! Watch the marker, hit the green."); }
         }
       }
-    } else if (!prompt && onFoot && station && F.phase === "idle") {
+    } else if (!prompt && gymOk && station && F.phase === "idle") {
       if (GYM.lastDay[station.id] === ECO.daySerial) { prompt = `${station.name} — done for today. Muscles grow overnight.`; warn = true; }
       else {
         prompt = `E — ${station.name} session ($10) · +${station.gain} ${station.skill === "strength" ? "Strength" : "Stamina"} · once a day`;
         act = () => {
-          if (G.cash < 10) { toast("The park gym is $10 a session — you're short."); return; }
+          if (G.cash < 10) { toast("Sable Fitness is $10 a session — you're short."); return; }
           G.cash -= 10;
           GYM.active = station; GYM.hits = 0; GYM.marker = 0; GYM.dir = 1; GYM.zoneAt = 0.3 + Math.random() * 0.45;
           armAfter.current = performance.now() / 1000 + 0.15;
@@ -236,7 +240,9 @@ export default function Phase8Systems() {
           if (G.cash < item.price) { toast(`${item.label} is $${item.price} — not enough cash.`); sfx.dryFire(); }
           else {
             G.cash -= item.price;
-            CLOTH.current = item; persistClothing();
+            CLOTH.current = item;
+            if (!CLOTH.owned.includes(item.id)) CLOTH.owned.push(item.id); // Phase 14: the Loft wardrobe stocks it
+            persistClothing();
             toast(`🧥 ${item.label} — yours. It overrides your character-select outfit until you change character or variant there.`);
             sfx.register();
           }
@@ -368,25 +374,15 @@ export default function Phase8Systems() {
         <meshStandardMaterial color="#c22e2e" roughness={0.4} />
       </mesh>
 
-      {/* ---- Lantern Park outdoor gym corner ---- */}
-      <group position={[GYM_STATIONS[0].x, groundYAt(GYM_STATIONS[0].x, GYM_STATIONS[0].z), GYM_STATIONS[0].z]}>
-        <mesh position={[0, 0.28, 0]} castShadow><boxGeometry args={[1.9, 0.16, 0.55]} /><meshStandardMaterial color="#274036" roughness={0.8} /></mesh>
-        <mesh position={[-0.85, 0.35, 0]}><boxGeometry args={[0.09, 0.7, 0.5]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.5} /></mesh>
-        <mesh position={[0.85, 0.35, 0]}><boxGeometry args={[0.09, 0.7, 0.5]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.5} /></mesh>
-        <mesh position={[0, 0.72, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.03, 0.03, 2, 8]} /><meshStandardMaterial color="#c8ccd2" metalness={0.8} roughness={0.3} /></mesh>
-        <mesh position={[-1.06, 0.72, 0]}><cylinderGeometry args={[0.21, 0.21, 0.07, 12]} /><meshStandardMaterial color="#22262b" roughness={0.6} /></mesh>
-        <mesh position={[1.06, 0.72, 0]}><cylinderGeometry args={[0.21, 0.21, 0.07, 12]} /><meshStandardMaterial color="#22262b" roughness={0.6} /></mesh>
-      </group>
-      <group position={[GYM_STATIONS[1].x, groundYAt(GYM_STATIONS[1].x, GYM_STATIONS[1].z), GYM_STATIONS[1].z]}>
-        <mesh position={[0, 0.16, 0]} rotation={[0.1, 0, 0]} castShadow><boxGeometry args={[0.85, 0.14, 2.3]} /><meshStandardMaterial color="#22262b" roughness={0.85} /></mesh>
-        <mesh position={[0, 0.55, 1.15]}><boxGeometry args={[0.8, 0.75, 0.12]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.5} /></mesh>
-        <mesh position={[0, 0.95, 1.18]}><boxGeometry args={[0.5, 0.3, 0.05]} /><meshStandardMaterial color="#14181d" roughness={0.3} /></mesh>
-      </group>
-      {/* rubber mat under the gym corner */}
-      <mesh position={[72.7, groundYAt(72.7, -64.5) + 0.02, -64.5]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[9.5, 4.6]} />
-        <meshStandardMaterial color="#23272c" roughness={0.95} />
-      </mesh>
+      {/* ---- Phase 14: the old outdoor gym corner is now just a
+           stretching-mat flavour spot (the real gym moved indoors to
+           Sable Fitness — its props live in Interiors.tsx) ---- */}
+      {([[70, -64.5], [72.6, -64.5], [75.2, -64.5]] as const).map(([x, z], i) => (
+        <mesh key={i} position={[x, groundYAt(x, z) + 0.02, z]} rotation={[-Math.PI / 2, 0, i * 0.12]} receiveShadow>
+          <planeGeometry args={[2.1, 1.1]} />
+          <meshStandardMaterial color={i === 1 ? "#14524f" : "#274036"} roughness={0.95} />
+        </mesh>
+      ))}
 
       {/* ---- Thread & Tide clothing rack, Market Row ---- */}
       <group position={[CLOTHING_SHOP.x, groundYAt(CLOTHING_SHOP.x, CLOTHING_SHOP.z), CLOTHING_SHOP.z]}>

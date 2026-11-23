@@ -8,9 +8,12 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, toast, nowS, bark, persistStoredCars } from "../game/store";
+import { isBind } from "../game/keybinds";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
-import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
+import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, GYM_EXT_DOOR, LOFT_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
+import { ECO, LOFT, persistEco, setHomePref, sleepToMorning } from "../game/economy";
+import { CLOTH, CLOTHING_ITEMS, persistClothing, type ClothingItem } from "../game/phase8";
 import { shopsClosed } from "./Interactions";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
@@ -64,6 +67,12 @@ const WALL_S = new THREE.MeshStandardMaterial({ color: "#26303a", roughness: 0.6
 const FLOOR_S = new THREE.MeshStandardMaterial({ color: "#191d21", roughness: 0.22, metalness: 0.35 });
 const WALL_CF = new THREE.MeshStandardMaterial({ color: "#e6d9bf", roughness: 0.9 });
 const FLOOR_CF = new THREE.MeshStandardMaterial({ color: "#8a5a3c", roughness: 0.8 });
+// Phase 14: gym — deep teal walls over black rubber; loft — warm
+// slate over light oak
+const WALL_GY = new THREE.MeshStandardMaterial({ color: "#1d2b2e", roughness: 0.9 });
+const FLOOR_GY = new THREE.MeshStandardMaterial({ color: "#23272c", roughness: 0.95 });
+const WALL_LF = new THREE.MeshStandardMaterial({ color: "#3a3f45", roughness: 0.85 });
+const FLOOR_LF = new THREE.MeshStandardMaterial({ color: "#7a5a3d", roughness: 0.7 });
 
 /** Wanted-poster wall art (canvas): three harbour faces, drawn not copied. */
 function posterTexture(): THREE.CanvasTexture {
@@ -92,6 +101,8 @@ export default function Interiors() {
   const restSign = useMemo(() => signTexture("MARINA TABLE", "#241a12", "#ffca7a"), []);
   const showroomSign = useMemo(() => signTexture("SABLE MOTORS", "#0f2c38", "#ffca7a"), []);
   const cafeSign = useMemo(() => signTexture("CAFÉ CORAL", "#2b1c10", "#ffca7a"), []);
+  const gymSign = useMemo(() => signTexture("SABLE FITNESS", "#0f4442", "#ffca7a"), []);
+  const loftSign = useMemo(() => signTexture("NORTHGATE LOFT", "#232a31", "#ffca7a"), []);
   // Phase 13: showroom turntables (rotated in useFrame) + the café's
   // two regulars — static seated rigs, posed once (they're mid-chat
   // and in no hurry; a slow head-bob in useFrame keeps them alive)
@@ -118,7 +129,7 @@ export default function Interiors() {
   const srEDown = useRef(-1);
   const srIdx = useRef(0);
   useEffect(() => {
-    const down = (e: KeyboardEvent) => { if (e.key.toLowerCase() === "e" && !e.repeat) srEDown.current = performance.now() / 1000; };
+    const down = (e: KeyboardEvent) => { if (isBind(e, "interact") && !e.repeat) srEDown.current = performance.now() / 1000; };
     const up = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== "e") return;
       const held = srEDown.current > 0 ? performance.now() / 1000 - srEDown.current : 9;
@@ -308,6 +319,36 @@ export default function Interiors() {
             act = () => { G.cash -= 8; G.stamina = 100; G.staminaBoostUntil = G.timeS + 120; G.eatingUntil = G.timeS + 2.2; sfx.eat(); toast("Harbour-roast coffee — stamina full, and it drains at half rate for a while."); };
           } else { prompt = "Coffee is $8 — you're short."; warn = true; }
         }
+      } else if (G.interior === "gym") {
+        // ---- Phase 14: SABLE FITNESS — the stations themselves are
+        // run by Phase8 (its prompts publish after this component);
+        // here: the exit + a welcome line at the door mat ----
+        const [x, z] = INTERIORS.gym.exitDoor;
+        if (near(x, z, 2.2)) { prompt = "Press E — leave Sable Fitness"; act = go(GYM_EXT_DOOR.x, GYM_EXT_DOOR.z + 1.2, ""); }
+        else if (near(INTERIORS.gym.cx, INTERIORS.gym.cz + 3.4, 2.2)) prompt = "Sable Fitness — bench press west, treadmill east. $10 a session, once a day each.";
+      } else if (G.interior === "loft") {
+        // ---- Phase 14: THE NORTHGATE LOFT — bed (sleep/save),
+        // wardrobe (change into anything you OWN), harbour windows --
+        const [x, z] = INTERIORS.loft.exitDoor;
+        const L = INTERIORS.loft;
+        if (near(x, z, 2.2)) { prompt = "Press E — leave the Loft"; act = go(LOFT_EXT_DOOR.x, LOFT_EXT_DOOR.z + 1.2, ""); }
+        else if (near(L.cx + 4.5, L.cz - 3, 2.4)) {
+          prompt = "Press E — sleep until morning at the Loft (the day ticks over, businesses pay out)";
+          act = () => { setHomePref("loft"); sleepToMorning("the Northgate Loft"); };
+        } else if (near(L.cx - 5, L.cz - 3, 2.2)) {
+          if (CLOTH.owned.length === 0) prompt = "Your wardrobe — empty for now. Outfits you buy at Thread & Tide hang here.";
+          else {
+            prompt = `Press E — wardrobe (wearing: ${CLOTH.current?.label ?? "character-select outfit"}) — change`;
+            act = () => {
+              const opts: Array<ClothingItem | null> = [null, ...CLOTH.owned.map((id) => CLOTHING_ITEMS.find((i) => i.id === id)).filter((i): i is ClothingItem => !!i)];
+              const idx = opts.findIndex((o) => (o?.id ?? null) === (CLOTH.current?.id ?? null));
+              const next = opts[(idx + 1) % opts.length];
+              CLOTH.current = next; persistClothing();
+              toast(next ? `🧥 Changed into ${next.label}.` : "Back to your character-select outfit.");
+              sfx.click();
+            };
+          }
+        } else if (near(L.cx, L.cz - 4.6, 2.6)) prompt = "The whole harbour from up here — bridge, island light, the bay turning amber at dusk.";
       } else if (near(GARAGE_EXT_DOOR.x, GARAGE_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Lina's Garage";
         act = go(INTERIORS.garage.spawnIn[0], INTERIORS.garage.spawnIn[1], "garage");
@@ -332,6 +373,26 @@ export default function Interiors() {
       } else if (near(CAFE_EXT_DOOR.x, CAFE_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Café Coral";
         act = go(INTERIORS.cafe.spawnIn[0], INTERIORS.cafe.spawnIn[1], "cafe");
+      } else if (near(GYM_EXT_DOOR.x, GYM_EXT_DOOR.z, 2.8)) {
+        prompt = "Press E — enter Sable Fitness";
+        act = go(INTERIORS.gym.spawnIn[0], INTERIORS.gym.spawnIn[1], "gym");
+      } else if (near(LOFT_EXT_DOOR.x, LOFT_EXT_DOOR.z, 2.8)) {
+        // ---- Phase 14: the Loft is bought at its own door, like the
+        // villa at its gate — owning both properties is supported;
+        // the latest purchase becomes the respawn home ----
+        if (ECO.ownsLoft) {
+          prompt = "Press E — enter your Northgate Loft";
+          act = go(INTERIORS.loft.spawnIn[0], INTERIORS.loft.spawnIn[1], "loft");
+        } else if (G.cash >= LOFT.price) {
+          prompt = `Press E — buy the Northgate Loft ($${LOFT.price.toLocaleString()}) — bed, wardrobe, harbour view`;
+          act = () => {
+            G.cash -= LOFT.price;
+            ECO.ownsLoft = true; persistEco(); setHomePref("loft");
+            pushPhoneMsg("SableBank", `🏠 -$${LOFT.price.toLocaleString()} — Northgate Loft purchased. Keys are yours, Rayan.`);
+            toast("🏠 You bought the Northgate Loft! Sleep, change outfits, watch the harbour — respawns now start here.");
+            sfx.cash();
+          };
+        } else { prompt = `Northgate Loft — $${LOFT.price.toLocaleString()} (you have $${G.cash.toLocaleString()})`; warn = true; }
       } else if (near(MANSION_GATE.x, MANSION_GATE.z, 3.2)) {
         if (G.ownsMansion) prompt = "🏠 Sable Heights Villa — your home. Park in the drive to garage-save a car.";
         else if (G.cash >= MANSION_PRICE) {
@@ -354,6 +415,7 @@ export default function Interiors() {
   const P0 = INTERIORS.police, CL0 = INTERIORS.clinic, R0 = INTERIORS.restaurant;
   const H0 = INTERIORS.hangar;
   const S0 = INTERIORS.showroom, CF0 = INTERIORS.cafe;
+  const GY0 = INTERIORS.gym, LF0 = INTERIORS.loft;
   return (
     <group>
       {/* ================= LINA'S GARAGE — interior ================= */}
@@ -639,6 +701,92 @@ export default function Interiors() {
         {/* warm window strip + exit */}
         <mesh position={[0, 2, CF0.d / 2 - 0.16]}><boxGeometry args={[9, 1.3, 0.03]} /><meshStandardMaterial color="#ffd9a0" emissive="#ffca7a" emissiveIntensity={0.35} transparent opacity={0.85} /></mesh>
         <mesh position={[0, 1.4, CF0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#2b1c10" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
+      </group>
+
+      {/* ================= Phase 14: SABLE FITNESS ===================== */}
+      <RoomShell cx={GY0.cx} cz={GY0.cz} w={GY0.w} d={GY0.d} h={3.6} wall={WALL_GY} floor={FLOOR_GY} ceiling />
+      <group position={[GY0.cx, 0, GY0.cz]}>
+        <pointLight position={[0, 3, 0]} intensity={24} distance={17} decay={1.7} color="#dff3ee" />
+        <mesh position={[0, 2.6, -GY0.d / 2 + 0.2]}>
+          <planeGeometry args={[6.4, 1.05]} />
+          <meshStandardMaterial map={gymSign} emissive="#ffffff" emissiveMap={gymSign} emissiveIntensity={0.9} />
+        </mesh>
+        {/* mirror strip along the back wall */}
+        <mesh position={[0, 1.6, -GY0.d / 2 + 0.17]}><boxGeometry args={[13, 1.7, 0.03]} /><meshStandardMaterial color="#b9d4d8" metalness={0.9} roughness={0.08} /></mesh>
+        {/* bench press at the west station (GYM_STATIONS bench: rel −5, −3) */}
+        <group position={[-5, 0, -3]}>
+          <mesh position={[0, 0.28, 0]} castShadow><boxGeometry args={[1.9, 0.16, 0.55]} /><meshStandardMaterial color="#274036" roughness={0.8} /></mesh>
+          <mesh position={[-0.85, 0.35, 0]}><boxGeometry args={[0.09, 0.7, 0.5]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.5} /></mesh>
+          <mesh position={[0.85, 0.35, 0]}><boxGeometry args={[0.09, 0.7, 0.5]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.5} /></mesh>
+          <mesh position={[0, 0.72, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.03, 0.03, 2, 8]} /><meshStandardMaterial color="#c8ccd2" metalness={0.8} roughness={0.3} /></mesh>
+          <mesh position={[-1.06, 0.72, 0]}><cylinderGeometry args={[0.21, 0.21, 0.07, 12]} /><meshStandardMaterial color="#22262b" roughness={0.6} /></mesh>
+          <mesh position={[1.06, 0.72, 0]}><cylinderGeometry args={[0.21, 0.21, 0.07, 12]} /><meshStandardMaterial color="#22262b" roughness={0.6} /></mesh>
+        </group>
+        {/* treadmill at the east station (GYM_STATIONS tread: rel +4, −3) */}
+        <group position={[4, 0, -3]}>
+          <mesh position={[0, 0.16, 0]} rotation={[0.1, 0, 0]} castShadow><boxGeometry args={[0.85, 0.14, 2.3]} /><meshStandardMaterial color="#22262b" roughness={0.85} /></mesh>
+          <mesh position={[0, 0.55, 1.15]}><boxGeometry args={[0.8, 0.75, 0.12]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.5} /></mesh>
+          <mesh position={[0, 0.95, 1.18]}><boxGeometry args={[0.5, 0.3, 0.05]} /><meshStandardMaterial color="#7fd8e8" emissive="#7fd8e8" emissiveIntensity={0.5} /></mesh>
+        </group>
+        {/* dumbbell rack + kettlebells along the east wall */}
+        <group position={[7.6, 0, 1.5]} rotation={[0, -Math.PI / 2, 0]}>
+          <mesh position={[0, 0.5, 0]} castShadow><boxGeometry args={[3.4, 0.08, 0.5]} /><primitive object={METAL} attach="material" /></mesh>
+          {[-1.4, -0.7, 0, 0.7, 1.4].map((x, i) => (
+            <mesh key={i} position={[x, 0.68, 0]} castShadow><sphereGeometry args={[0.14 + i * 0.012, 10, 8]} /><meshStandardMaterial color="#22262b" roughness={0.5} metalness={0.4} /></mesh>
+          ))}
+        </group>
+        {/* stretching mats in the middle (the park corner, remembered) */}
+        {([-1.8, 0, 1.8] as const).map((x, i) => (
+          <mesh key={i} position={[x, 0.05, 1.8]} rotation={[0, i * 0.1, 0]} receiveShadow>
+            <boxGeometry args={[1.9, 0.04, 1]} />
+            <meshStandardMaterial color={i === 1 ? "#14524f" : "#274036"} roughness={0.95} />
+          </mesh>
+        ))}
+        <mesh position={[0, 1.4, GY0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#0d2226" emissive="#7fd8e8" emissiveIntensity={0.3} /></mesh>
+      </group>
+
+      {/* ================= Phase 14: THE NORTHGATE LOFT ================ */}
+      <RoomShell cx={LF0.cx} cz={LF0.cz} w={LF0.w} d={LF0.d} h={3.4} wall={WALL_LF} floor={FLOOR_LF} ceiling />
+      <group position={[LF0.cx, 0, LF0.cz]}>
+        <pointLight position={[0, 2.9, 0]} intensity={20} distance={15} decay={1.7} color="#ffca7a" />
+        <mesh position={[0, 2.55, LF0.d / 2 - 0.2]} rotation={[0, Math.PI, 0]}>
+          <planeGeometry args={[4.6, 0.9]} />
+          <meshStandardMaterial map={loftSign} emissive="#ffffff" emissiveMap={loftSign} emissiveIntensity={0.7} />
+        </mesh>
+        {/* harbour-view window wall (the −z side): three tall panes
+            over a painted bay gradient — bridge, island light, water */}
+        {[-4.6, 0, 4.6].map((x, i) => (
+          <group key={i} position={[x, 0, -LF0.d / 2 + 0.17]}>
+            <mesh position={[0, 1.75, 0]}><boxGeometry args={[3.6, 2.5, 0.05]} /><meshStandardMaterial color="#8fc6d8" emissive="#5f96ad" emissiveIntensity={0.55} /></mesh>
+            <mesh position={[0, 1.05, 0.03]}><boxGeometry args={[3.6, 0.5, 0.02]} /><meshStandardMaterial color="#2e4a56" roughness={0.6} /></mesh>
+            <mesh position={[0, 2.2, 0.03]}><boxGeometry args={[3.6, 0.28, 0.02]} /><meshStandardMaterial color="#e8a34c" emissive="#c97e2c" emissiveIntensity={0.4} /></mesh>
+          </group>
+        ))}
+        {/* bed at the sleep point (rel +4.5, −3) */}
+        <group position={[4.5, 0, -3]}>
+          <mesh position={[0, 0.3, 0]} castShadow><boxGeometry args={[2.3, 0.5, 3.1]} /><meshStandardMaterial color="#31556e" roughness={0.85} /></mesh>
+          <mesh position={[0, 0.58, 0.2]}><boxGeometry args={[2.2, 0.14, 2.2]} /><meshStandardMaterial color="#e8e0d0" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.62, -1.15]}><boxGeometry args={[1.7, 0.16, 0.6]} /><meshStandardMaterial color="#f2ead8" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.75, -1.62]}><boxGeometry args={[2.3, 1, 0.12]} /><primitive object={WOOD} attach="material" /></mesh>
+        </group>
+        {/* wardrobe at its point (rel −5, −3): doors + the rail of
+            whatever Thread & Tide sold you */}
+        <group position={[-5, 0, -3]}>
+          <mesh position={[0, 1.15, 0]} castShadow><boxGeometry args={[2.2, 2.3, 0.7]} /><primitive object={WOOD} attach="material" /></mesh>
+          <mesh position={[-0.55, 1.15, 0.37]}><boxGeometry args={[1, 2.1, 0.03]} /><meshStandardMaterial color="#54382a" roughness={0.8} /></mesh>
+          <mesh position={[0.55, 1.15, 0.37]}><boxGeometry args={[1, 2.1, 0.03]} /><meshStandardMaterial color="#54382a" roughness={0.8} /></mesh>
+        </group>
+        {/* sofa + rug + plant, harbour-side living corner */}
+        <group position={[-2.5, 0, 2.8]}>
+          <mesh position={[0, 0.45, 0]} castShadow><boxGeometry args={[3, 0.7, 1.1]} /><meshStandardMaterial color="#14524f" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.95, -0.45]}><boxGeometry args={[3, 0.6, 0.25]} /><meshStandardMaterial color="#14524f" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.03, 1.6]} receiveShadow><boxGeometry args={[3.6, 0.03, 2]} /><meshStandardMaterial color="#8a4a2e" roughness={0.95} /></mesh>
+        </group>
+        <group position={[6.8, 0, 3.4]}>
+          <mesh position={[0, 0.3, 0]}><cylinderGeometry args={[0.3, 0.24, 0.6, 10]} /><meshStandardMaterial color="#b3542e" roughness={0.8} /></mesh>
+          <mesh position={[0, 1, 0]}><sphereGeometry args={[0.55, 10, 8]} /><meshStandardMaterial color="#2e5d43" roughness={0.95} /></mesh>
+        </group>
+        <mesh position={[0, 1.4, LF0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#232a31" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
       </group>
     </group>
   );

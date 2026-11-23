@@ -34,6 +34,10 @@ export interface Ped {
   recogCd?: number; // next G.timeS this ped may bark a recognition line
   flailUntil?: number; // Phase 9 ragdoll-lite: car-hit flail window
   kvx?: number; kvz?: number; // Phase 10: car-hit knock velocity (impact direction), decays in the ped loop
+  // ---- Phase 14: the real verlet ragdoll (game/ragdoll.ts) — live
+  // while the ped is down (near-field only); consumed impact velocity
+  // lives in its prev-points, so kvx/kvz are zeroed when it seeds ----
+  rag?: import("./ragdoll").RagdollState | null;
 }
 export interface Cop extends VehicleState { active: boolean; lightPhase: number; pitch: number; roll: number; }
 export type WeatherKind = "Clear" | "Cloudy" | "Rain" | "Storm" | "Fog";
@@ -102,7 +106,7 @@ export const G = {
   timeS: 0, // elapsed game clock (set by GameSystems every frame)
   firstPerson: false,
   swimming: false,
-  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe",
+  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft",
   // ---- Phase 7: wind, sitting, replay requests, camera flash, boosts ----
   wind: 0.5, // 0..1 slow gust value — palm sway, boat bob, HUD/phone label
   sitting: false, // player parked on a bench / chair (Player pose + lock)
@@ -160,7 +164,9 @@ export const G = {
     shake: true, fov: 58, postFx: true, shadows: true,
     // ---- Phase 11: player override for the High-tier dynamic reflection
     // stack (SSR + planar water). Off = Standard reflections at any tier.
-    reflFx: true,
+    // ---- Phase 14: default is now OFF (opt-in via Settings) — see the
+    // one-time migration at the settings load below.
+    reflFx: false,
     // ---- Phase 13: season pin — "auto" follows the 7-day calendar
     // (game/season.ts); a season name pins it until set back to auto.
     season: "auto",
@@ -208,6 +214,15 @@ try {
   const stash = localStorage.getItem("harborfall-stash"); if (stash) G.inventory = JSON.parse(stash) as StashItem[];
   const stored = localStorage.getItem("harborfall-stored-cars"); if (stored) G.storedCars = (JSON.parse(stored) as StoredCar[]).slice(0, 6);
   const st = localStorage.getItem("harborfall-settings"); if (st) G.settings = { ...G.settings, ...(JSON.parse(st) as Partial<typeof G.settings>) };
+  // ---- Phase 14 ONE-TIME MIGRATION (reflSafeV): the Phase 11–13 build
+  // defaulted reflFx ON, and on some machines (Retina Mac / Brave) the
+  // High + SSR stack crashed the tab to a black screen. Existing saves
+  // would greet their owner with that same crashing configuration, so
+  // exactly once we force reflFx off and stamp the settings; the
+  // player can re-enable it in Settings (it is stable now — capped
+  // DPR/SSR — but the choice is theirs, not the crash's). ----
+  const sAny = G.settings as typeof G.settings & { reflSafeV?: number };
+  if (sAny.reflSafeV !== 1) { sAny.reflSafeV = 1; sAny.reflFx = false; persistSettings(); }
   const rep = localStorage.getItem("harborfall-rep"); if (rep) G.zoneRep = JSON.parse(rep) as Record<string, number>;
 } catch { /* storage unavailable */ }
 
@@ -379,12 +394,15 @@ export function processPendingCrimes() {
 function respawnPoint() {
   // Phase 7: the chosen home wins — the Coral apartment (36, 208) when
   // it's the set home and owned, else the villa, else the hospital corner
-  let home = "villa"; let ownsApt = false;
+  // Phase 14: the Northgate Loft (−68, −190) joins the home rotation
+  let home = "villa"; let ownsApt = false; let ownsLoft = false;
   try {
     home = localStorage.getItem("harborfall-home") ?? "villa";
     ownsApt = localStorage.getItem("harborfall-apartment") === "1";
+    ownsLoft = localStorage.getItem("harborfall-loft") === "1";
   } catch { /* ignore */ }
   if (home === "apartment" && ownsApt) G.playerPos.set(36, 0, 208);
+  else if (home === "loft" && ownsLoft) G.playerPos.set(-68, 0, -190);
   else if (G.ownsMansion) G.playerPos.set(MANSION.x + 9, 0, MANSION.z + 9);
   else G.playerPos.set(-100, 0, 100);
   G.interior = "";

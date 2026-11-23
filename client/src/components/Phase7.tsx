@@ -9,18 +9,19 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, toast, bark, addCrime, nowS } from "../game/store";
+import { isBind } from "../game/keybinds";
 import { M } from "../game/missionState";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
 import {
-  J, HAIL_POINTS, DEST_POINTS, PICKUP_POINTS, RACES, RACE_PRIZES,
+  J, HAIL_POINTS, DEST_POINTS, PICKUP_POINTS, RACES, RACE_PRIZES, BAY_CIRCUIT, SPARROW_RUN,
   jobStats, persistJobStats, jobTarget, fmtTime, jobBusy, drivingKind, type RaceDef, type Poi,
 } from "../game/jobs";
 import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, setHomePref, persistEco } from "../game/economy";
 import { pushNews, rollSocialPost, socialCrimePost } from "../game/feed";
 import { nudgeStock } from "../game/invest";
 import { postRaceResult } from "../game/leaderboard";
-import { loadDaySet, saveDaySet, DESTRUCT_KEY } from "../game/phase9";
+import { brokenDestructibles, breakDestructible, resetDestructibles, onDestructibleBreak } from "../game/destruct";
 import { fallbackPhysics } from "../physics/GamePhysics";
 import {
   TOLL, SPEED_CAMERAS, SPEED_LIMIT_U, DESTRUCTIBLES,
@@ -46,10 +47,23 @@ export default function Phase7Systems() {
   const hailRef = useRef<THREE.Group>(null);
   // ---------- races ----------
   const oppRefs = useRef<Array<THREE.Group | null>>([]);
+  // Phase 14: the Bay Circuit ghost rival's mesh + its placement
+  const ghostRef = useRef<THREE.Group>(null);
+  const positionGhost = (t: number) => {
+    const g = ghostRef.current; if (!g) return;
+    const o = J.race?.def.mode === "boat" ? J.race.opps[0] : undefined;
+    if (!o) { g.visible = false; return; }
+    g.visible = true;
+    g.position.set(o.x, 0.12 + Math.sin(t * 2.1) * 0.05, o.z);
+    g.rotation.set(Math.sin(t * 1.7) * 0.02, o.heading, Math.sin(t * 1.3) * 0.03);
+  };
   // ---------- destructibles + debris ----------
   const destRefs = useRef<Array<THREE.Group | null>>([]);
-  // Phase 9: the broken set persists across reloads within the game-day
-  const broken = useRef<Set<number>>(new Set(loadDaySet(DESTRUCT_KEY)));
+  // Phase 14: the broken set is shared state now (game/destruct.ts) —
+  // the bat and thrown bottles break props too; this component owns
+  // the meshes + debris and reacts to breaks from any source
+  const breakFx = useRef<(i: number, dirX: number, dirZ: number, power: number) => void>(() => {});
+  useEffect(() => onDestructibleBreak((i, dx, dz, p) => breakFx.current(i, dx, dz, p)), []);
   const debris = useRef<Debris[]>(Array.from({ length: 36 }, () => ({ active: false, x: 0, y: -20, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, rz: 0, life: 0, color: "#a3764f" })));
   const debrisRefs = useRef<Array<THREE.Mesh | null>>([]);
   const debrisCursor = useRef(0);
@@ -82,8 +96,8 @@ export default function Phase7Systems() {
   const raceOutAt = useRef(-1); // race abort timer (out of car)
 
   useEffect(() => {
-    const dn = (e: KeyboardEvent) => { if (e.key.toLowerCase() === "e" && !e.repeat) eDownAt.current = performance.now() / 1000; };
-    const up = (e: KeyboardEvent) => { if (e.key.toLowerCase() === "e") eDownAt.current = -1; };
+    const dn = (e: KeyboardEvent) => { if (isBind(e, "interact") && !e.repeat) eDownAt.current = performance.now() / 1000; };
+    const up = (e: KeyboardEvent) => { if (isBind(e, "interact")) eDownAt.current = -1; };
     window.addEventListener("keydown", dn);
     window.addEventListener("keyup", up);
     return () => { window.removeEventListener("keydown", dn); window.removeEventListener("keyup", up); };
@@ -103,6 +117,18 @@ export default function Phase7Systems() {
       if (m) (m.material as THREE.MeshStandardMaterial).color.set(color);
     }
   };
+  // Phase 14: ONE break reaction for every source (car ram / bat /
+  // bottle) — hide the mesh, spray kind-coloured debris, thud
+  breakFx.current = (i, dirX, dirZ, power) => {
+    const d = DESTRUCTIBLES[i];
+    if (!d) return;
+    const g = destRefs.current[i];
+    if (g) g.visible = false;
+    const color = d.kind === "barrel" ? "#b3402e" : d.kind === "fence" ? "#6d4c33" : d.kind === "stall" ? "#b3542e" : d.kind === "sign" ? "#8a929a" : "#a3764f";
+    const n = d.kind === "stall" ? 10 : d.kind === "fence" ? 8 : d.kind === "sign" ? 5 : 6;
+    spawnDebris(d.x, groundYAt(d.x, d.z), d.z, color, n, dirX, dirZ, power);
+    sfx.thud();
+  };
 
   useFrame(({ clock }, delta) => {
     const t = clock.elapsedTime;
@@ -115,8 +141,7 @@ export default function Phase7Systems() {
     // ================= daily tick (06:00 wrap) =================
     if (G.dayTime < prevDay.current - 0.5) {
       advanceDay();
-      broken.current.clear(); // destructibles are repaired overnight
-      saveDaySet(DESTRUCT_KEY, []);
+      resetDestructibles(); // destructibles are repaired overnight
       destRefs.current.forEach((g) => { if (g) g.visible = true; });
     }
     prevDay.current = G.dayTime;
@@ -224,8 +249,12 @@ export default function Phase7Systems() {
     }
 
     // ================= STREET RACES =================
-    const race = J.race;
-    if (!race) {
+    // Phase 14: this block runs STREET races only — the Bay Circuit
+    // (boat) and Sparrow Run (air) share the J.race state but are
+    // stepped by their own block below (different progress source:
+    // the vehicle's state, not the on-foot position).
+    const race = J.race && !J.race.def.mode ? J.race : null;
+    if (!J.race) {
       // park the rival cars underground between races (J.race is not
       // React state, so visibility is driven from here, not JSX props)
       oppRefs.current.forEach((g) => { if (g && g.position.y > -40) g.position.set(0, -50, 0); });
@@ -241,9 +270,13 @@ export default function Phase7Systems() {
         if (left !== countStage.current && left > 0) { countStage.current = left; bark("Race Marshal", `${left}…`); sfx.click(); }
         if (t >= race.goAt) { race.phase = "run"; race.startedAt = t; bark("Race Marshal", "GO!"); sfx.playStart(); }
       } else if (race.phase === "run") {
-        // player progress through the shared checkpoint sequence
+        // player progress through the shared checkpoint sequence.
+        // Phase 14 correction: measure from the ACTIVE CAR while
+        // driving (G.playerPos is the on-foot position and does not
+        // track the car) — same pattern as GameSystems' car-aware px.
+        const rpx = car ? car.state.x : px, rpz = car ? car.state.z : pz;
         const nextCp = def.cps[Math.min(race.cp, def.cps.length - 1)];
-        const dCp = Math.hypot(px - nextCp[0], pz - nextCp[1]);
+        const dCp = Math.hypot(rpx - nextCp[0], rpz - nextCp[1]);
         if (race.playerDoneAt === 0 && dCp < 9 && race.cp < def.cps.length) {
           race.cp += 1; sfx.pickup();
           if (race.cp >= def.cps.length) race.playerDoneAt = t;
@@ -316,6 +349,101 @@ export default function Phase7Systems() {
       }
     }
 
+    // ================= PHASE 14: BAY CIRCUIT (boat) + SPARROW RUN (air) =================
+    // Same J.race state machine as the street fields — countdown, run,
+    // 5 s out-of-vehicle abort, best times in jobStats — but progress
+    // is measured from the ACTIVE VEHICLE's state (boat/plane), the
+    // Bay Circuit fields ONE ghost rival paced by race_pace, and the
+    // Sparrow Run gates its rings on altitude (followPos.y carries
+    // the plane's height) with a landing finish.
+    const srace = J.race && J.race.def.mode ? J.race : null;
+    if (!srace && ghostRef.current) ghostRef.current.visible = false;
+    if (srace) {
+      const def = srace.def;
+      const vc = car; // the vehicle the player is driving (null on foot)
+      const vx = vc ? vc.state.x : px, vz = vc ? vc.state.z : pz;
+      if (srace.phase === "countdown") {
+        if (def.mode === "boat") positionGhost(t);
+        const left = Math.ceil(srace.goAt - t);
+        if (left !== countStage.current && left > 0) { countStage.current = left; bark(def.mode === "boat" ? "Race Marshal" : "Tower", `${left}…`); sfx.click(); }
+        if (t >= srace.goAt) { srace.phase = "run"; srace.startedAt = t; bark(def.mode === "boat" ? "Race Marshal" : "Tower", "GO!"); sfx.playStart(); }
+      } else if (srace.phase === "run") {
+        const alt = Math.max(0, G.followPos.y - groundYAt(vx, vz));
+        const nextCp = def.cps[Math.min(srace.cp, def.cps.length - 1)];
+        const dCp = Math.hypot(vx - nextCp[0], vz - nextCp[1]);
+        const isLast = srace.cp >= def.cps.length - 1;
+        // ring gates: boat 11u flat · air 26u + altitude band (the
+        // final ring is the landing — it only counts below 4u)
+        const altOk = def.mode !== "air" ? true
+          : isLast ? alt < 4
+          : Math.abs(alt - (def.cpAlt?.[srace.cp] ?? 25)) < 9;
+        if (srace.playerDoneAt === 0 && dCp < (def.mode === "air" ? 26 : 11) && altOk && srace.cp < def.cps.length) {
+          srace.cp += 1; sfx.pickup();
+          if (srace.cp >= def.cps.length) srace.playerDoneAt = t;
+          else toast(`${def.name} — checkpoint ${srace.cp}/${def.cps.length} · ${fmtTime(t - srace.startedAt)}`);
+        }
+        const playerTime = srace.playerDoneAt > 0 ? srace.playerDoneAt - srace.startedAt : 0;
+        const playerProg = srace.playerDoneAt > 0 ? def.cps.length * 1000 + 500 - playerTime : srace.cp * 1000 - dCp;
+        // ---- the ghost rival (Bay Circuit only) ----
+        let ghostWon = false;
+        if (def.mode === "boat" && srace.opps[0]) {
+          const o = srace.opps[0];
+          if (o.finishedAt > 0) ghostWon = true;
+          else {
+            const target = def.cps[Math.min(o.cp, def.cps.length - 1)];
+            const dx = target[0] - o.x, dz = target[1] - o.z;
+            const d = Math.hypot(dx, dz);
+            const oProg = o.cp * 1000 - d;
+            // ghost pacing from the Harborfall Core (race_pace), base
+            // just under a runabout's top speed — beatable, honest
+            const topSpeed = fallbackPhysics.racePace(playerProg, oProg, 13.6, 1.0);
+            o.speed = Math.min(o.speed + dt * 4, topSpeed);
+            if (d > 0.1) {
+              const want = Math.atan2(dx, dz);
+              let dh = want - o.heading;
+              while (dh > Math.PI) dh -= Math.PI * 2;
+              while (dh < -Math.PI) dh += Math.PI * 2;
+              o.heading += THREE.MathUtils.clamp(dh, -1.6 * dt, 1.6 * dt);
+            }
+            o.x += Math.sin(o.heading) * o.speed * dt;
+            o.z += Math.cos(o.heading) * o.speed * dt;
+            if (d < 11) { o.cp += 1; if (o.cp >= def.cps.length) { o.finishedAt = t; o.speed = 0; ghostWon = true; } }
+          }
+          positionGhost(t);
+        }
+        // abort: out of the vehicle for more than 5 s (same rule)
+        if (!G.driving && srace.playerDoneAt === 0) {
+          if (raceOutAt.current < 0) raceOutAt.current = t;
+          if (t - raceOutAt.current > 5) {
+            toast(`${def.name} abandoned — you left your ${def.mode === "boat" ? "boat" : "plane"}.`);
+            pushPhoneMsg("Race Marshal", `${def.name}: abandoned. No payout.`);
+            J.race = null;
+          }
+        } else raceOutAt.current = -1;
+        if (J.race && srace.playerDoneAt > 0) {
+          const bt = jobStats.bestTimes[def.id];
+          if (!bt || playerTime < bt) jobStats.bestTimes[def.id] = Math.round(playerTime * 10) / 10;
+          jobStats.racesRun += 1;
+          let payout = 0; let verdict: string;
+          if (def.mode === "boat") {
+            if (ghostWon) verdict = `2nd — the ghost boat got home first (${fmtTime(playerTime)})`;
+            else { payout = def.purse ?? 500; jobStats.racesWon += 1; verdict = `1st 🏆 — ${fmtTime(playerTime)} — +$${payout}`; }
+          } else {
+            const par = def.par ?? 120;
+            if (playerTime <= par) { payout = def.purse ?? 600; jobStats.racesWon += 1; verdict = `${fmtTime(playerTime)} — under the ${fmtTime(par)} par! +$${payout}`; }
+            else verdict = `${fmtTime(playerTime)} — over the ${fmtTime(par)} par, no purse (best time recorded)`;
+          }
+          if (payout > 0) { G.cash += payout; G.lifetimeEarned += payout; }
+          persistJobStats();
+          postRaceResult();
+          pushPhoneMsg(def.mode === "air" ? "Tower" : "Race Marshal", `${def.name}: ${verdict}.`);
+          toast(`🏁 ${def.name}: ${verdict}`);
+          sfx.complete();
+          J.race = null;
+        }
+      }
+    }
+
     // ================= TOLL BOOTH =================
     {
       const inZone = car && Math.abs(px - TOLL.x) < 4.6 && Math.abs(pz - TOLL.z) < 3.2;
@@ -362,21 +490,20 @@ export default function Phase7Systems() {
 
     // ================= DESTRUCTIBLES + DEBRIS =================
     // Phase 9: restored-broken props stay hidden from the first frame
-    for (const i of broken.current) {
+    for (const i of brokenDestructibles) {
       const g = destRefs.current[i];
       if (g && g.visible) g.visible = false;
     }
     if (car && speed > 6) {
       DESTRUCTIBLES.forEach((d, i) => {
-        if (broken.current.has(i)) return;
+        if (brokenDestructibles.has(i)) return;
         if ((car.state.x - d.x) ** 2 + (car.state.z - d.z) ** 2 < 2.3 ** 2) {
-          broken.current.add(i);
-          saveDaySet(DESTRUCT_KEY, [...broken.current]);
-          const g = destRefs.current[i];
-          if (g) g.visible = false;
-          spawnDebris(d.x, groundYAt(d.x, d.z), d.z, d.kind === "barrel" ? "#b3402e" : d.kind === "fence" ? "#6d4c33" : "#a3764f", d.kind === "fence" ? 8 : 6,
-            Math.sin(car.state.heading) * Math.sign(car.state.speed), Math.cos(car.state.heading) * Math.sign(car.state.speed), Math.min(6, Math.abs(car.state.speed) * 0.55));
-          sfx.thud();
+          // Phase 14: the shared break path (mesh + debris react via
+          // the breakFx subscription — bat and bottle breaks land in
+          // exactly the same place)
+          breakDestructible(i,
+            Math.sin(car.state.heading) * Math.sign(car.state.speed), Math.cos(car.state.heading) * Math.sign(car.state.speed),
+            Math.min(6, Math.abs(car.state.speed) * 0.55));
         }
       });
     }
@@ -545,6 +672,24 @@ export default function Phase7Systems() {
           }
         }
       }
+      // ---- Phase 14 starts: measured from the VEHICLE (the on-foot
+      // position doesn't track it) — Bay Circuit needs a boat on the
+      // marina marker, Sparrow Run the plane on the field marker ----
+      if (!prompt && car && !J.race && !M.active) {
+        if ((car.state.x - BAY_CIRCUIT.start[0]) ** 2 + (car.state.z - BAY_CIRCUIT.start[1]) ** 2 < 7 ** 2) {
+          if (car.kind === "boat" || car.kind === "skiff") {
+            const bt = jobStats.bestTimes[BAY_CIRCUIT.id];
+            prompt = `Press E — start Bay Circuit (${BAY_CIRCUIT.cps.length} checkpoints around Sable Island · beat the ghost boat · win $${BAY_CIRCUIT.purse}${bt ? ` · best ${fmtTime(bt)}` : ""})`;
+            act = () => startSpecialRace(BAY_CIRCUIT, t);
+          } else { prompt = "Bay Circuit starts here — you need a boat on the marker."; warn = true; }
+        } else if ((car.state.x - SPARROW_RUN.start[0]) ** 2 + (car.state.z - SPARROW_RUN.start[1]) ** 2 < 9 ** 2) {
+          if (car.kind === "plane") {
+            const bt = jobStats.bestTimes[SPARROW_RUN.id];
+            prompt = `Press E — start Sparrow Run (time trial · ${SPARROW_RUN.cps.length} rings · beat ${fmtTime(SPARROW_RUN.par ?? 120)} for $${SPARROW_RUN.purse}${bt ? ` · best ${fmtTime(bt)}` : ""})`;
+            act = () => startSpecialRace(SPARROW_RUN, t);
+          } else { prompt = "Sparrow Run starts here — you need the Sparrow on the marker."; warn = true; }
+        }
+      }
     }
     // hold-E buy processing
     if (buyRef.current && eDownAt.current > 0) {
@@ -595,6 +740,26 @@ export default function Phase7Systems() {
     sfx.click();
   }
 
+  /** Phase 14: Bay Circuit + Sparrow Run starts — the same J.race
+   * state, no side bet; the boat race seeds ONE ghost rival astern. */
+  function startSpecialRace(def: RaceDef, t: number) {
+    const [sx, sz] = def.start;
+    const cp0 = def.cps[0];
+    const dirA = Math.atan2(cp0[0] - sx, cp0[1] - sz);
+    J.race = {
+      def, phase: "countdown", goAt: t + 3, startedAt: 0, cp: 0, bet: 0, playerDoneAt: 0,
+      opps: def.mode === "boat"
+        ? [{ x: sx - Math.sin(dirA) * 7, z: sz - Math.cos(dirA) * 7, heading: dirA, cp: 0, speed: 0, skill: 1, finishedAt: 0, color: "#d8d2c2", kind: "muscle" }]
+        : [],
+    };
+    countStage.current = -1;
+    raceOutAt.current = -1;
+    bark(def.mode === "boat" ? "Race Marshal" : "Tower",
+      def.mode === "boat" ? "Bay Circuit — around the island and home. The pale boat is your ghost. On my count…"
+        : "Sparrow Run — rings at the bridge, the lighthouse, Northgate. Land back here to stop the clock. On my count…");
+    sfx.click();
+  }
+
   const tollY = groundYAt(TOLL.x, TOLL.z);
   return (
     <group>
@@ -620,6 +785,32 @@ export default function Phase7Systems() {
           <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[2.6, 0.14, 8, 28]} /><meshStandardMaterial color="#ffb340" emissive="#ffb340" emissiveIntensity={0.7} /></mesh>
         </group>
       ))}
+      {/* Phase 14 start rings: Bay Circuit (floating on the marina
+          water) + Sparrow Run (on the Sable Field apron) */}
+      <group position={[BAY_CIRCUIT.start[0], 0.18, BAY_CIRCUIT.start[1]]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[3.2, 0.16, 8, 28]} /><meshStandardMaterial color="#7fd8e8" emissive="#7fd8e8" emissiveIntensity={0.7} /></mesh>
+      </group>
+      <group position={[SPARROW_RUN.start[0], groundYAt(SPARROW_RUN.start[0], SPARROW_RUN.start[1]) + 0.15, SPARROW_RUN.start[1]]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[3.2, 0.16, 8, 28]} /><meshStandardMaterial color="#7fd8e8" emissive="#7fd8e8" emissiveIntensity={0.7} /></mesh>
+      </group>
+      {/* Phase 14: Sparrow Run rings, hanging at their gate altitudes
+          (the last one lies flat on the field — the landing gate) */}
+      {SPARROW_RUN.cps.map((cp, i) => {
+        const alt = SPARROW_RUN.cpAlt?.[i] ?? 0;
+        return (
+          <group key={i} position={[cp[0], Math.max(1.2, alt), cp[1]]} rotation={alt < 4 ? [Math.PI / 2, 0, 0] : [0, i * 0.7, 0]}>
+            <mesh><torusGeometry args={[7, 0.35, 8, 24]} /><meshStandardMaterial color="#ffb340" emissive="#ffb340" emissiveIntensity={0.55} transparent opacity={0.9} /></mesh>
+          </group>
+        );
+      })}
+      {/* Phase 14: the Bay Circuit ghost rival — a pale runabout,
+          positioned by the frame loop while its race runs */}
+      <group ref={ghostRef} visible={false}>
+        <mesh position={[0, 0.32, 0]} castShadow><boxGeometry args={[1.7, 0.55, 4.6]} /><meshStandardMaterial color="#d8d2c2" roughness={0.35} metalness={0.1} /></mesh>
+        <mesh position={[0, 0.68, -0.5]} castShadow><boxGeometry args={[1.3, 0.4, 1.7]} /><meshStandardMaterial color="#e8e4da" roughness={0.3} /></mesh>
+        <mesh position={[0, 0.85, -0.5]}><boxGeometry args={[1.1, 0.28, 0.06]} /><meshStandardMaterial color="#7fd8e8" roughness={0.1} metalness={0.3} /></mesh>
+        <mesh position={[0, 0.5, 2.15]}><boxGeometry args={[0.5, 0.35, 0.3]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.4} /></mesh>
+      </group>
 
       {/* toll booth (bridge deck, x=60 z=150) */}
       <group position={[TOLL.x, tollY, TOLL.z]}>
@@ -658,6 +849,27 @@ export default function Phase7Systems() {
               <mesh position={[0, 0.5, 0]} castShadow><boxGeometry args={[3.9, 0.75, 0.07]} /><meshStandardMaterial color="#8a6a44" roughness={0.95} /></mesh>
               <mesh position={[-1.8, 0.45, 0]}><boxGeometry args={[0.12, 0.9, 0.12]} /><meshStandardMaterial color="#6d4c33" roughness={0.95} /></mesh>
               <mesh position={[1.8, 0.45, 0]}><boxGeometry args={[0.12, 0.9, 0.12]} /><meshStandardMaterial color="#6d4c33" roughness={0.95} /></mesh>
+            </group>
+          )}
+          {d.kind === "stall" && (
+            <group>
+              {/* market stall: four posts, a counter, produce crates and
+                  the striped canopy that makes it read from the street */}
+              {([[-1.3, -0.8], [1.3, -0.8], [-1.3, 0.8], [1.3, 0.8]] as const).map(([x, z], j) => (
+                <mesh key={j} position={[x, 1.05, z]} castShadow><boxGeometry args={[0.09, 2.1, 0.09]} /><meshStandardMaterial color="#6d4c33" roughness={0.9} /></mesh>
+              ))}
+              <mesh position={[0, 0.95, 0]} castShadow><boxGeometry args={[2.9, 0.1, 1.9]} /><meshStandardMaterial color="#7a5a3d" roughness={0.85} /></mesh>
+              <mesh position={[0, 2.22, 0]} rotation={[0, 0, 0.06]} castShadow><boxGeometry args={[3.3, 0.07, 2.3]} /><meshStandardMaterial color="#b3542e" roughness={0.8} /></mesh>
+              <mesh position={[0, 2.26, 0]} rotation={[0, 0, 0.06]}><boxGeometry args={[3.3, 0.03, 0.5]} /><meshStandardMaterial color="#e8e0d0" roughness={0.8} /></mesh>
+              <mesh position={[-0.8, 1.18, 0.2]} castShadow><boxGeometry args={[0.62, 0.36, 0.62]} /><meshStandardMaterial color="#a3764f" roughness={0.9} /></mesh>
+              <mesh position={[0.5, 1.16, -0.25]} castShadow><boxGeometry args={[0.55, 0.32, 0.55]} /><meshStandardMaterial color="#59754e" roughness={0.9} /></mesh>
+            </group>
+          )}
+          {d.kind === "sign" && (
+            <group>
+              <mesh position={[0, 1.25, 0]} castShadow><cylinderGeometry args={[0.05, 0.06, 2.5, 8]} /><meshStandardMaterial color="#59616a" metalness={0.6} roughness={0.45} /></mesh>
+              <mesh position={[0, 2.35, 0]} castShadow><boxGeometry args={[1.15, 0.72, 0.06]} /><meshStandardMaterial color="#14524f" roughness={0.5} /></mesh>
+              <mesh position={[0, 2.35, 0.04]}><boxGeometry args={[0.95, 0.52, 0.02]} /><meshStandardMaterial color="#ffb340" emissive="#ffb340" emissiveIntensity={0.25} /></mesh>
             </group>
           )}
         </group>

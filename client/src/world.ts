@@ -369,6 +369,9 @@ export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[]
   // ---- Phase 6 ----
   { x: 27, z: -222, hw: 3.5, hd: 5.5 },  // Sable Arms gun store (Northgate)
   { x: -52, z: 158, hw: 1.7, hd: 1.7 },  // Sable Island lighthouse
+  // ---- Phase 14 frontages (World.tsx Phase14Frontages) ----
+  { x: 64, z: -70, hw: 5.5, hd: 3 },     // Sable Fitness pavilion, Lantern Park
+  { x: -68, z: -200, hw: 6, hd: 4 },     // Northgate Loft building
   // parking-garage perimeter walls: they seal the under-deck bays at
   // ground level AND act as the deck-2 guard walls (see VISUAL_AUDIT)
   { x: -65.5, z: -263.6, hw: 9.5, hd: 0.45 },  // deck south wall
@@ -403,6 +406,11 @@ export const AIRPORT_DOOR = { x: 114.5, z: 40.6 };
 // Café Coral joins the Docks strip at z=106.5 like HQ / the clinic ----
 export const SHOWROOM_EXT_DOOR = { x: -36, z: -233 };
 export const CAFE_EXT_DOOR = { x: 8, z: 100.6 };
+// ---- Phase 14 exterior doors: Sable Fitness pavilion on Lantern
+// Park's south-west corner (the old outdoor gym corner grew walls),
+// and the Northgate Loft on the mansion-row approach ----
+export const GYM_EXT_DOOR = { x: 64, z: -66.3 };
+export const LOFT_EXT_DOOR = { x: -68, z: -195.2 };
 
 // ---- Phase 7 world sweep: toll booth on the Coral causeway (bridge
 // deck at x = 60; the booth sits in the corridor, the barrier arm is a
@@ -416,8 +424,12 @@ export const SPEED_CAMERAS: { x: number; z: number; road: string }[] = [
 ];
 export const SPEED_LIMIT_U = 28; // ≈ 100 km/h in world units/s
 /** Destructible props (Phase 7): smashed by the player's car at speed,
- * debris flies, they respawn on the next game day. NOT blockers. */
-export interface Destructible { x: number; z: number; kind: "crate" | "barrel" | "fence"; rot: number; }
+ * debris flies, they respawn on the next game day. NOT blockers.
+ * Phase 14 ROUND 2: wooden fences (suburbs, Sable Downs, mansion row),
+ * Market Row stall frames + canopies, and road signs join the set —
+ * and the whole set now also breaks to the bat and thrown bottles
+ * (game/destruct.ts is the shared breakage state). */
+export interface Destructible { x: number; z: number; kind: "crate" | "barrel" | "fence" | "stall" | "sign"; rot: number; }
 export const DESTRUCTIBLES: Destructible[] = [
   ...props.filter((p) => p.kind === "crate").map((p) => ({ x: p.x, z: p.z, kind: "crate" as const, rot: p.rot })),
   { x: 30, z: 112, kind: "barrel", rot: 0 }, { x: 36.5, z: 112.5, kind: "barrel", rot: 0 },
@@ -427,6 +439,24 @@ export const DESTRUCTIBLES: Destructible[] = [
   { x: 102, z: 33, kind: "crate", rot: 0.9 }, { x: -64, z: 48, kind: "crate", rot: 0.2 },
   // construction-style fence line along Lantern Park's south edge
   ...[68, 72, 76, 80, 84, 88, 92].map((x) => ({ x, z: -63, kind: "fence" as const, rot: 0 })),
+  // ---- Phase 14: suburb garden fences (Ferry Quarter house rows) ----
+  ...[-92, -88.1, -84.2].map((x) => ({ x, z: -30, kind: "fence" as const, rot: 0 })),
+  ...[-74, -70.1, -66.2].map((x) => ({ x, z: 2, kind: "fence" as const, rot: 0 })),
+  // ---- Phase 14: Sable Downs ring fences (tangent to the dirt loop) ----
+  { x: -55.5, z: -69.8, kind: "fence", rot: -1.92 },
+  { x: -61.3, z: -60.8, kind: "fence", rot: -2.37 },
+  { x: -70.4, z: -55.2, kind: "fence", rot: -2.82 },
+  // ---- Phase 14: Northgate mansion-row front fences ----
+  { x: -97.5, z: -209, kind: "fence", rot: Math.PI / 2 },
+  { x: -97.5, z: -227, kind: "fence", rot: Math.PI / 2 },
+  // ---- Phase 14: Market Row + Coral market stalls (frame + canopy) ----
+  { x: 14, z: 26, kind: "stall", rot: 0.3 }, { x: 17.6, z: 29.5, kind: "stall", rot: -0.2 },
+  { x: 34, z: 34, kind: "stall", rot: 0.9 }, { x: 30.5, z: 30.5, kind: "stall", rot: 0.5 },
+  { x: 56, z: 216, kind: "stall", rot: 0.1 },
+  // ---- Phase 14: road signs at the busy corners ----
+  { x: 26.5, z: -13.5, kind: "sign", rot: 0 }, { x: -53.5, z: 26.5, kind: "sign", rot: 0 },
+  { x: 66.5, z: -26.5, kind: "sign", rot: 0 }, { x: -26.5, z: 66.5, kind: "sign", rot: 0 },
+  { x: 86.5, z: 226.5, kind: "sign", rot: 0 }, { x: -27.5, z: -219.5, kind: "sign", rot: 0 },
 ];
 
 /** Manhattan GPS route on the road grid (big-map polyline, Phase 7):
@@ -463,7 +493,7 @@ export const MANSION_DRIVE = { x: MANSION.x + 4.4, z: MANSION.z + 4.4, hw: 3.6, 
 // ---- Phase 3: enterable interiors live in an offset pocket (z ≈ -175),
 // far outside the city grid. Player movement clamps to the room while
 // G.interior is set, so city collision never applies there.
-export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe";
+export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft";
 export interface InteriorDef { cx: number; cz: number; w: number; d: number; spawnIn: [number, number]; exitDoor: [number, number]; }
 export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   garage: { cx: 0, cz: -175, w: 18, d: 13, spawnIn: [0, -171.2], exitDoor: [0, -169.4] },
@@ -477,6 +507,9 @@ export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   // ---- Phase 13: Sable Motors showroom + Café Coral (pockets 7 + 8) ----
   showroom: { cx: 244, cz: -175, w: 22, d: 15, spawnIn: [244, -171.2], exitDoor: [244, -168.4] },
   cafe: { cx: 282, cz: -175, w: 16, d: 12, spawnIn: [282, -171.2], exitDoor: [282, -169.9] },
+  // ---- Phase 14: Sable Fitness + the Northgate Loft (pockets 9 + 10) ----
+  gym: { cx: 318, cz: -175, w: 18, d: 13, spawnIn: [318, -171.2], exitDoor: [318, -169.4] },
+  loft: { cx: 354, cz: -175, w: 16, d: 12, spawnIn: [354, -171.6], exitDoor: [354, -170] },
 };
 
 export function isBlocked(x: number, z: number, radius: number): boolean {

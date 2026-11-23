@@ -1,5 +1,6 @@
-// Harborfall — Phase 8 shared state: fishing, the Lantern Park outdoor
-// gym, and the Thread & Tide clothing override layer. The systems logic
+// Harborfall — Phase 8 shared state: fishing, the gym (Phase 14: the
+// Sable Fitness interior), and the Thread & Tide clothing override
+// layer. The systems logic
 // lives in components/Phase8.tsx; this module owns the data + persistence
 // so the phone (Stats) and Player (rig) can read it without cycles.
 import type { HumanoidOptions } from "../humanoid";
@@ -48,14 +49,15 @@ function makeFish(def: FishDef): CaughtFish {
 }
 
 // ================================================================ GYM
-// CHOICE (documented in VISUAL_AUDIT): an OUTDOOR gym corner on Lantern
-// Park's south lawn — two stations as park furniture. A pocket interior
-// would have cost a room slot + door flow for the same two interactions;
-// the park corner also reads instantly from the street.
+// Phase 14 SUPERSEDES the Phase 8 choice: the gym is now the SABLE
+// FITNESS pocket interior at Lantern Park (world.ts INTERIORS.gym) —
+// the stations below are coordinates INSIDE that room. The old outdoor
+// corner survives as stretching mats (flavour only, Phase8.tsx).
+// Prices, once-per-day and skill rules are exactly the outdoor ones.
 export interface GymStation { id: "bench" | "tread"; name: string; x: number; z: number; skill: "strength" | "stamina"; gain: number; otherGain: number; }
 export const GYM_STATIONS: GymStation[] = [
-  { id: "bench", name: "Bench press", x: 70, z: -64.5, skill: "strength", gain: 6, otherGain: 2 },
-  { id: "tread", name: "Park treadmill", x: 75.5, z: -64.5, skill: "stamina", gain: 6, otherGain: 1 },
+  { id: "bench", name: "Bench press", x: 313, z: -178, skill: "strength", gain: 6, otherGain: 2 },
+  { id: "tread", name: "Treadmill", x: 322, z: -178, skill: "stamina", gain: 6, otherGain: 1 },
 ];
 export const GYM = {
   active: null as GymStation | null,
@@ -90,16 +92,23 @@ export const CLOTHING_ITEMS: ClothingItem[] = [
 export const CLOTHING_SHOP = { x: 18, z: 30.5, name: "Thread & Tide" };
 export const CLOTH = {
   current: null as ClothingItem | null,
+  // Phase 14: every item ever bought — the Northgate Loft wardrobe
+  // lets you change into anything you own (the shop stays the only
+  // place to BUY; the wardrobe only stores what you paid for)
+  owned: [] as string[],
 };
 try {
   const raw = localStorage.getItem("harborfall-clothing");
   if (raw) {
-    const id = (JSON.parse(raw) as { current?: string }).current;
-    CLOTH.current = CLOTHING_ITEMS.find((i) => i.id === id) ?? null;
+    const parsed = JSON.parse(raw) as { current?: string; owned?: string[] };
+    CLOTH.current = CLOTHING_ITEMS.find((i) => i.id === parsed.current) ?? null;
+    CLOTH.owned = Array.isArray(parsed.owned) ? parsed.owned.filter((id) => CLOTHING_ITEMS.some((i) => i.id === id)) : [];
+    // an override worn from before ownership tracking counts as owned
+    if (CLOTH.current && !CLOTH.owned.includes(CLOTH.current.id)) CLOTH.owned.push(CLOTH.current.id);
   }
 } catch { /* no override */ }
 export function persistClothing() {
-  try { localStorage.setItem("harborfall-clothing", JSON.stringify({ current: CLOTH.current?.id ?? null })); } catch { /* ignore */ }
+  try { localStorage.setItem("harborfall-clothing", JSON.stringify({ current: CLOTH.current?.id ?? null, owned: CLOTH.owned })); } catch { /* ignore */ }
   window.dispatchEvent(new CustomEvent("harborfall-clothing-changed"));
 }
 export function clearClothingOverride() {

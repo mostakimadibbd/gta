@@ -978,3 +978,58 @@ at dusk from the pause menu (foliage + light drift), enter the
 showroom at night and buy from the indoor counter, sit in Café
 Coral, and leave a car somewhere odd, reload, and find the amber
 ring on the big map.
+
+## Phase 14 — depth pass + the High-tier stability pass (2026-11-23)
+
+Two deliveries in one build. The depth pass: a genuine verlet ragdoll
+(13 points / 18 constraints, C++ `ragdoll_step` + exact TS mirror,
+41/41 g++ smoke checks) posing downed peds near the player and the
+WASTED collapse from the solved points, blended out on get-up;
+destructibles round 2 (43 props + 15 glass panes behind one shared
+breakage state — car, bat and bottle all break through it); Sable
+Fitness (the gym indoors, same rules) and the Northgate Loft (second
+home: bed, wardrobe, harbour windows) as pockets 9 + 10; the Bay
+Circuit ghost-boat race and the Sparrow Run altitude-gated time
+trial on the existing race scaffolding; three save slots via a
+localStorage prefix layer (legacy saves copied → verified → kept as
+backup in Slot 1); and per-slot key remapping with conflict
+detection.
+
+The stability pass answers a real play-test report: on a Retina Mac
+in Brave, High crashed to a black screen, Medium afterwards showed
+electric-blue outlines (the postprocessing normal/G-buffer presented
+instead of the composited frame), and the tab held 2.7 GB. The stack
+that caused it: DPR 2 on Retina (~5K drawing buffer) feeding the
+composer's HalfFloat targets, bloom's mip chain, SSAO, SSR's
+G-buffer at 0.5 scale and a planar-water target at half the drawing
+buffer — all live at once, with SSR hot-swapped inside a long-lived
+composer and no error boundary or context-loss handling anywhere.
+
+| Lever | Before | After |
+|---|---|---|
+| DPR cap — High / Medium / Low | 2 / 1.5 / 1.25 | 1.5 / 1.35 / 1.25 |
+| DPR ladder | 1.1–2 (5 steps) | 1.1–1.5 (4 steps) |
+| SSR resolution scale | 0.5 | 0.35 |
+| SSR steps / refine steps | 20 / 5 | 12 / 3 |
+| SSAO + SSR together | both on High | never — SSAO yields when SSR is active |
+| Planar-water target | 0.5× drawing buffer (unbounded) | hard cap 1024×512 |
+| Planar refresh at governor floor | far-only half-rate | half-rate whenever DPR sits at the ladder bottom |
+| CC0 texture cap — High | native (0) | 768 px (Medium stays 512) |
+| reflFx default | ON | OFF (opt-in); existing saves migrated once (reflSafeV) |
+| Composer failure mode | black screen / stale G-buffer frame | keyed remount on any tier/reflection change + error boundary → plain rendering for the session + toast |
+| WebGL context lost | permanent black canvas | prevented default + reflections off + tier Medium (persisted) + plain-language toast |
+
+Honest bounds: these caps bound the big multiplicative terms (frame
+targets scale with DPR², the mirror pass is fixed-size, SSR's
+buffers shrink ~2× in area and ~40% in march cost, one G-buffer
+effect runs at a time). They do not promise a specific RAM number on
+anyone's machine — texture residency, the browser's own GPU process
+and other tabs all count too, and this environment cannot run the
+game to measure it. What can be said: the worst-case configuration
+that produced 2.7 GB no longer exists, and every remaining failure
+mode degrades to a playable frame instead of a black one.
+
+Initial-load JS: 789.8 kB gzip (index 414.8 + three 178.2 +
+react-three 185.8 + css/html 11) vs Phase 13's 770.2 — the +2.5% is
+the phase's own code (ragdoll, destruct, saveslots, keybinds, races,
+two rooms); lazy chunks (cc0Data, Phone, panels) stay lazy.

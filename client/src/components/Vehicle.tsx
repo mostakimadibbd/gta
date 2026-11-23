@@ -3,6 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { PhysicsEngine } from "../physics/GamePhysics";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
+import { isBind } from "../game/keybinds";
 import { isBlocked, FUEL_STATIONS, groundYAt, isWaterAt, BRIDGE, buildings, surfaceGripBase, surfaceKindAt } from "../world";
 import { G, addCrime, toast, noteLastCar } from "../game/store";
 import { glowTexture } from "../textures";
@@ -126,11 +127,16 @@ export default function Vehicle(p: Props) {
     const down = (e: KeyboardEvent) => {
       if (refs.current.paused || G.dialogueActive || isInteractiveTarget(e.target)) return;
       const key = normalizeGameKey(e.key);
-      if (["w", "a", "s", "d", " "].includes(key) && G.driving) { e.preventDefault(); keys.current.add(key); }
+      // Phase 14: handbrake follows the JUMP binding and plane climb
+      // the SPRINT binding (same translation as Player.tsx); the
+      // physical Space/Shift only drive while they are the binding
+      if (["w", "a", "s", "d"].includes(key) && G.driving) { e.preventDefault(); keys.current.add(key); }
+      if (isBind(e, "jump") && G.driving) { e.preventDefault(); keys.current.add(" "); }
+      if (isBind(e, "sprint") && G.driving) keys.current.add("shift");
       // Phase 9: Shift/Ctrl are the plane's climb/descend controls
       if ((key === "shift" || key === "control") && G.driving) keys.current.add(key);
       if (key === "b" && G.driving && !e.repeat) { sfx.horn(); e.preventDefault(); }
-      if ((key === "e" || key === "f") && !e.repeat) {
+      if ((isBind(e, "interact") || key === "f") && !e.repeat) {
         // Phase 13: while riding the tram, E belongs to the tram
         // (App fires G.interact) — never enter a car off the guideway
         if (G.tramRide >= 0) { e.preventDefault(); return; }
@@ -145,9 +151,10 @@ export default function Vehicle(p: Props) {
         }
         const best = nearestCar();
         if (best >= 0) {
-          // Phase 4: HOLD E on a locked, unowned car = break-in; a quick
-          // TAP still just gets in (existing steal flow). F always enters.
-          if (key === "e" && breakInEligible(best)) {
+          // Phase 4: HOLD the interact key on a locked, unowned car =
+          // break-in; a quick TAP still just gets in (existing steal
+          // flow). F always enters (and always just enters).
+          if (isBind(e, "interact") && key !== "f" && breakInEligible(best)) {
             eHeld.current = true;
             breakIn.current = { car: best, since: performance.now() };
             e.preventDefault(); return;
@@ -160,7 +167,10 @@ export default function Vehicle(p: Props) {
     const up = (e: KeyboardEvent) => {
       const key = normalizeGameKey(e.key);
       keys.current.delete(key);
-      if (key === "e") {
+      // Phase 14: release the canonical tokens for bound keys too
+      if (isBind(e, "jump")) keys.current.delete(" ");
+      if (isBind(e, "sprint")) keys.current.delete("shift");
+      if (isBind(e, "interact")) {
         eHeld.current = false;
         if (breakIn.current) {
           const heldMs = performance.now() - breakIn.current.since;

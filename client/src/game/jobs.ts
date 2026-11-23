@@ -66,7 +66,16 @@ export function persistJobStats() {
 }
 
 // ---------------------------------------------------------------- races
-export interface RaceDef { id: string; name: string; blurb: string; start: [number, number]; cps: [number, number][]; }
+export interface RaceDef {
+  id: string; name: string; blurb: string; start: [number, number]; cps: [number, number][];
+  /** Phase 14: non-street modes reuse this same race state machine —
+   * "boat" runs one ghost rival (opps[0]) for a win purse, "air" is a
+   * pure time trial against `par`. Absent = a street race. */
+  mode?: "boat" | "air";
+  purse?: number;   // boat: win purse · air: beat-par purse
+  par?: number;     // air: seconds to beat for the purse
+  cpAlt?: number[]; // air: target altitude per checkpoint (last = land, < 4)
+}
 export const RACES: RaceDef[] = [
   { id: "docks", name: "Docks Sprint", blurb: "Harbour straights and one hard right at the Yards.",
     start: [0, 100], cps: [[60, 100], [100, 100], [100, 20], [100, -60], [20, -60]] },
@@ -75,6 +84,25 @@ export const RACES: RaceDef[] = [
   { id: "north", name: "Northgate Loop", blurb: "A clean rectangle around the rich end of town.",
     start: [-20, -216], cps: [[-84, -216], [-84, -280], [-20, -280], [-20, -216]] },
 ];
+/** Phase 14: BAY CIRCUIT — from the marina, out into the bay, a full
+ * loop around Sable Island (south, west, north) and home. One ghost
+ * rival boat, paced by the same race_pace rubber-band as the street
+ * fields; beat it home for the $500 purse. */
+export const BAY_CIRCUIT: RaceDef = {
+  id: "baycircuit", name: "Bay Circuit", mode: "boat", purse: 500,
+  blurb: "Marina start, around Sable Island and back. Beat the ghost boat home.",
+  start: [4, 128], cps: [[40, 150], [0, 185], [-64, 190], [-105, 160], [-64, 138], [-10, 128], [4, 128]],
+};
+/** Phase 14: SPARROW RUN — a pilot's time trial in the Sparrow: climb
+ * out of Sable Field, thread the Bay Bridge ring, round the island
+ * lighthouse, cross to Northgate and land back at the field. Beat
+ * the 2:00 par for $600; any finish records a best time. */
+export const SPARROW_RUN: RaceDef = {
+  id: "sparrow", name: "Sparrow Run", mode: "air", purse: 600, par: 120,
+  blurb: "Rings over the bridge, the lighthouse and Northgate — then land at the field.",
+  start: [124, 64], cps: [[60, 150], [-52, 155], [-20, -240], [124, 64]],
+  cpAlt: [28, 22, 30, 0],
+};
 export const RACE_PRIZES = [600, 250, 100]; // 1st / 2nd / 3rd
 export interface RaceOpp { x: number; z: number; heading: number; cp: number; speed: number; skill: number; finishedAt: number; color: string; kind: "muscle" | "coupe" | "supercar"; }
 export interface RaceState {

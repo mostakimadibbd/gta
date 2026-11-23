@@ -5,6 +5,7 @@
 import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { G, addCrime, toast, stashTotal, bark, syncWeaponMirrors, persistStoredCars } from "../game/store";
+import { isBind } from "../game/keybinds";
 import { GARAGE_ZONES, REGISTERS, PAWN_SHOP, INTERIORS, DEALERSHIP, DEALER_CARS, CAR_MODELS, GUN_STORE, VENDOR, HOSPITAL_DOOR } from "../world";
 import { sfx } from "../game/audio";
 import { giveCash, giveItem, rollLootItem, sellStash } from "../game/theft";
@@ -48,7 +49,7 @@ export default function Interactions() {
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e" && !e.repeat) eDownAt.current = performance.now() / 1000;
+      if (isBind(e, "interact") && !e.repeat) eDownAt.current = performance.now() / 1000;
       // R — repair at a garage while sitting in the car (Phase 6: a
       // spiked flat tyre is a $40 line item on the same job)
       if (e.key.toLowerCase() === "r" && !e.repeat && G.driving && G.garageZone) {
@@ -64,7 +65,7 @@ export default function Interactions() {
       }
     };
     const up = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e") {
+      if (isBind(e, "interact")) {
         // a short tap at a shop counter = browse to the next item
         if (browseCtx.current && eDownAt.current > 0 && performance.now() / 1000 - eDownAt.current < 0.35) {
           if (browseCtx.current === "dealer") dealerIdx.current = (dealerIdx.current + 1) % DEALER_CARS.length;

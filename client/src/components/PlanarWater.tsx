@@ -22,7 +22,8 @@
 // (skyline, sky, bridges, boats, traffic) — layer restriction isn't
 // possible without forking the scene graph, and the full skyline is
 // the point. Cost control: half the drawing buffer (so it follows the
-// Phase 8 DPR ladder), High tier only, player override in Settings.
+// Phase 8 DPR ladder), hard-capped at 1024×512 since Phase 14, High
+// tier only, player override in Settings.
 // Phase 12: when the camera is >60u from the bay centre the mirrored
 // render also drops to half rate (every 2nd frame, reusing the last
 // target + texture matrix as a consistent pair).
@@ -31,6 +32,7 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { WATER_Z } from "../world";
 import { G } from "../game/store";
+import { perf, DPR_LADDER } from "../game/perf";
 import { seasonWaterHSL } from "../game/season";
 import { sandNormal } from "../textures";
 import type { GameTheme } from "../themes";
@@ -175,14 +177,21 @@ export default function PlanarWater({ theme, night }: { theme: GameTheme; night:
     // with the last texture matrix (a consistent pair, so the mirror
     // is at most one frame stale and never shears). Near the water
     // (boating, swimming, the beach) it stays full-rate.
+    // ---- Phase 14: the same half-rate also applies whenever the DPR
+    // governor has walked to the BOTTOM of its ladder — if the frame
+    // is struggling, the mirror is the first thing to give. ----
     frameNo.current += 1;
     const camD2 = camera.position.x ** 2 + (camera.position.z - (WATER_Z + 118)) ** 2;
-    if (camD2 > 60 ** 2 && frameNo.current % 2 === 1) return;
+    const governorFloored = perf.dpr > 0 && perf.dpr <= DPR_LADDER[0] + 0.001;
+    if ((camD2 > 60 ** 2 || governorFloored) && frameNo.current % 2 === 1) return;
 
-    // ---- half-resolution target, following the DPR ladder
+    // ---- half-resolution target, following the DPR ladder — Phase
+    // 14 HARD CAP 1024×512: the target used to grow with the drawing
+    // buffer (DPR 2 on Retina ⇒ a ~2560×1440 second scene render);
+    // the cap bounds the mirrored pass whatever the display does.
     gl.getDrawingBufferSize(s.dbSize);
-    const tw = Math.max(256, Math.floor(s.dbSize.x * 0.5));
-    const th = Math.max(256, Math.floor(s.dbSize.y * 0.5));
+    const tw = Math.min(1024, Math.max(256, Math.floor(s.dbSize.x * 0.5)));
+    const th = Math.min(512, Math.max(256, Math.floor(s.dbSize.y * 0.5)));
     if (rt.width !== tw || rt.height !== th) rt.setSize(tw, th);
 
     // ---- skip the mirrored render when the bay is off-frustum

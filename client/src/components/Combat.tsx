@@ -13,6 +13,7 @@ import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
 import { isInteractiveTarget } from "../keyboard";
 import { WMOD, BOTTLE, syncBottles } from "../game/phase9";
+import { tryBreakDestructibleAt } from "../game/destruct";
 
 interface WeaponSpec {
   cd: number; range: number; perp: number; spreadRad: number;
@@ -120,9 +121,18 @@ export default function Combat({ enabled }: { enabled: boolean }) {
         // knockback: shove the ped along the swing, if the landing is free
         const nx = ped.x + fx * 1.6, nz = ped.z + fz * 1.6;
         ped.x = nx; ped.z = nz;
+        // Phase 14: the shove's momentum seeds the verlet ragdoll
+        ped.kvx = fx * 5; ped.kvz = fz * 5;
         addCrime("assault");
         sfx.batHit();
         if (G.settings.shake) G.shakeAmp = Math.min(0.4, G.shakeAmp + 0.08);
+        return;
+      }
+      // Phase 14: the bat takes destructible props apart too — the
+      // same shared break path as a car ram (debris + day persistence)
+      if (tryBreakDestructibleAt(px + fx * 1.8, pz + fz * 1.8, 1.5, fx, fz, 3)) {
+        addCrime("hit");
+        sfx.batHit();
         return;
       }
       let bd = 2.8 ** 2; let bc = -1;
@@ -148,6 +158,7 @@ export default function Combat({ enabled }: { enabled: boolean }) {
         const ped = G.peds[pi];
         // Phase 8: Strength ≥ 50 (gym) — fists put peds down longer
         ped.downUntil = G.timeS + (G.skills.strength >= 50 ? 5.5 : 4); ped.fleeUntil = G.timeS + 10; ped.flinchUntil = G.timeS + 0.35;
+        ped.kvx = fx * 2.5; ped.kvz = fz * 2.5; // Phase 14: ragdoll seed momentum
         addCrime("assault");
         sfx.thud();
         return;
@@ -226,6 +237,7 @@ export default function Combat({ enabled }: { enabled: boolean }) {
         if (pi >= 0 && pedDist <= carDist) {
           const ped = G.peds[pi];
           ped.downUntil = G.timeS + spec.pedDown; ped.fleeUntil = G.timeS + 11; ped.flinchUntil = G.timeS + 0.4;
+          ped.kvx = fx * 3.5; ped.kvz = fz * 3.5; // Phase 14: ragdoll seed momentum
           fxHit = { x: ped.x, z: ped.z }; anyHit = true;
         } else if (carHit) {
           let bd = 3 ** 2;

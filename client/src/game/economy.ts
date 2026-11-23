@@ -15,10 +15,15 @@ export const BUSINESSES: BusinessDef[] = [
   { id: "club", name: "Club Solace — 50% share", price: 12000, income: 450, x: 54, z: 112, blurb: "Half the bar, half the door, all of the bass." },
 ];
 export const APARTMENT = { name: "Coral Shores Apartment", price: 5000, x: 36, z: 213.2 };
+/** Phase 14: the second purchasable property — a Northgate loft with
+ * a harbour-view interior. Owning it changes nothing about business
+ * income; it adds a sleep/respawn home in the north of the city. */
+export const LOFT = { name: "Northgate Loft", price: 9000, x: -68, z: -195.2 };
 
 export const ECO = {
   owned: [] as string[],
   ownsApartment: false,
+  ownsLoft: false, // Phase 14
   daySerial: 0,
   lastPaidSerial: -1,
   // ---- Phase 9: business staffing (management-lite). A staffed
@@ -32,6 +37,7 @@ try {
     const e = JSON.parse(raw) as Partial<typeof ECO>;
     ECO.owned = Array.isArray(e.owned) ? e.owned : [];
     ECO.ownsApartment = !!e.ownsApartment;
+    ECO.ownsLoft = !!e.ownsLoft;
     ECO.daySerial = e.daySerial ?? 0;
     ECO.lastPaidSerial = e.lastPaidSerial ?? -1;
     ECO.staff = Array.isArray(e.staff) ? e.staff : [];
@@ -41,6 +47,7 @@ export function persistEco() {
   try {
     localStorage.setItem("harborfall-eco", JSON.stringify(ECO));
     localStorage.setItem("harborfall-apartment", ECO.ownsApartment ? "1" : "0");
+    localStorage.setItem("harborfall-loft", ECO.ownsLoft ? "1" : "0");
   } catch { /* ignore */ }
 }
 export const STAFF_WAGE = 35; // $/day per staffed business
@@ -79,10 +86,14 @@ export function sleepToMorning(where: string) {
   pushPhoneMsg("SableBank", `☀️ You woke at ${where}. A new day in Port Sable.`);
 }
 
-/** Respawn home preference ("villa" | "apartment") — latest purchase wins. */
-export function homePref(): "villa" | "apartment" {
-  try { return localStorage.getItem("harborfall-home") === "apartment" ? "apartment" : "villa"; } catch { return "villa"; }
+/** Respawn home preference — latest purchase wins (Phase 14 adds the loft). */
+export type HomeKind = "villa" | "apartment" | "loft";
+export function homePref(): HomeKind {
+  try {
+    const h = localStorage.getItem("harborfall-home");
+    return h === "apartment" || h === "loft" ? h : "villa";
+  } catch { return "villa"; }
 }
-export function setHomePref(h: "villa" | "apartment") {
+export function setHomePref(h: HomeKind) {
   try { localStorage.setItem("harborfall-home", h); } catch { /* ignore */ }
 }

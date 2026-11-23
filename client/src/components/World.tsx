@@ -541,6 +541,43 @@ function Phase7Frontages({ night }: { night: number }) {
   );
 }
 
+/** Phase 14 frontages: the Sable Fitness pavilion on Lantern Park's
+ * south-west corner (the old outdoor gym corner, roofed) and the
+ * Northgate Loft block on the mansion-row approach. Blockers in
+ * world.ts STATIC_BLOCKERS; doors/prompts in Interiors.tsx. */
+function Phase14Frontages({ night }: { night: number }) {
+  const gymTex = useMemo(() => makeSignTexture("SABLE FITNESS", "#0f4442", "#ffca7a", 512), []);
+  const loftTex = useMemo(() => makeSignTexture("NORTHGATE LOFT", "#232a31", "#ffca7a", 512), []);
+  const winMat = <meshStandardMaterial color="#ffe9a8" emissive="#ffca7a" emissiveIntensity={0.15 + night * 1.1} />;
+  return (
+    <group>
+      {/* Sable Fitness (64, -70) — glass front faces the park lawn (+z) */}
+      <group position={[64, 0, -70]}>
+        <mesh position={[0, 2.5, 0]} castShadow receiveShadow><boxGeometry args={[11, 5, 6]} /><meshStandardMaterial color="#274b4a" roughness={0.8} /></mesh>
+        <mesh position={[0, 5.15, 0]} castShadow><boxGeometry args={[11.4, 0.3, 6.4]} /><meshStandardMaterial color="#17303a" roughness={0.8} /></mesh>
+        <mesh position={[0, 4.1, 3.06]}><planeGeometry args={[7.6, 1.25]} /><meshStandardMaterial map={gymTex} emissive="#ffffff" emissiveMap={gymTex} emissiveIntensity={0.25 + night * 0.7} /></mesh>
+        {[-3.6, 3.6].map((x) => <mesh key={x} position={[x, 1.7, 3.03]}><boxGeometry args={[2.6, 2, 0.06]} /><meshStandardMaterial color="#b9d4d8" metalness={0.7} roughness={0.15} emissive="#7fd8e8" emissiveIntensity={0.08 + night * 0.35} /></mesh>)}
+        <mesh position={[0, 1.05, 3.03]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#0d2226" roughness={0.4} /></mesh>
+        <mesh position={[0, 3.1, 3.2]} rotation={[-0.5, 0, 0]}><boxGeometry args={[9.6, 0.08, 1.5]} /><meshStandardMaterial color="#d99a3d" roughness={0.7} /></mesh>
+      </group>
+      {/* The Northgate Loft (-68, -200) — a slim residential block;
+          the top-floor windows are YOUR harbour view once bought */}
+      <group position={[-68, 0, -200]}>
+        <mesh position={[0, 7, 0]} castShadow receiveShadow><boxGeometry args={[12, 14, 8]} /><meshStandardMaterial color="#4a4238" roughness={0.9} /></mesh>
+        <mesh position={[0, 14.15, 0]} castShadow><boxGeometry args={[12.4, 0.3, 8.4]} /><meshStandardMaterial color="#2c2620" roughness={0.85} /></mesh>
+        <mesh position={[0, 12.6, 4.06]}><planeGeometry args={[7.2, 1.2]} /><meshStandardMaterial map={loftTex} emissive="#ffffff" emissiveMap={loftTex} emissiveIntensity={0.2 + night * 0.6} /></mesh>
+        {[3.2, 6.4, 9.6].flatMap((y) => [-3.4, 0, 3.4].map((x) => (
+          <mesh key={`${x}-${y}`} position={[x, y, 4.03]}><boxGeometry args={[1.5, 1.6, 0.06]} />{winMat}</mesh>
+        )))}
+        {/* the loft's own top-floor picture windows (y 12 band) */}
+        {[-3.4, 3.4].map((x) => <mesh key={x} position={[x, 11, 4.03]}><boxGeometry args={[2.6, 1.8, 0.06]} /><meshStandardMaterial color="#8fc6d8" emissive="#5f96ad" emissiveIntensity={0.1 + night * 0.5} roughness={0.15} metalness={0.4} /></mesh>)}
+        <mesh position={[0, 1.05, 4.03]}><boxGeometry args={[1.2, 2.1, 0.08]} /><meshStandardMaterial color="#232a31" roughness={0.45} /></mesh>
+        <mesh position={[0, 2.6, 4.2]}><boxGeometry args={[3.4, 0.14, 0.5]} /><meshStandardMaterial color="#d99a3d" roughness={0.6} /></mesh>
+      </group>
+    </group>
+  );
+}
+
 export default function World({ theme, night, quality, stage, reflFx }: { theme: GameTheme; night: number; quality: QualityTier; /** Phase 6 staged loading: 0 ground/roads only, 1 Port Sable, 2 Coral, 3 Northgate+Island */ stage: number; /** Phase 11: player override for the High-tier reflection stack (App owns the state) */ reflFx: boolean }) {
   const water = useRef<THREE.MeshStandardMaterial>(null);
   const wheelSpin = useRef<THREE.Group>(null);
@@ -1895,6 +1932,10 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
       {/* ======== Phase 7 frontages: police HQ + clinic (stage 1),
            Coral restaurant + apartments (stage 2), car wash (stage 3) */}
       {stage >= 1 && <Phase7Frontages night={night} />}
+
+      {/* ======== Phase 14 frontages: Sable Fitness pavilion +
+           the Northgate Loft (stage 1, same mount pattern) */}
+      {stage >= 1 && <Phase14Frontages night={night} />}
 
       {/* ======== Phase 3 distance depth: far skyline silhouette ring +
            a second, hazier bridge on the horizon ======== */}

@@ -18,6 +18,7 @@ import type { GameTheme } from "../themes";
 import { sfx } from "../game/audio";
 import CarBody, { type CarKind } from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
+import { seedRagdoll, stepRagdoll, poseRigFromRagdoll } from "../game/ragdoll";
 
 // Phase 13: seasonal sun-warp scratch (written by seasonSun each frame)
 const _sunWarp: SunWarp = { elev: 0, ang: 0 };
@@ -659,7 +660,26 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         if (Math.abs(ped.kvz) < 0.05) ped.kvz = 0;
       }
       // knocked down (punch/gunfire): lies still, then gets up and flees
-      if (t < ped.downUntil) { ped.speed = 0; continue; }
+      if (t < ped.downUntil) {
+        ped.speed = 0;
+        // ---- Phase 14 VERLET RAGDOLL (near-field ≤ 40u): seeded from
+        // the impact velocity the hit left in kvx/kvz (car momentum,
+        // bat shove, bullet, bottle), stepped HERE inside the fixed
+        // sim step; the pelvis point becomes the ped's logical
+        // position while down. Far peds keep the static collapse. ----
+        if ((ped.x - px) ** 2 + (ped.z - pz) ** 2 < 40 ** 2) {
+          if (!ped.rag) {
+            const kvx = ped.kvx ?? 0, kvz = ped.kvz ?? 0;
+            const kSpeed = Math.hypot(kvx, kvz);
+            ped.rag = seedRagdoll(ped.x, ped.z, ped.heading, groundYAt(ped.x, ped.z),
+              kvx, Math.min(2.2, kSpeed * 0.22), kvz, dt);
+            ped.kvx = 0; ped.kvz = 0; // consumed into the skeleton
+          }
+          stepRagdoll(ped.rag, groundYAt(ped.x, ped.z), dt, phys);
+          ped.x = ped.rag.pos[0]; ped.z = ped.rag.pos[2];
+        }
+        continue;
+      }
       const threatD2 = (ped.x - px) ** 2 + (ped.z - pz) ** 2;
       // streaming: beyond 170u a ped holds position (mesh still poses cheaply)
       if (threatD2 > 170 ** 2) { ped.speed = 0; continue; }
@@ -1265,19 +1285,34 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         g.visible = pd.active;
         const down = tt < pd.downUntil;
         const flailing = down && tt < (pd.flailUntil ?? 0);
-        g.position.set(pd.x, down ? 0.32 : 0, pd.z);
-        // Phase 9 ragdoll-lite: a car-hit ped tips AND rolls/flails for
-        // the first second on the ground (procedural, no solver)
-        g.rotation.set(down ? -Math.PI / 2 * 0.92 : 0, pd.heading, flailing ? Math.sin(tt * 24) * 0.4 : 0);
         const rig = pedRigs[i];
+        // ---- Phase 14: while the verlet ragdoll owns this ped, the
+        // outer group stands upright at the pelvis point (no tip-over)
+        // and the rig is posed from the solved points below; on get-up
+        // the blend advances here (render clock, ~0.35 s) ----
+        const rag = pd.rag ?? null;
+        const ragLive = !!(rag && rig);
+        if (ragLive && rag) {
+          if (rag.lastTt < 0) rag.lastTt = tt;
+          if (!down) rag.blend = Math.min(1, rag.blend + Math.max(0, tt - rag.lastTt) / 0.35);
+          rag.lastTt = tt;
+          g.position.set(rag.pos[0], groundYAt(rag.pos[0], rag.pos[2]), rag.pos[2]);
+          g.rotation.set(0, rag.heading, 0);
+        } else {
+          g.position.set(pd.x, down ? 0.32 : 0, pd.z);
+          // Phase 9 ragdoll-lite (far-field fallback now): a car-hit
+          // ped tips AND rolls/flails for the first second on the
+          // ground (procedural, no solver)
+          g.rotation.set(down ? -Math.PI / 2 * 0.92 : 0, pd.heading, flailing ? Math.sin(tt * 24) * 0.4 : 0);
+        }
         // Visual V7: far peds (>120u) animate every 3rd frame.
         // Phase 12: mid band added — 60–120u animates every 2nd frame.
         const pd2 = (pd.x - G.followPos.x) ** 2 + (pd.z - G.followPos.z) ** 2;
         const animTick = pd2 > 120 ** 2 ? (frameNo.current + i) % 3 === 0 : pd2 > 60 ** 2 ? (frameNo.current + i) % 2 === 0 : true;
-        if (rig && flailing && animTick) {
+        if (rig && flailing && animTick && !ragLive) {
           animateHumanoid(rig, tt * 21, 1, tt); // limbs cycle hard = flail
           rig.group.position.y = 0.1 + Math.abs(Math.sin(tt * 12)) * 0.08;
-        } else if (rig && down) rig.group.position.y = 0;
+        } else if (rig && down && !ragLive) rig.group.position.y = 0;
         if (rig && !down && animTick) {
           animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
           // ---- Phase 6 life poses (A4/A6) ----
@@ -1297,6 +1332,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
             rig.lArm.rotation.x = -2.6; rig.rArm.rotation.x = -2.4;
             rig.torso.rotation.x = -0.28;
           }
+        }
+        // Phase 14: the ragdoll pose itself — applied LAST so that
+        // during get-up it lerps FROM the walk/idle pose the block
+        // above just wrote (weight 1 while down, → 0 as blend runs)
+        if (ragLive && rag && rig) {
+          poseRigFromRagdoll(rig, rag, 1 - rag.blend, groundYAt(rag.pos[0], rag.pos[2]));
+          if (rag.blend >= 1) pd.rag = null;
         }
         // phone screen glow — visible at night while a ped is scrolling
         const glow = phoneGlowRefs.current[i];

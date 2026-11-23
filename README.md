@@ -148,6 +148,25 @@ corrupt harbour boss's debt ledger.
   an amber YOUR CAR ring on the big map — unless you wrecked it,
   got busted in it (impounded), or garaged it. Ledger: **84 ✅ ·
   9 🟡 · 0 ⬜** of 93 topics.
+- **Phase 14 — "Depth Pass"** — the weakest ledger lines grow teeth.
+  A genuine **verlet ragdoll** (13-point skeleton in the C++ core,
+  smoke-tested, TS mirror) crumples downed peds and the WASTED fall,
+  seeded by the impact that felled them. **Destructibles round 2**:
+  fences, market stalls, road signs and the café/showroom glass —
+  43 props + 15 panes, breakable by car, bat or bottle, repaired
+  overnight. **Two more interiors**: **Sable Fitness** (the gym
+  moves indoors; the park corner is stretching mats now) and the
+  **Northgate Loft**, a $9,000 second home with a bed, a wardrobe
+  for the outfits you own, and harbour-view windows. Two new
+  activities on the race scaffolding: the **Bay Circuit** ghost-boat
+  race around Sable Island ($500) and the **Sparrow Run** plane
+  time-trial through altitude rings ($600 under par). **Three save
+  slots** (your old save migrates into Slot 1, originals kept) and
+  **key remapping** with conflict detection. Plus a **High-tier
+  stability pass**: reflections are opt-in and capped, the composer
+  can no longer take the game down with it, and a GPU context loss
+  resets graphics safely instead of going black. Ledger: **86 ✅ ·
+  7 🟡 · 0 ⬜** of 93 topics.
 - **Phase 10 — realism + physics pass** (no new features): the
   post chain gains **radial chromatic aberration** and a stricter
   bloom threshold; **fog colour follows the day cycle**; **stars**

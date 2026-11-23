@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type RefObject } from "react";
+import { Component, Suspense, lazy, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type ReactNode, type RefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation, SSAO, ChromaticAberration, SSR } from "@react-three/postprocessing";
@@ -27,6 +27,8 @@ import { currentMiniUi, clearClothingOverride, type MiniUi } from "./game/phase8
 import { galleryAdd, clearLookOverride } from "./game/phase9";
 import { padCam } from "./game/gamepad";
 import { perf, DPR_LADDER, tierDprCap, autoDropTier, manualTier, showFps, setShowFps, reflectionMode, REFLECTION_LABEL, setReflFx } from "./game/perf";
+import { isBind, BIND_ACTIONS, binds, setBind, resetBinds, codeLabel, type BindAction } from "./game/keybinds";
+import { activeSlot, switchSlot, slotSummary, SLOT_COUNT } from "./game/saveslots";
 import { applyCarReflTier } from "./components/CarBody";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
 import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints } from "./world";
@@ -89,18 +91,24 @@ const CA_OFFSET = new THREE.Vector2(0.00045, 0.00045);
 // .d.ts advertises newer prop names (MAX_STEPS, rayStep…) that the
 // vendored runtime silently ignores — the options that actually take
 // effect (verified in node_modules source) are the ones below:
-// resolutionScale renders the G-buffer + reflection targets at half
-// resolution; maxRoughness 0.32 keeps rays on glossy surfaces only
-// (wet asphalt ~0.15–0.45 when raining, puddles 0.05, glass ~0.1,
-// car paint ~0.3) so matte walls/floors never shimmer; distance 26
-// covers a street width; missed rays fall back to the PMREM sky
-// probe, so a miss degrades to the Phase 5 look instead of black.
-// The extra runtime-only keys ride in via a cast for that reason.
+// resolutionScale renders the G-buffer + reflection targets at a
+// fraction of the frame; maxRoughness 0.32 keeps rays on glossy
+// surfaces only (wet asphalt ~0.15–0.45 when raining, puddles 0.05,
+// glass ~0.1, car paint ~0.3) so matte walls/floors never shimmer;
+// distance 26 covers a street width; missed rays fall back to the
+// PMREM sky probe, so a miss degrades to the Phase 5 look instead of
+// black. The extra runtime-only keys ride in via a cast for that
+// reason.
+// Phase 14 (stability pass after the Retina-Mac black-screen report):
+// the march is cheaper — 12 steps / 3 refine (was 20/5) at 0.35
+// resolution scale (was 0.5) — and SSR never runs alongside SSAO
+// (see the composer below): two G-buffer-heavy screen-space effects
+// at once was a large part of the crash/RAM stack.
 const SSR_OPTS = {
   intensity: 1,
   distance: 26,
-  steps: 20,
-  refineSteps: 5,
+  steps: 12,
+  refineSteps: 3,
   maxRoughness: 0.32,
   thickness: 4,
   maxDepthDifference: 4,
@@ -115,9 +123,31 @@ const SSR_OPTS = {
   missedRays: true,
   useNormalMap: true,
   useRoughnessMap: true,
-  resolutionScale: 0.5,
-  velocityResolutionScale: 0.5,
+  resolutionScale: 0.35,
+  velocityResolutionScale: 0.35,
 } as Record<string, unknown>;
+
+// ---- Phase 14: composer crash-proofing. The EffectComposer (and
+// especially the vendored SSR effect) used to be hot-swapped INSIDE
+// one long-lived composer: a tier/reflection toggle could leave stale
+// G-buffer state on screen (the electric-blue normal-buffer frame a
+// player reported) or take the canvas black entirely. Two defences:
+//  1. the composer gets a React key from tier+reflFx+postFx, so any
+//     change REMOUNTS it cleanly instead of mutating it in place;
+//  2. this boundary: any composer/effect error kills post-processing
+//     for the REST OF THE SESSION (module-level flag, so remounts
+//     can't resurrect it) and the game keeps rendering plainly.
+const composerKill = { dead: false };
+class ComposerBoundary extends Component<{ children: ReactNode }, { dead: boolean }> {
+  state = { dead: composerKill.dead };
+  static getDerivedStateFromError() { return { dead: true }; }
+  componentDidCatch(err: unknown) {
+    composerKill.dead = true;
+    console.warn("[Harborfall] Post-processing disabled after an error:", err);
+    gameToast("Post-processing hit a graphics error — effects are off for this session so the game stays stable.");
+  }
+  render() { return this.state.dead || composerKill.dead ? null : this.props.children; }
+}
 
 const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
 const tmpV = new THREE.Vector3();
@@ -469,6 +499,25 @@ export default function App() {
   const [garageZoneId, setGarageZoneId] = useState<string | null>(null);
   const [photoMode, setPhotoMode] = useState(false);
   const [postFx, setPostFx] = useState(G.settings.postFx);
+  // ---- Phase 14: key-remap capture (Settings) — while a row is
+  // capturing, the next physical keydown (capture phase, so the game
+  // never sees it) becomes the binding; conflicts are refused ----
+  const [captureBind, setCaptureBind] = useState<BindAction | null>(null);
+  const [bindMsg, setBindMsg] = useState("");
+  const [, setBindTick] = useState(0);
+  useEffect(() => {
+    if (!captureBind) return;
+    const cap = (e: KeyboardEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.code === "Escape") { setCaptureBind(null); setBindMsg(""); return; }
+      const r = setBind(captureBind, e.code);
+      if (r.ok) { setCaptureBind(null); setBindMsg(""); }
+      else setBindMsg(`That key already does: ${r.conflict}. Pick another.`);
+      setBindTick((v) => v + 1);
+    };
+    window.addEventListener("keydown", cap, true);
+    return () => window.removeEventListener("keydown", cap, true);
+  }, [captureBind]);
   // ---- Phase 11: reflection-stack override (polled like postFx) ----
   const [reflFx, setReflFxState] = useState(G.settings.reflFx);
   // ---- Phase 5: quality tier (game/quality.ts owns detection + gates) ----
@@ -883,12 +932,13 @@ export default function App() {
       if (isInteractiveTarget(e.target)) return;
       const key = e.key.toLowerCase();
       if (dialogueRef.current) {
-        if (key === "e" || key === "enter" || key === " ") { e.preventDefault(); advanceDialogue(); }
+        // Phase 14: the bound interact key advances dialogue too
+        if (key === "e" || key === "enter" || key === " " || isBind(e, "interact")) { e.preventDefault(); advanceDialogue(); }
         return;
       }
       if (choiceRef.current) return; // the Ch.5 choice is answered by click/tap only
       // Phase 4/V6: mission debrief dismiss
-      if (missionResult && (key === "enter" || key === "e")) { e.preventDefault(); setMissionResult(null); return; }
+      if (missionResult && (key === "enter" || key === "e" || isBind(e, "interact"))) { e.preventDefault(); setMissionResult(null); return; }
       // PDF delta B: photo mode owns H / U / Enter / Esc while active
       if (G.photoMode) {
         if (key === "h" || key === "u" || key === "escape") { e.preventDefault(); exitPhotoMode(); }
@@ -897,10 +947,11 @@ export default function App() {
       }
       if (charOpen && (key === "escape" || key === "enter")) { e.preventDefault(); closeCharSelect(); return; }
       if (garageZoneId && key === "escape") { e.preventDefault(); setGarageZoneId(null); return; }
-      // Phase 3: contextual E (doors, mansion gate) — set by Interiors
-      if (key === "e" && G.interact) { e.preventDefault(); G.interact(); return; }
+      // Phase 3: contextual interact (doors, mansion gate) — set by
+      // Interiors. Phase 14: the key is the player's binding now.
+      if (isBind(e, "interact") && G.interact) { e.preventDefault(); G.interact(); return; }
       if (key === "g" && started && G.garageZone) { e.preventDefault(); setGarageZoneId(G.garageZone.id); sfx.click(); return; }
-      if ((key === "q" || key === "tab") && started) {
+      if ((isBind(e, "weapon") || key === "tab") && started) {
         e.preventDefault();
         // Phase 6: Q cycles every OWNED slot — fists → pistol → SMG →
         // shotgun → bat (Phase 9 adds the bottle throw slot)
@@ -925,14 +976,14 @@ export default function App() {
       else if (key === "?" || key === "h") { e.preventDefault(); setShowHelp((v) => !v); }
       else if (key === "t") { const i = THEMES.findIndex((t) => t.id === theme.id); applyTheme(THEMES[(i + 1) % THEMES.length]); showPopup(`Theme: ${THEMES[(i + 1) % THEMES.length].name}`); }
       else if (["1", "2", "3", "4", "5"].includes(key)) { const t = THEMES[Number(key) - 1]; if (t) { applyTheme(t); showPopup(`Theme: ${t.name}`); } }
-      else if (key === "m") {
-        // Phase 6 (B1): in a garage zone, behind the wheel, M is Lina's
-        // mod menu — anywhere else it stays the big map
+      else if (isBind(e, "map")) {
+        // Phase 6 (B1): in a garage zone, behind the wheel, the map key
+        // is Lina's mod menu — anywhere else it stays the big map
         if (started && G.garageZone && G.driving) { setModOpen((v) => !v); sfx.click(); }
         else setBigMap((v) => !v);
       }
       else if (key === "y") { cycleWeather(); showPopup(`Weather: ${G.weather}`); }
-      else if (key === "u") { setPhoneOpen((v) => !v); sfx.click(); }
+      else if (isBind(e, "phone")) { setPhoneOpen((v) => !v); sfx.click(); }
       else if (key === "l") { G.dayPaused = !G.dayPaused; showPopup(G.dayPaused ? "Day cycle held (L to resume)" : "Day cycle running"); }
       else if (key === "n") { setMuted(toggleMute()); }
       else if (key === "c") { camFar.current = !camFar.current; showPopup(camFar.current ? "Camera: far" : "Camera: near"); }
@@ -1064,7 +1115,21 @@ export default function App() {
 
   return (
     <main className={`game-shell ${shake ? "shake" : ""}`} onContextMenu={(e) => e.preventDefault()}>
-      <Canvas shadows="soft" dpr={[1, 2]} camera={{ position: [0, 7, 124], fov: 58, near: 0.1, far: 420 }}
+      <Canvas shadows="soft" dpr={[1, 1.5]} camera={{ position: [0, 7, 124], fov: 58, near: 0.1, far: 420 }}
+        onCreated={({ gl }) => {
+          // ---- Phase 14: WebGL context-loss recovery. A GPU reset
+          // (driver hiccup, memory pressure) used to leave a permanent
+          // black canvas. preventDefault lets the browser restore the
+          // context; meanwhile we shed the heavy stack — reflections
+          // off, tier to Medium, both persisted — and tell the player
+          // in plain words what happened and why.
+          gl.domElement.addEventListener("webglcontextlost", (e) => {
+            e.preventDefault();
+            setReflFx(false); setReflFxState(false);
+            manualTier("medium"); setQualityState("medium");
+            gameToast("Graphics were reset for stability — reflections off, quality set to Medium. (The GPU dropped the drawing context.)");
+          });
+        }}
         gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15, outputColorSpace: THREE.SRGBColorSpace }}>
         <Suspense fallback={null}>
           <EnvSetup theme={theme} quality={quality} />
@@ -1097,17 +1162,21 @@ export default function App() {
           {/* Film grade: bloom + warm grade + grain + vignette + SMAA.
               Phase 5: gated by the quality tier (Low = composer OFF;
               Medium = as Phase 4; High adds SSAO + stronger bloom) and by
-              the player's Post FX toggle. */}
+              the player's Post FX toggle.
+              Phase 14: the composer is keyed by tier+reflFx+postFx so
+              any change REMOUNTS it (no hot-swapping SSR inside a live
+              composer — the stale-G-buffer bug), and ComposerBoundary
+              falls back to plain rendering for the session on error. */}
           {postFx && gates.composer(quality) && (
-            <EffectComposer multisampling={0}>
+            <ComposerBoundary>
+            <EffectComposer key={`fx-${quality}-${reflFx}-${postFx}`} multisampling={0}>
               <>
                 <Bloom intensity={gates.bloom(quality)} luminanceThreshold={0.6} luminanceSmoothing={0.25} mipmapBlur />
                 {/* Phase 11: screen-space reflections — High tier only,
                     and only while the player's reflection override is
                     on. Sits right after Bloom so reflected hits carry
                     the neon glow; the grade/grain/vignette still run
-                    over the composited result. Dropping the tier (or
-                    toggling reflections off) unmounts it outright. */}
+                    over the composited result. */}
                 {gates.ssr(quality) && reflFx && <SSR {...SSR_OPTS} />}
                 <HueSaturation saturation={0.08} />
                 <BrightnessContrast contrast={0.06} brightness={0.01} />
@@ -1117,13 +1186,18 @@ export default function App() {
                     the frame edges (radial, so the centre stays clean) —
                     the last "camera, not viewport" cue in the chain */}
                 <ChromaticAberration offset={CA_OFFSET} radialModulation modulationOffset={0.42} />
-                {gates.ssao(quality) && (
+                {/* Phase 14: SSAO and SSR NEVER run together — both are
+                    G-buffer-heavy screen-space effects; when the
+                    ray-traced-style reflections are active, SSAO yields
+                    (its contact shading is the smaller loss). */}
+                {gates.ssao(quality) && !(gates.ssr(quality) && reflFx) && (
                   <SSAO worldDistanceThreshold={80} worldDistanceFalloff={40} worldProximityThreshold={6} worldProximityFalloff={3}
                     radius={0.22} intensity={1.1} luminanceInfluence={0.35} samples={16} rings={4} />
                 )}
                 <SMAA />
               </>
             </EffectComposer>
+            </ComposerBoundary>
           )}
         </Suspense>
       </Canvas>
@@ -1393,6 +1467,18 @@ export default function App() {
                   <button type="button" className="big-btn ghost" onClick={() => startLoad(false)}>Free Roam</button>
                   <button type="button" className="big-btn ghost" onClick={() => tryOpenCharSelect()}>Character</button>
                 </div>
+                {/* Phase 14: save slots — three independent profiles.
+                    Switching reboots into the chosen slot's save. */}
+                <div className="seg-row" role="group" aria-label="Save slot" style={{ justifyContent: "center", marginTop: 10 }}>
+                  {Array.from({ length: SLOT_COUNT }, (_, i) => i + 1).map((n) => {
+                    const s = slotSummary(n);
+                    return (
+                      <button key={n} type="button" className={`seg-btn ${n === activeSlot ? "active" : ""}`} onClick={() => { if (n !== activeSlot) switchSlot(n); }}>
+                        Slot {n}{n === activeSlot ? " · playing" : s.empty ? " · empty" : ` · $${s.cash.toLocaleString()} · Ch.${Math.min(6, s.storyIndex + 1)}`}
+                      </button>
+                    );
+                  })}
+                </div>
                 <p className="press-enter">Press <b>Enter</b> / tap Play to start</p>
                 <button type="button" className="how-toggle" onClick={() => setShowHow((v) => !v)}>{showHow ? "Hide" : "How to play + story"}</button>
                 {showHow && (
@@ -1522,7 +1608,22 @@ export default function App() {
               ))}
             </div>
             <p className="settings-note">Seasons turn every 7 game-days: the sun's arc and the day's length, the sky / fog / water tints, the street trees (palms stay green — this is the subtropics) and the weather odds all shift with it. Winter here is cool, grey and dry: Port Sable has never seen snow, and won't.</p>
-            <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + SSAO, stronger bloom, CC0 at full size — and ray-traced-style reflections (screen-space reflections + mirrored bay water; a browser has no hardware ray tracing, this is the real-time reflection stack every web game uses). Turn them off above if High stutters; the tier governor also drops them automatically when it steps the tier down. Resolution adapts automatically for smoothness; picking a tier here turns the auto tier-drop off for this session.</p>
+            <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + stronger bloom, CC0 at 768 — and ray-traced-style reflections (screen-space reflections + mirrored bay water; a browser has no hardware ray tracing, this is the real-time reflection stack every web game uses). Reflections are opt-in and off by default since the stability pass: they render at reduced resolution, the water mirror is capped, and SSAO steps aside while they're on. Resolution adapts automatically for smoothness (even on a manual High); picking a tier here turns the auto tier-drop off for this session.</p>
+            <h3 className="settings-head">Controls · keyboard (this slot)</h3>
+            <div className="settings-list">
+              {BIND_ACTIONS.map((a) => (
+                <label key={a.id}><span>{a.label}</span>
+                  <button type="button" className="phone-toggle" onClick={() => { setCaptureBind(a.id); setBindMsg(""); }}>
+                    {captureBind === a.id ? "press a key…" : codeLabel(binds[a.id])}
+                  </button>
+                </label>
+              ))}
+            </div>
+            {bindMsg && <p className="settings-note">{bindMsg}</p>}
+            <div className="seg-row" role="group" aria-label="Reset controls">
+              <button type="button" className="seg-btn" onClick={() => { resetBinds(); setCaptureBind(null); setBindMsg(""); setBindTick((v) => v + 1); showPopup("Controls reset to defaults (E · Shift · Space · Q · U · M)"); }}>Reset to defaults</button>
+            </div>
+            <p className="settings-note">Tap a binding, then press the new key. Two actions can't share a key — a clash is refused, not stolen. Bindings are saved per save slot; gamepad and touch controls are unaffected. WASD driving, F to enter a car, and the letter shortcuts (T theme, Y weather…) stay fixed.</p>
             <h3 className="settings-head">Subtitles</h3>
             <div className="seg-row" role="group" aria-label="Subtitle size">
               {(["S", "M", "L"] as const).map((s) => (

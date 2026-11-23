@@ -19,11 +19,21 @@ export const perf = {
   autoDrop: true,  // session flag; manual tier picks turn this off
 };
 
-export const DPR_LADDER = [1.1, 1.25, 1.5, 1.75, 2];
-export const tierDprCap = (t: QualityTier) => (t === "high" ? 2 : t === "medium" ? 1.5 : 1.25);
+// ---- Phase 14 stability caps (user play-test 2026-11-23: HIGH on a
+// Retina Mac crashed to black at 2.7 GB tab RAM). DPR 2 on a Retina
+// display is a ~5K-class drawing buffer; the composer, SSR G-buffer,
+// SSAO and the planar-water mirror all scale off it, so the whole
+// stack multiplied. The ladder now tops out at 1.5: High = 1.5,
+// Medium = 1.35, Low = 1.25. The governor still walks DPR down FIRST
+// (autoDrop only gates the TIER lever below — manualTier never
+// disables DPR adaptation), so a manual High stays smooth by
+// shedding pixels before anything else. ----
+export const DPR_LADDER = [1.1, 1.25, 1.35, 1.5];
+export const tierDprCap = (t: QualityTier) => (t === "high" ? 1.5 : t === "medium" ? 1.35 : 1.25);
 
 /** Manual tier choice (pause Graphics / phone Settings): respect it —
- * the governor stops auto-dropping for the rest of the session. */
+ * the governor stops auto-dropping the TIER for the rest of the
+ * session. DPR adaptation above stays live either way. */
 export function manualTier(t: QualityTier) {
   perf.autoDrop = false;
   setTier(t);

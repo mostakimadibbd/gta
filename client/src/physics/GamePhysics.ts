@@ -30,6 +30,9 @@ export interface PhysicsEngine {
   vehicleBody(heights: [number, number, number, number], accel: number, steer: number, speed: number, prev: VehicleBodyState, dt: number): VehicleBodyStep;
   debrisStep(p: { x: number; y: number; z: number; vx: number; vy: number; vz: number }, groundY: number, restitution: number, groundKeep: number, dt: number): { x: number; y: number; z: number; vx: number; vy: number; vz: number };
   swimStep(phase: number, targetSpeed: number, prevSpeed: number, dt: number): { speed: number; surge: number; bob: number };
+  // Phase 14 — verlet ragdoll: pos/prev are 39 doubles (13 points ×
+  // xyz), updated in place (see src/cpp/physics.cpp ragdoll_step)
+  ragdollStep(pos: number[], prev: number[], groundY: number, dt: number): void;
   source: "wasm" | "typescript";
 }
 
@@ -339,6 +342,47 @@ export const fallbackPhysics: PhysicsEngine = {
     const bob = Math.sin(phase) * 0.055 * (0.35 + 0.65 * effort);
     return { speed, surge, bob };
   },
+  // --- Phase 14: exact TS mirror of ragdoll_step (verlet skeleton) --
+  ragdollStep(pos, prev, groundY, dtRaw) {
+    const dt = clamp(dtRaw, 0, 0.1);
+    if (dt <= 0) return;
+    const damp = 0.985;
+    const g = -18 * dt * dt;
+    for (let i = 0; i < 13; i++) {
+      const o = i * 3;
+      const vx = (pos[o] - prev[o]) * damp;
+      const vy = (pos[o + 1] - prev[o + 1]) * damp;
+      const vz = (pos[o + 2] - prev[o + 2]) * damp;
+      prev[o] = pos[o]; prev[o + 1] = pos[o + 1]; prev[o + 2] = pos[o + 2];
+      pos[o] += vx; pos[o + 1] += vy + g; pos[o + 2] += vz;
+    }
+    const CA = [0, 1, 3, 3, 4, 6, 7, 1, 1, 0, 0, 0, 0, 9, 11, 9, 2, 2];
+    const CB = [1, 2, 6, 4, 5, 7, 8, 3, 6, 3, 6, 9, 11, 10, 12, 11, 3, 6];
+    const CR = [0.50, 0.29, 0.524, 0.37, 0.37, 0.37, 0.37, 0.267, 0.267,
+      0.61, 0.61, 0.50, 0.50, 0.44, 0.44, 0.192, 0.355, 0.355];
+    const RAD = [0.14, 0.14, 0.15, 0.09, 0.06, 0.05, 0.09, 0.06, 0.05, 0.06, 0.05, 0.06, 0.05];
+    for (let iter = 0; iter < 3; iter++) {
+      for (let c = 0; c < 18; c++) {
+        const a = CA[c] * 3, b = CB[c] * 3;
+        const dx = pos[b] - pos[a], dy = pos[b + 1] - pos[a + 1], dz = pos[b + 2] - pos[a + 2];
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (d < 1e-9) continue;
+        const diff = (d - CR[c]) / d * 0.5;
+        pos[a] += dx * diff; pos[a + 1] += dy * diff; pos[a + 2] += dz * diff;
+        pos[b] -= dx * diff; pos[b + 1] -= dy * diff; pos[b + 2] -= dz * diff;
+      }
+      for (let i = 0; i < 13; i++) {
+        const o = i * 3;
+        const floorY = groundY + RAD[i];
+        if (pos[o + 1] < floorY) {
+          pos[o + 1] = floorY;
+          prev[o + 1] = pos[o + 1];
+          prev[o] = pos[o] - (pos[o] - prev[o]) * 0.5;
+          prev[o + 2] = pos[o + 2] - (pos[o + 2] - prev[o + 2]) * 0.5;
+        }
+      }
+    }
+  },
 };
 
 interface WasmModule {
@@ -504,9 +548,31 @@ export async function loadPhysicsEngine(): Promise<PhysicsEngine> {
         },
       };
     } catch { p10 = null; }
+    // Phase 14 ragdoll export: own try/catch (older .wasm lacks it →
+    // the exact TS mirror takes over, same pattern as Phase 4/6/8/10).
+    // The C ABI takes heap pointers, so the 39-double pos/prev arrays
+    // are copied through two dedicated buffers per call.
+    let p14: Pick<PhysicsEngine, "ragdollStep"> | null = null;
+    try {
+      const rStep = module.cwrap("ragdoll_step", null, ["number", "number", "number", "number"]);
+      const h = module.HEAPF64;
+      const posBuf = module._malloc(39 * Float64Array.BYTES_PER_ELEMENT);
+      const prevBuf = module._malloc(39 * Float64Array.BYTES_PER_ELEMENT);
+      if (!posBuf || !prevBuf) throw new Error("Could not allocate WASM physics buffers.");
+      const pi = posBuf / Float64Array.BYTES_PER_ELEMENT;
+      const qi = prevBuf / Float64Array.BYTES_PER_ELEMENT;
+      p14 = {
+        ragdollStep(pos, prev, groundY, dt) {
+          for (let i = 0; i < 39; i++) { h[pi + i] = pos[i]; h[qi + i] = prev[i]; }
+          rStep(posBuf, prevBuf, groundY, dt);
+          for (let i = 0; i < 39; i++) { pos[i] = h[pi + i]; prev[i] = h[qi + i]; }
+        },
+      };
+    } catch { p14 = null; }
     const fb = fallbackPhysics;
     return {
       source: "wasm",
+      ragdollStep: p14?.ragdollStep ?? fb.ragdollStep,
       stepVehicleV3: p10?.stepVehicleV3 ?? fb.stepVehicleV3,
       vehicleBody: p10?.vehicleBody ?? fb.vehicleBody,
       debrisStep: p10?.debrisStep ?? fb.debrisStep,

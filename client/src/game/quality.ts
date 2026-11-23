@@ -80,8 +80,10 @@ export const gates = {
   shadowRadius: (t: QualityTier) => (t === "high" ? 4 : 1),
   normalMaps: (t: QualityTier) => t !== "low",
   cc0: (t: QualityTier) => t !== "low",
-  /** CC0 decode size: 0 = native (High), 512 = Medium downscale. */
-  cc0Px: (t: QualityTier) => (t === "high" ? 0 : 512),
+  /** CC0 decode size: 768 on High (Phase 14 RAM cap — native-size
+   * photo textures were a real slice of the 2.7 GB tab; 768 still
+   * reads photographic at street distance), 512 on Medium. */
+  cc0Px: (t: QualityTier) => (t === "high" ? 768 : 512),
   waterShader: (t: QualityTier) => t !== "low",
   clearcoat: (t: QualityTier) => t !== "low",
   bloom: (t: QualityTier) => (t === "high" ? 0.75 : 0.55),

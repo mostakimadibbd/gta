@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, toast, bark, addCrime } from "../game/store";
+import { isBind } from "../game/keybinds";
 import { groundYAt, isWaterAt, isBlocked, routePoints, nearestIntersection } from "../world";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 import { fallbackPhysics } from "../physics/GamePhysics";
@@ -29,6 +30,7 @@ import {
   BOTTLE, TOWNSFOLK, townStopAt, TALK, closeTalk, roadworksSite,
   loadDaySet, saveDaySet, WRECK_KEY,
 } from "../game/phase9";
+import { tryBreakDestructibleAt } from "../game/destruct";
 
 const SCAFFOLD_KEY = "harborfall-scaffold";
 // Phase 12: scratch array for the per-frame wreck-smoke selection
@@ -38,9 +40,16 @@ const HAIR_LOOKS: Array<{ s: number; c: number }> = [
   { s: 0, c: 4 }, { s: 1, c: 5 }, { s: 4, c: 0 }, { s: 3, c: 0 },
 ];
 /** Coral-row shopfront glass (World ShopFronts buildings at z=218,
- * glass face at z≈214.5): three buildings × three panes. */
-const GLASS_PANES: Array<{ x: number; z: number }> = [48, 88, 64].flatMap((cx) =>
-  [-2.9, 0, 2.9].map((dx) => ({ x: cx + dx, z: 214.5 })));
+ * glass face at z≈214.5): three buildings × three panes.
+ * Phase 14: the Café Coral front windows (Docks strip, face z≈102.4)
+ * and the Sable Motors showroom glass front (Northgate, face
+ * z≈−230.5) join the breakable set — same shards, same crime, same
+ * overnight reglaze. */
+const GLASS_PANES: Array<{ x: number; z: number }> = [
+  ...[48, 88, 64].flatMap((cx) => [-2.9, 0, 2.9].map((dx) => ({ x: cx + dx, z: 214.5 }))),
+  { x: 4.9, z: 102.3 }, { x: 11.1, z: 102.3 }, // Café Coral windows
+  { x: -42, z: -230.4 }, { x: -39.5, z: -230.4 }, { x: -32.5, z: -230.4 }, { x: -30, z: -230.4 }, // showroom front
+];
 const SCAFFOLD_POS = { x: 80, z: -66.5 };
 
 function labelTexture(name: string, role: string): THREE.CanvasTexture {
@@ -166,10 +175,10 @@ export default function Phase9() {
   // barber/tattoo tap-vs-hold E (mirrors the Phase 8 shop pattern)
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e" && !e.repeat) { eDownAt.current = performance.now() / 1000; eHeld.current = true; }
+      if (isBind(e, "interact") && !e.repeat) { eDownAt.current = performance.now() / 1000; eHeld.current = true; }
     };
     const up = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e") {
+      if (isBind(e, "interact")) {
         if (eHeld.current && eDownAt.current > 0 && performance.now() / 1000 - eDownAt.current < 0.35) {
           if (atBarber.current) { lookIdx.current = (lookIdx.current + 1) % HAIR_LOOKS.length; sfx.click(); }
         }
@@ -492,9 +501,13 @@ export default function Phase9() {
           spawnShards(BOTTLE.x, Math.max(BOTTLE.y, gy + 0.25), BOTTLE.z, "#7fae7f", 6, 2.2, bvx / bl, bvz / bl, Math.min(3, bl * 0.45));
           sfx.glass();
           if (glassHit >= 0) breakGlass(glassHit, true, bvx / bl, bvz / bl, Math.min(3, bl * 0.45));
+          // Phase 14: a bottle also smashes destructible props now
+          else if (tryBreakDestructibleAt(BOTTLE.x, BOTTLE.z, 1.6, bvx / bl, bvz / bl, Math.min(3, bl * 0.45))) addCrime("hit");
           if (hitPed >= 0) {
             const ped = G.peds[hitPed];
             ped.downUntil = t + 3; ped.fleeUntil = t + 6; ped.flinchUntil = t + 0.4;
+            // Phase 14: the bottle's flight seeds the verlet ragdoll
+            ped.kvx = (bvx / bl) * 3; ped.kvz = (bvz / bl) * 3;
             addCrime("assault");
             toast("Direct hit — that bottle found a person. The harbour saw it.");
           } else if (hitCar) addCrime("hit");

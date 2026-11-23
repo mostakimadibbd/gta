@@ -5,11 +5,13 @@ import { isBlocked, INTERIORS, groundYAt, isWaterAt, blockersNear, BRIDGE, VAULT
 import { G, toast, bark } from "../game/store";
 import { sfx } from "../game/audio";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
+import { isBind } from "../game/keybinds";
 import { buildHumanoid, animateHumanoid } from "../humanoid";
 import { fallbackPhysics } from "../physics/GamePhysics";
 import type { CharacterPreset } from "../game/characters";
 import { CLOTH } from "../game/phase8";
 import { LOOK } from "../game/phase9";
+import { seedRagdoll, stepRagdoll, poseRigFromRagdoll, type RagdollState } from "../game/ragdoll";
 import { padKeys, padMove } from "../game/gamepad";
 import { SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
 import { touchMove } from "../game/touch";
@@ -93,9 +95,19 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
   const wasDriving = useRef(false);
 
   useEffect(() => {
+    // Phase 14: sprint/jump arrive through the player's BINDINGS and
+    // are translated into the canonical "shift"/" " tokens the
+    // movement step has always read; the physical Shift/Space only
+    // work while they ARE the binding (defaults). WASD is fixed.
+    const tokenFor = (event: KeyboardEvent): string => {
+      if (isBind(event, "sprint")) return "shift";
+      if (isBind(event, "jump")) return " ";
+      const key = normalizeGameKey(event.key);
+      return key === "shift" || key === " " ? "" : key;
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (paused || isInteractiveTarget(event.target)) return;
-      const key = normalizeGameKey(event.key);
+      const key = tokenFor(event);
       // crouch / stealth toggle (Blueprint movement): Ctrl or X
       if ((key === "x" || key === "control") && !event.repeat && !G.driving) {
         G.crouched = !G.crouched;
@@ -111,7 +123,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       if (key === "b" && !event.repeat && !G.driving) { bHeldAt.current = performance.now() / 1000; surrendered.current = false; }
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      keys.current.delete(normalizeGameKey(event.key));
+      keys.current.delete(tokenFor(event));
       if (normalizeGameKey(event.key) === "b") {
         bHeldAt.current = -1;
         if (G.hold?.label.startsWith("Surrendering")) G.hold = null;
@@ -140,7 +152,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     setAnimationLabel(next);
   }, [driving]);
 
-  const collapseT = useRef(0); // Phase 9: wasted collapse progress
+  const wastedRag = useRef<RagdollState | null>(null); // Phase 14: WASTED verlet ragdoll
   const simAcc = useRef(0); // Phase 12: fixed-step accumulator
 
   // Phase 12: the player step runs at a FIXED 60 Hz (accumulator
@@ -164,22 +176,25 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     if (!root.current) return;
     const tNow = performance.now() / 1000;
     if (G.status === "wasted" && !driving) {
-      // ---- Phase 9 ragdoll-LITE: a procedural limp collapse (there is
-      // no ragdoll solver in this stack — see VISUAL_AUDIT). The body
-      // tips back over 0.45 s with arms thrown wide, then settles. ----
-      collapseT.current = Math.min(1, collapseT.current + dt / 0.45);
-      const p = collapseT.current;
-      const ease = 1 - (1 - p) * (1 - p);
-      root.current.rotation.x = -ease * Math.PI * 0.47;
-      root.current.position.y = groundYAt(positionRef.current.x, positionRef.current.z) + ease * 0.12;
-      rig.lArm.rotation.x = -0.4 * ease; rig.rArm.rotation.x = -0.9 * ease;
-      rig.lArm.rotation.z = 1.15 * ease; rig.rArm.rotation.z = -1.15 * ease;
-      rig.lThigh.rotation.x = -0.3 * ease; rig.rThigh.rotation.x = 0.18 * ease;
-      rig.lShin.rotation.x = 0.4 * ease; rig.rShin.rotation.x = 0.15 * ease;
-      rig.torso.rotation.x = 0.1 * ease;
+      // ---- Phase 14: the WASTED collapse is the real VERLET RAGDOLL
+      // (it replaces the Phase 9 procedural tip-over): seeded falling
+      // backwards at the death spot, stepped here inside the fixed
+      // sim step, and the rig is posed from the solved points until
+      // the respawn flow clears the status. ----
+      const px0 = positionRef.current.x, pz0 = positionRef.current.z;
+      const gy0 = groundYAt(px0, pz0);
+      if (!wastedRag.current) {
+        const h = G.playerHeading;
+        wastedRag.current = seedRagdoll(px0, pz0, h, gy0, -Math.sin(h) * 1.4, 0.6, -Math.cos(h) * 1.4, dt);
+      }
+      const rag = wastedRag.current;
+      stepRagdoll(rag, groundYAt(rag.pos[0], rag.pos[2]), dt, fallbackPhysics);
+      root.current.position.set(rag.pos[0], groundYAt(rag.pos[0], rag.pos[2]), rag.pos[2]);
+      root.current.rotation.set(0, rag.heading, 0);
+      poseRigFromRagdoll(rig, rag, 1, groundYAt(rag.pos[0], rag.pos[2]));
       return;
     }
-    if (G.status !== "wasted") collapseT.current = 0;
+    if (G.status !== "wasted") wastedRag.current = null;
     if (paused && !showcase) return; // BUSTED: freeze (hands-up is pre-status)
     // ---- Phase 13: riding the Sable Line — Tram.tsx owns the
     // position (it writes G.playerPos / G.followPos every frame);

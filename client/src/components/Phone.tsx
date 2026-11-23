@@ -10,7 +10,7 @@ import { currentSeason, seasonMeta } from "../game/season";
 import { CAR_MODELS, DEALER_CARS } from "../world";
 import { M } from "../game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
-import { J, jobStats, fmtTime, RACES } from "../game/jobs";
+import { J, jobStats, fmtTime, RACES, BAY_CIRCUIT, SPARROW_RUN } from "../game/jobs";
 import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_WAGE, STAFF_BONUS } from "../game/economy";
 import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
@@ -216,6 +216,11 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             {RACES.map((r) => (
               <div key={r.id} className="bank-row"><span>{r.name}</span><b>{jobStats.bestTimes[r.id] ? `best ${fmtTime(jobStats.bestTimes[r.id])}` : "no time yet"}</b></div>
             ))}
+            <h3 className="phone-subhead">On the water &amp; in the air</h3>
+            <div className="bank-row"><span>🚤 {BAY_CIRCUIT.name} — marina → around Sable Island</span><b>{jobStats.bestTimes[BAY_CIRCUIT.id] ? `best ${fmtTime(jobStats.bestTimes[BAY_CIRCUIT.id])}` : "no time yet"}</b></div>
+            <p className="phone-tip">Take a boat to the teal ring at the marina and press E. Beat the ghost boat home for ${BAY_CIRCUIT.purse}.</p>
+            <div className="bank-row"><span>🛩 {SPARROW_RUN.name} — Sable Field time trial</span><b>{jobStats.bestTimes[SPARROW_RUN.id] ? `best ${fmtTime(jobStats.bestTimes[SPARROW_RUN.id])}` : "no time yet"}</b></div>
+            <p className="phone-tip">Take the Sparrow to the teal ring at Sable Field. Thread the amber rings and land back at the field — beat {fmtTime(SPARROW_RUN.par ?? 120)} for ${SPARROW_RUN.purse}.</p>
             <h3 className="phone-subhead">Tow work — Lina's Wrecker</h3>
             <div className="bank-row"><span>Tow status</span><b>{J.towPhase === "idle" ? "Off shift" : J.towPhase === "pickup" ? (J.towHooked ? "Hooked — deliver to Lina's" : "Stranded car marked — reverse the hook in") : "Delivering"}</b></div>
             <button type="button" className="phone-row" onClick={() => { J.wantTow = true; onClose(); }}>

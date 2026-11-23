@@ -545,4 +545,67 @@ void swim_step(double phase, double target_speed, double prev_speed,
   output[0] = speed; output[1] = surge; output[2] = bob;
 }
 
+// (e) Ragdoll step (Phase 14): a VERLET point-mass skeleton — 13
+// points (pelvis, chest, head, shoulders/elbows/hands ×2, knees/feet
+// ×2) integrated under gravity (−18, the game's debris gravity),
+// distance-constrained (18 bones/braces, 3 relaxation passes), and
+// collided against a single ground height with per-point radii and
+// ground friction. The caller seeds pos/prev from the rig's standing
+// pose (prev offset backwards = impact velocity) and drives the
+// humanoid rig's bones from the solved points. pos/prev are 39
+// doubles each (13 × xyz), updated IN PLACE — the WASM binding copies
+// them through two heap buffers, the TS mirror mutates plain arrays;
+// the arithmetic below is the single source for both.
+//   in/out: pos[39], prev[39]; in: ground_y, dt
+void ragdoll_step(double* pos, double* prev, double ground_y, double delta_time) {
+  const double dt = clamp(delta_time, 0.0, kMaxStep);
+  if (dt <= 0.0) return;
+  const double damp = 0.985; // velocity keep per step (tuned at 60 Hz)
+  const double g = -18.0 * dt * dt;
+  for (int i = 0; i < 13; ++i) {
+    double* p = pos + i * 3;
+    double* q = prev + i * 3;
+    const double vx = (p[0] - q[0]) * damp;
+    const double vy = (p[1] - q[1]) * damp;
+    const double vz = (p[2] - q[2]) * damp;
+    q[0] = p[0]; q[1] = p[1]; q[2] = p[2];
+    p[0] += vx; p[1] += vy + g; p[2] += vz;
+  }
+  // bones: (a, b, rest length) — pelvis 0, chest 1, head 2,
+  // lShoulder 3, lElbow 4, lHand 5, rShoulder 6, rElbow 7, rHand 8,
+  // lKnee 9, lFoot 10, rKnee 11, rFoot 12
+  static const int kA[18] = {0, 1, 3, 3, 4, 6, 7, 1, 1, 0, 0, 0, 0, 9, 11, 9, 2, 2};
+  static const int kB[18] = {1, 2, 6, 4, 5, 7, 8, 3, 6, 3, 6, 9, 11, 10, 12, 11, 3, 6};
+  static const double kRest[18] = {0.50, 0.29, 0.524, 0.37, 0.37, 0.37, 0.37, 0.267, 0.267,
+                                   0.61, 0.61, 0.50, 0.50, 0.44, 0.44, 0.192, 0.355, 0.355};
+  static const double kRadius[13] = {0.14, 0.14, 0.15, 0.09, 0.06, 0.05, 0.09,
+                                     0.06, 0.05, 0.06, 0.05, 0.06, 0.05};
+  for (int iter = 0; iter < 3; ++iter) {
+    for (int c = 0; c < 18; ++c) {
+      double* a = pos + kA[c] * 3;
+      double* b = pos + kB[c] * 3;
+      const double dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+      const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
+      if (d < 1e-9) continue;
+      const double diff = (d - kRest[c]) / d * 0.5;
+      a[0] += dx * diff; a[1] += dy * diff; a[2] += dz * diff;
+      b[0] -= dx * diff; b[1] -= dy * diff; b[2] -= dz * diff;
+    }
+    // ground: clamp each point to its radius over the ground plane;
+    // contact kills the vertical velocity and halves the horizontal
+    // (friction) by pulling prev toward pos
+    for (int i = 0; i < 13; ++i) {
+      double* p = pos + i * 3;
+      double* q = prev + i * 3;
+      const double floor_y = ground_y + kRadius[i];
+      if (p[1] < floor_y) {
+        p[1] = floor_y;
+        q[1] = p[1];
+        q[0] = p[0] - (p[0] - q[0]) * 0.5;
+        q[2] = p[2] - (p[2] - q[2]) * 0.5;
+      }
+    }
+  }
+}
+
 }  // extern "C"
