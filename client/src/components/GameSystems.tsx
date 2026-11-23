@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar } from "../game/store";
+import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars } from "../game/store";
 import { M, currentTarget, endMission, persist } from "../game/missionState";
 import { pushPhoneMsg } from "../game/phone";
-import { ROAD_COORDS, districtAt, isBlocked, MANSION_DRIVE } from "../world";
+import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, districtAt, isBlocked, MANSION_DRIVE, groundYAt, CAR_MODELS } from "../world";
 import { glowTexture } from "../textures";
 import { fallbackPhysics, type PhysicsEngine } from "../physics/GamePhysics";
 import type { GameTheme } from "../themes";
@@ -49,6 +49,19 @@ function initWorld() {
       G.traffic.push({
         x: axis === "x" ? along : fixed + lane, z: axis === "x" ? fixed + lane : along,
         heading: headingFor(axis, dir), speed: 8, axis, dir, lane, color: TRAFFIC_COLORS[i], stopped: 0, fleeing: 0,
+        side: "main", steerVis: 0, pitch: 0, damage: 0,
+      });
+    }
+    // Coral Shores traffic — its own loop on the far grid (Phase 4)
+    for (let i = 0; i < 6; i++) {
+      const axis = i % 2 === 0 ? "x" : "z"; const dir = (i % 4 < 2 ? 1 : -1) as 1 | -1;
+      const fixed = axis === "x" ? CORAL_ROAD_Z[i % 3] : CORAL_ROAD_X[i % 3];
+      const along = (axis === "x" ? 38 : 206) + ((i * 31) % 70);
+      const lane = dir > 0 ? 2.8 : -2.8;
+      G.traffic.push({
+        x: axis === "x" ? along : fixed + lane, z: axis === "x" ? fixed + lane : along,
+        heading: headingFor(axis, dir), speed: 8, axis, dir, lane, color: TRAFFIC_COLORS[(i + 5) % TRAFFIC_COLORS.length], stopped: 0, fleeing: 0,
+        side: "coral", steerVis: 0, pitch: 0, damage: 0,
       });
     }
   }
@@ -60,11 +73,22 @@ function initWorld() {
       G.peds.push({
         x: px0, z: pz0,
         heading: headingFor(axis, dir), speed: 0, axis, dir, side, color: PED_COLORS[i % PED_COLORS.length], fleeUntil: 0, swing: Math.random() * 6,
-        zone: districtAt(px0, pz0), active: true, downUntil: 0,
+        zone: districtAt(px0, pz0), active: true, downUntil: 0, area: "main",
+      });
+    }
+    for (let i = 0; i < 6; i++) {
+      const axis = i % 2 === 0 ? "x" : "z"; const dir = (i % 3 === 0 ? -1 : 1) as 1 | -1;
+      const fixed = axis === "x" ? CORAL_ROAD_Z[i % 3] : CORAL_ROAD_X[i % 3];
+      const along = (axis === "x" ? 40 : 208) + ((i * 23) % 64); const side = i % 2 === 0 ? 7.6 : -7.6;
+      const px0 = axis === "x" ? along : fixed + side, pz0 = axis === "x" ? fixed + side : along;
+      G.peds.push({
+        x: px0, z: pz0,
+        heading: headingFor(axis, dir), speed: 0, axis, dir, side, color: PED_COLORS[(i + 3) % PED_COLORS.length], fleeUntil: 0, swing: Math.random() * 6,
+        zone: "Coral Shores", active: true, downUntil: 0, area: "coral",
       });
     }
   }
-  if (G.cops.length === 0) for (let i = 0; i < 6; i++) G.cops.push({ x: 0, z: -140, heading: 0, speed: 0, active: false, lightPhase: i * 0.7 });
+  if (G.cops.length === 0) for (let i = 0; i < 6; i++) G.cops.push({ x: 0, z: -140, heading: 0, speed: 0, active: false, lightPhase: i * 0.7, pitch: 0, roll: 0 });
 }
 
 export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountRef }: {
@@ -132,6 +156,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   }, [scene, bg, fogC, theme]);
 
   const garageSave = useRef({ timer: 0, lastKey: "" });
+  // Phase 4: per-car steering refs (front-wheel visuals) + traffic honks +
+  // a frame counter for the far-ped animation tick skip (Visual V7)
+  const trafficSteerRefs = useMemo(() => G.traffic.map(() => ({ current: 0 })), []);
+  const copSteerRefs = useMemo(() => G.cops.map(() => ({ current: 0 })), []);
+  const honkCd = useRef(0);
+  const frameNo = useRef(0);
+  const crashCd = useRef(0);
 
   useFrame(({ clock }, delta) => {
     const dt = Math.min(delta, 0.05);
@@ -144,6 +175,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     const night = THREE.MathUtils.clamp(-elev * 1.4 + 0.35, 0, 1);
     G.nightFactor = night;
     if (sun.current) {
+      sun.current.castShadow = G.settings.shadows; // Settings toggle (PDF delta C)
       // shadow camera FOLLOWS the player (tight ±55u, 2048 map) — real shadows
       // everywhere on the map, not just near the origin
       sun.current.position.set(G.followPos.x + Math.cos(sunAng) * 70, Math.max(10, elev * 75), G.followPos.z + 30);
@@ -168,22 +200,28 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     const pz = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.z : G.playerPos.z;
     const pSpeed = G.driving ? Math.abs(G.cars[G.activeCarId]?.state.speed ?? 0) : 0;
 
-    // ---- traffic AI ----
+    // ---- traffic AI (Port Sable + Coral Shores loops) ----
+    honkCd.current = Math.max(0, honkCd.current - dt);
+    crashCd.current = Math.max(0, crashCd.current - dt);
     for (const car of G.traffic) {
+      const prevSpeed = car.speed;
+      const prevHeading = car.heading;
       if (car.stopped > 0) { car.stopped -= dt; car.speed = Math.max(0, car.speed - 20 * dt); }
       else {
-        // stop if player car is close ahead
+        // stop if player car is close ahead (+ brake & honk, Phase 4)
         const dx = px - car.x, dz = pz - car.z;
-        const ahead = car.axis === "x" ? Math.sign(dx) === car.dir && Math.abs(dz - (car.axis === "x" ? 0 : 0)) < 6 && Math.abs(dx) < 9
+        const ahead = car.axis === "x" ? Math.sign(dx) === car.dir && Math.abs(dz) < 6 && Math.abs(dx) < 9
                                       : Math.sign(dz) === car.dir && Math.abs(dx) < 6 && Math.abs(dz) < 9;
         const target = ahead && G.driving ? 0 : car.fleeing > 0 ? 13 : 8.5;
         car.speed += THREE.MathUtils.clamp(target - car.speed, -14 * dt, 6 * dt);
+        if (ahead && G.driving && car.speed > 2 && honkCd.current <= 0 && Math.random() < 0.3) { sfx.horn(); honkCd.current = 2.5; }
       }
       if (car.fleeing > 0) car.fleeing -= dt;
       if (car.axis === "x") car.x += car.dir * car.speed * dt; else car.z += car.dir * car.speed * dt;
-      // turn at intersections
-      const cross = car.axis === "x" ? car.z : car.x;
-      const nearRoad = ROAD_COORDS.find((c) => Math.abs(c - cross + (car.lane)) < 99 && Math.abs((car.axis === "x" ? car.x : car.z) - c) < 1.2);
+      // turn at intersections (road lists are per-city)
+      const crossRoads = car.side === "coral" ? (car.axis === "x" ? CORAL_ROAD_X : CORAL_ROAD_Z) : ROAD_COORDS;
+      const alongNow = car.axis === "x" ? car.x : car.z;
+      const nearRoad = crossRoads.find((c) => Math.abs(alongNow - c) < 1.2);
       if (nearRoad !== undefined && Math.random() < 0.012) {
         const along = car.axis === "x" ? car.x : car.z;
         car.axis = car.axis === "x" ? "z" : "x";
@@ -192,18 +230,21 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         car.lane = car.dir > 0 ? 2.8 : -2.8;
         if (car.axis === "x") { car.z = fixed; car.x = along; } else { car.x = fixed; car.z = along; }
         car.heading = headingFor(car.axis, car.dir);
+        car.steerVis = 0.75 * car.dir;
       }
-      if (Math.abs(car.x) > 112 || Math.abs(car.z) > 112) { car.dir = (car.dir * -1) as 1 | -1; car.lane = car.dir > 0 ? 2.8 : -2.8; car.heading = headingFor(car.axis, car.dir); car.x = THREE.MathUtils.clamp(car.x, -110, 110); car.z = THREE.MathUtils.clamp(car.z, -110, 110); }
-      car.heading = headingFor(car.axis, car.dir);
-      // collision with player car
-      if (G.driving && hitCooldown.current <= 0) {
-        const d2 = (car.x - px) ** 2 + (car.z - pz) ** 2;
-        if (d2 < 3.1 ** 2 && pSpeed > 3) {
-          hitCooldown.current = 1.2; car.stopped = 2.5; car.fleeing = 3;
-          const mine = G.cars[G.activeCarId]; if (mine) mine.damage = Math.min(100, mine.damage + 6 + pSpeed * 0.5);
-          addCrime("hit"); cb.current.event("shake"); cb.current.event("crime"); sfx.crash();
+      if (car.side === "coral") {
+        if (car.x < 31 || car.x > 109 || car.z < 199 || car.z > 321) {
+          car.dir = (car.dir * -1) as 1 | -1; car.lane = car.dir > 0 ? 2.8 : -2.8; car.heading = headingFor(car.axis, car.dir);
+          car.x = THREE.MathUtils.clamp(car.x, 33, 107); car.z = THREE.MathUtils.clamp(car.z, 201, 319);
         }
-      }
+      } else if (Math.abs(car.x) > 112 || Math.abs(car.z) > 112) { car.dir = (car.dir * -1) as 1 | -1; car.lane = car.dir > 0 ? 2.8 : -2.8; car.heading = headingFor(car.axis, car.dir); car.x = THREE.MathUtils.clamp(car.x, -110, 110); car.z = THREE.MathUtils.clamp(car.z, -110, 110); }
+      car.heading = headingFor(car.axis, car.dir);
+      // presentation: pitch from acceleration, wheel steer decays after turns
+      car.pitch += (THREE.MathUtils.clamp(-(car.speed - prevSpeed) / Math.max(dt, 0.001) * 0.0028, -0.05, 0.055) - car.pitch) * Math.min(1, dt * 6);
+      car.steerVis += (0 - car.steerVis) * Math.min(1, dt * 5);
+      void prevHeading;
+      const ti = G.traffic.indexOf(car);
+      if (trafficSteerRefs[ti]) trafficSteerRefs[ti].current = car.steerVis;
     }
     // ---- pedestrians: density breathes with the time of day (Blueprint §2) —
     // downtown/Market Row crowds thin out late at night; the beach peaks at dusk.
@@ -211,8 +252,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     G.peds.forEach((ped, i) => {
       let frac = elevNow > 0.05 ? 1 : 0.45; // deep night: under half the walkers
       if (ped.zone === "The Docks") frac = elevNow > -0.35 && elevNow < 0.55 ? 1 : 0.55; // dusk beach crowd
-      ped.active = (i % 14) / 14 < frac;
+      ped.active = ((i * 7) % G.peds.length) / G.peds.length < frac;
     });
+    const phys = physicsRef.current ?? fallbackPhysics;
     for (const ped of G.peds) {
       if (!ped.active) { ped.speed = 0; continue; }
       // knocked down (punch/gunfire): lies still, then gets up and flees
@@ -222,10 +264,25 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const ahead = 14;
       const tx = ped.axis === "x" ? ped.x + ped.dir * ahead : ped.x;
       const tz = ped.axis === "z" ? ped.z + ped.dir * ahead : ped.z;
-      const next = (physicsRef.current ?? fallbackPhysics).stepPedestrian(ped, tx, tz, px, pz, flee, 1.6, dt);
+      const next = phys.stepPedestrian(ped, tx, tz, px, pz, flee, 1.6, dt);
       if (!isBlocked(next.x, next.z, 0.4)) { ped.x = next.x; ped.z = next.z; }
+      // separation steering (C++ physics): peds keep personal space
+      const near: { x: number; z: number }[] = [];
+      for (const other of G.peds) {
+        if (other === ped || !other.active) continue;
+        const d2 = (other.x - ped.x) ** 2 + (other.z - ped.z) ** 2;
+        if (d2 < 1.2 ** 2) near.push(other);
+        if (near.length >= 3) break;
+      }
+      if (near.length) {
+        const f = phys.separationForce(ped.x, ped.z, near, 0.95);
+        const sx = ped.x + f.x * dt * 0.85, sz = ped.z + f.z * dt * 0.85;
+        if (!isBlocked(sx, sz, 0.4)) { ped.x = sx; ped.z = sz; }
+      }
       ped.heading = next.heading; ped.speed = next.speed; ped.swing += dt * (2 + ped.speed * 2.4);
-      if (Math.abs(ped.x) > 114 || Math.abs(ped.z) > 118) { ped.dir = (ped.dir * -1) as 1 | -1; }
+      if (ped.area === "coral") {
+        if (ped.x < 31 || ped.x > 109 || ped.z < 200 || ped.z > 320) ped.dir = (ped.dir * -1) as 1 | -1;
+      } else if (Math.abs(ped.x) > 114 || Math.abs(ped.z) > 118) { ped.dir = (ped.dir * -1) as 1 | -1; }
       // hit by player car
       if (G.driving && hitCooldown.current <= 0 && threatD2 < 2.2 ** 2 && pSpeed > 4) {
         hitCooldown.current = 1.5; ped.fleeUntil = t + 4; addCrime("ped"); cb.current.event("shake"); sfx.thud();
@@ -246,7 +303,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     };
     let seen = false;
     if (want > 0) {
-      const sightR = 58 * (1 - G.fogAmt * 0.45) * (1 - G.rainAmt * 0.15);
+      const sightR = 58 * (1 - G.fogAmt * 0.45) * (1 - G.rainAmt * 0.15) * (G.crouched && !G.driving ? 0.85 : 1);
       for (const cop of G.cops) {
         if (!cop.active) continue;
         const d = Math.hypot(cop.x - px, cop.z - pz);
@@ -261,8 +318,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       if (should && !cop.active) {
         cop.active = true;
         const ang = (i * 2.4) + t;
-        cop.x = THREE.MathUtils.clamp(px + Math.sin(ang) * 46, -108, 108);
-        cop.z = THREE.MathUtils.clamp(pz + Math.cos(ang) * 46, -108, 112);
+        if (pz > 150) { // Coral Shores pursuit — spawn on the far shore grid
+          cop.x = THREE.MathUtils.clamp(px + Math.sin(ang) * 40, 34, 106);
+          cop.z = THREE.MathUtils.clamp(pz + Math.cos(ang) * 40, 204, 316);
+        } else {
+          cop.x = THREE.MathUtils.clamp(px + Math.sin(ang) * 46, -108, 108);
+          cop.z = THREE.MathUtils.clamp(pz + Math.cos(ang) * 46, -108, 112);
+        }
         cop.speed = 0;
       }
       if (!cop.active) return;
@@ -280,6 +342,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const desired = Math.atan2(dx, dz);
       let turn = desired - cop.heading;
       turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+      const prevCopSpeed = cop.speed;
       cop.heading += THREE.MathUtils.clamp(turn, -2.4 * dt, 2.4 * dt);
       const targetSpeed = dist > 14 ? cruise : dist > 5 ? Math.min(cruise, 13) : 4;
       cop.speed += THREE.MathUtils.clamp(targetSpeed - cop.speed, -18 * dt, 10 * dt);
@@ -287,7 +350,70 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const nz = cop.z + Math.cos(cop.heading) * cop.speed * dt;
       if (!isBlocked(nx, nz, 1.3)) { cop.x = nx; cop.z = nz; } else { cop.speed = 0; cop.heading += 1.8 * dt; }
       cop.lightPhase += dt * 7;
+      // presentation: pitch/roll + steering-wheel visual from motion
+      cop.pitch += (THREE.MathUtils.clamp(-(cop.speed - prevCopSpeed) / Math.max(dt, 0.001) * 0.0028, -0.05, 0.055) - cop.pitch) * Math.min(1, dt * 6);
+      cop.roll += (THREE.MathUtils.clamp(turn * cop.speed * 0.02, -0.09, 0.09) - cop.roll) * Math.min(1, dt * 6);
+      if (copSteerRefs[i]) copSteerRefs[i].current = THREE.MathUtils.clamp(turn * 2.2, -1, 1);
     });
+    // ---- Phase 4: physical vehicle-vs-vehicle collisions (C++ physics) —
+    // the player car now bounces off traffic, police and parked cars with
+    // speed exchange and damage on both sides.
+    if (G.driving && G.activeCarId >= 0) {
+      const mine = G.cars[G.activeCarId];
+      const physEng = physicsRef.current ?? fallbackPhysics;
+      const myR = mine.kind === "motorcycle" ? 1.0 : 1.55;
+      const toBody = (x: number, z: number, heading: number, speed: number, r: number) => ({ x, z, vx: Math.sin(heading) * speed, vz: Math.cos(heading) * speed, radius: r });
+      const applyHit = (res: { a: { x: number; z: number; vx: number; vz: number }; damage: number }, otherDamage: (d: number) => void, crimeKind: boolean) => {
+        if (res.damage <= 0.4) { // positional overlap only — still separate
+          mine.state.x = res.a.x; mine.state.z = res.a.z;
+          return;
+        }
+        mine.state.x = res.a.x; mine.state.z = res.a.z;
+        mine.state.speed = res.a.vx * Math.sin(mine.state.heading) + res.a.vz * Math.cos(mine.state.heading);
+        mine.damage = Math.min(100, mine.damage + res.damage);
+        otherDamage(res.damage * 0.8);
+        if (crashCd.current <= 0) {
+          crashCd.current = 0.4;
+          sfx.crash();
+          G.shakeAmp = Math.min(0.55, res.damage * 0.035);
+          cb.current.event("shake");
+          if (crimeKind && res.damage > 5) addCrime("hit");
+        }
+      };
+      const me = () => toBody(mine.state.x, mine.state.z, mine.state.heading, mine.state.speed, myR);
+      for (const tc of G.traffic) {
+        if ((tc.x - mine.state.x) ** 2 + (tc.z - mine.state.z) ** 2 > 4.2 ** 2) continue;
+        const res = physEng.resolveVehicleCollision(me(), toBody(tc.x, tc.z, tc.heading, tc.speed, 1.55));
+        if (res.damage > 0 || (res.b.x !== tc.x || res.b.z !== tc.z)) {
+          tc.x = res.b.x; tc.z = res.b.z;
+          tc.speed = Math.max(0, Math.min(13, res.b.vx * Math.sin(tc.heading) + res.b.vz * Math.cos(tc.heading)));
+          if (res.damage > 4) { tc.stopped = Math.max(tc.stopped, 1.6); tc.fleeing = 3; }
+          applyHit(res, (d) => { tc.damage = Math.min(100, tc.damage + d); }, true);
+        }
+      }
+      for (const cop of G.cops) {
+        if (!cop.active) continue;
+        if ((cop.x - mine.state.x) ** 2 + (cop.z - mine.state.z) ** 2 > 4.2 ** 2) continue;
+        const res = physEng.resolveVehicleCollision(me(), toBody(cop.x, cop.z, cop.heading, cop.speed, 1.55));
+        cop.x = res.b.x; cop.z = res.b.z;
+        cop.speed = Math.max(0, Math.min(25, res.b.vx * Math.sin(cop.heading) + res.b.vz * Math.cos(cop.heading)));
+        applyHit(res, () => undefined, false);
+      }
+      G.cars.forEach((other, oi) => {
+        if (oi === G.activeCarId || other.state.speed !== 0) return;
+        if ((other.state.x - mine.state.x) ** 2 + (other.state.z - mine.state.z) ** 2 > 4.2 ** 2) return;
+        const keepX = other.state.x, keepZ = other.state.z;
+        const res = physEng.resolveVehicleCollision(me(), toBody(other.state.x, other.state.z, other.state.heading, 0, other.kind === "motorcycle" ? 1.0 : 1.55));
+        other.state.x = keepX; other.state.z = keepZ; // parked cars don't roll away
+        if (res.damage > 0) {
+          mine.state.x = res.a.x + (res.b.x - keepX); mine.state.z = res.a.z + (res.b.z - keepZ);
+          mine.state.speed = res.a.vx * Math.sin(mine.state.heading) + res.a.vz * Math.cos(mine.state.heading);
+          mine.damage = Math.min(100, mine.damage + res.damage);
+          other.damage = Math.min(100, other.damage + res.damage * 0.8);
+          if (crashCd.current <= 0) { crashCd.current = 0.4; sfx.crash(); G.shakeAmp = Math.min(0.55, res.damage * 0.035); cb.current.event("shake"); if (res.damage > 5) addCrime("hit"); }
+        } else if (res.a.x !== mine.state.x || res.a.z !== mine.state.z) { mine.state.x = res.a.x; mine.state.z = res.a.z; }
+      });
+    }
     // ---- roadblocks at 4+ stars: two patrol cars parked across the road ahead
     const rb = roadblock.current;
     rb.cooldown = Math.max(0, rb.cooldown - dt);
@@ -377,7 +503,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         if (gs.timer > 2 && gs.lastKey !== key) {
           gs.lastKey = key;
           persistSavedCar({ kind: car.kind, color: car.color, x: car.state.x, z: car.state.z, heading: car.state.heading });
-          cb.current.popup("🔧 Car saved in your villa garage — it'll be here next visit.");
+          // Phase 4: parking at the villa also files the car in the stored
+          // garage list (selectable from either garage, max 6)
+          if (G.storedCars.length < 6 && !G.storedCars.some((s) => s.kind === car.kind && s.color === car.color)) {
+            G.storedCars.push({ kind: car.kind, color: car.color, name: CAR_MODELS[car.kind].name, damage: Math.round(car.damage), fuel: Math.round(car.fuel), brokenWindow: car.brokenWindow });
+            persistStoredCars();
+          }
+          cb.current.popup("Car saved in your villa garage — it'll be here next visit.");
           sfx.cash();
         }
       } else gs.timer = 0;
@@ -391,10 +523,12 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     syncMeshes(t);
     function failMission(reason: string) {
       if (!M.active) return;
+      G.missionResult = { ok: false, title: M.active.title, reward: 0, items: 0, timeLeft: 0, reason, at: t };
       sfx.fail(); cb.current.banner(`Mission failed — ${reason}`, false); endMission(); cb.current.event("missionEnd");
     }
     function completeMission() {
       const def = M.active; if (!def) return;
+      G.missionResult = { ok: true, title: def.title, reward: def.payout, items: 0, timeLeft: Math.max(0, Math.round(M.timer)), reason: "", at: t };
       G.cash += def.payout; G.lifetimeEarned += def.payout;
       pushPhoneMsg("SableBank", `💰 $${def.payout} received — ${def.title}. Balance: $${G.cash}.`);
       persist();
@@ -412,7 +546,8 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       cb.current.event("missionEnd");
     }
     function syncMeshes(tt: number) {
-      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.position.set(c.x, 0, c.z); g.rotation.y = c.heading; } });
+      frameNo.current += 1;
+      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.position.set(c.x, groundYAt(c.x, c.z), c.z); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, 0); } });
       const reportT = performance.now() / 1000;
       G.peds.forEach((pd, i) => {
         const g = pedRefs.current[i]; if (!g) return;
@@ -421,7 +556,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         g.position.set(pd.x, down ? 0.32 : 0, pd.z);
         g.rotation.set(down ? -Math.PI / 2 * 0.92 : 0, pd.heading, 0);
         const rig = pedRigs[i];
-        if (rig && !down) animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
+        // Visual V7: far peds (>120u) animate every 3rd frame
+        const far = (pd.x - G.followPos.x) ** 2 + (pd.z - G.followPos.z) ** 2 > 120 ** 2;
+        if (rig && !down && (!far || (frameNo.current + i) % 3 === 0)) animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
         const marker = reportRefs.current[i];
         if (marker) marker.visible = pd.active && !down && G.reportingPed === i && reportT < G.witnessUntil;
       });
@@ -456,7 +593,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       let nearestCop: { d: number; i: number } | null = null;
       G.cops.forEach((c, i) => {
         const g = copRefs.current[i]; if (!g) return;
-        g.visible = c.active; g.position.set(c.x, 0, c.z); g.rotation.y = c.heading;
+        g.visible = c.active; g.position.set(c.x, groundYAt(c.x, c.z), c.z); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, c.roll);
         const lights = copLights.current[i];
         const on = Math.sin(c.lightPhase) > 0;
         if (lights) {
@@ -504,7 +641,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       {/* traffic — detailed bodies, classes cycle like the mood board */}
       {G.traffic.map((c, i) => (
         <group key={i} ref={(n) => { trafficRefs.current[i] = n; }} position={[c.x, 0, c.z]}>
-          <CarBody kind={TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} />
+          <CarBody kind={TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} steerRef={trafficSteerRefs[i]} liveDamage={() => G.traffic[i].damage} />
         </group>
       ))}
       {/* pedestrians — articulated humanoids with outfit variety */}
@@ -558,7 +695,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       {/* police — sedan body with livery + flashing light bar */}
       {G.cops.map((_c, i) => (
         <group key={i} ref={(n) => { copRefs.current[i] = n; }} visible={false}>
-          <CarBody kind="sedan" color="#12161c" police />
+          <CarBody kind="sedan" color="#12161c" police steerRef={copSteerRefs[i]} />
           <mesh position={[-0.45, 1.44, -0.1]} ref={(n) => { (copLights.current[i] ??= [null, null])[0] = n; }}>
             <boxGeometry args={[0.55, 0.16, 0.4]} /><meshStandardMaterial color="#ff2222" emissive="#ff2222" emissiveIntensity={2} />
           </mesh>

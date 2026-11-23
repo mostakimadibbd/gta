@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { sfx } from "../game/audio";
+import { toggleGyro, gyroEnabled, gyroPreferred } from "../game/gyro";
 
 // Touch controls feed the SAME keyboard pipeline: they dispatch real
 // KeyboardEvents on window, so Player/Vehicle/handlers don't fork.
@@ -21,6 +22,8 @@ function HoldButton({ label, k, className, onTap }: { label: string; k?: string;
 }
 export default function TouchControls({ driving, onPause }: { driving: boolean; onPause: () => void }) {
   const [touch, setTouch] = useState(false);
+  const [gyroOn, setGyroOn] = useState(gyroEnabled());
+  const [gyroWanted] = useState(gyroPreferred());
   const joyRef = useRef<HTMLDivElement>(null);
   const activeKeys = useRef(new Set<string>());
   useEffect(() => {
@@ -44,9 +47,19 @@ export default function TouchControls({ driving, onPause }: { driving: boolean; 
     activeKeys.current = want;
   };
   const joyEnd = () => { for (const k of activeKeys.current) fire(k, false); activeKeys.current = new Set(); };
+  // Gyro toggle: the tap itself is the user gesture iOS needs for the
+  // DeviceOrientation permission prompt. Recalibrates every time it arms.
+  const onGyroTap = async (e: React.SyntheticEvent) => {
+    e.stopPropagation();
+    setGyroOn(await toggleGyro());
+  };
   return (
     <div className="touch-layer">
       <button type="button" className="touch-pause" aria-label="Pause" onClick={(e) => { e.stopPropagation(); onPause(); }}>II</button>
+      <button type="button" className={`touch-gyro${gyroOn ? " on" : ""}`} aria-label="Gyro steering"
+        onClick={onGyroTap}>
+        {gyroOn ? "GYRO ON" : gyroWanted ? "GYRO · TAP" : "GYRO"}
+      </button>
       {!driving ? (
         <>
           <div ref={joyRef} className="touch-joy" role="application" aria-label="Movement joystick"
@@ -57,6 +70,7 @@ export default function TouchControls({ driving, onPause }: { driving: boolean; 
           </div>
           <div className="touch-actions">
             <HoldButton label="E" k="e" className="big" />
+            <HoldButton label="CROUCH" onTap={() => { fire("x", true); setTimeout(() => fire("x", false), 60); }} />
             <HoldButton label="JUMP" k=" " />
           </div>
         </>

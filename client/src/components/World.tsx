@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { buildings, trees, props, lamps, palms, houses, ROAD_COORDS, ROAD_WIDTH, WATER_Z, MANSION, FUEL_STATIONS, OVERLOOK } from "../world";
+import { buildings, trees, props, lamps, palms, houses, ROAD_COORDS, ROAD_WIDTH, WATER_Z, MANSION, FUEL_STATIONS, OVERLOOK, BRIDGE, CORAL_ROAD_X, CORAL_ROAD_Z, REGISTERS, PAWN_SHOP, groundYAt } from "../world";
 import { G } from "../game/store";
 import type { GameTheme } from "../themes";
 import {
@@ -9,6 +9,8 @@ import {
   facadeTexture, brickTexture, containerTexture, streetSignTexture, neonSignTexture,
   grassTexture, sandTexture, palmFrondTexture, glowTexture, cloudTexture,
   arrowTexture, oilTexture,
+  asphaltNormal, concreteNormal, facadeNormal, brickNormal, sandNormal, grassNormal,
+  asphaltRoughness, concreteRoughness,
 } from "../textures";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
@@ -123,6 +125,16 @@ function PalmTree({ x, z, scale, lean }: { x: number; z: number; scale: number; 
   // rebuilt palm: TALL curved trunk (4 stacked, offset segments) + crown of
   // 8 feathered fronds — boulevard rows reach ~8-10u like the references
   const topX = lean * 2.6;
+  const crown = useRef<THREE.Group>(null);
+  // Visual V5: fronds sway gently — only for palms near the player
+  useFrame(({ clock }) => {
+    if (!crown.current) return;
+    const d2 = (x - G.followPos.x) ** 2 + (z - G.followPos.z) ** 2;
+    if (d2 > 65 ** 2) return;
+    const t = clock.elapsedTime;
+    crown.current.rotation.z = Math.sin(t * 0.9 + x * 0.7 + z * 0.3) * 0.026;
+    crown.current.rotation.x = Math.cos(t * 0.7 + z * 0.5) * 0.02;
+  });
   return (
     <group position={[x, 0, z]} scale={scale}>
       {[0, 1, 2, 3].map((i) => (
@@ -130,7 +142,7 @@ function PalmTree({ x, z, scale, lean }: { x: number; z: number; scale: number; 
           <cylinderGeometry args={[0.145 - i * 0.018, 0.175 - i * 0.018, 1.75, 7]} /><meshStandardMaterial color="#7d5f3d" roughness={0.95} />
         </mesh>
       ))}
-      <group position={[topX, 6.15, 0]}>
+      <group ref={crown} position={[topX, 6.15, 0]}>
         {[0, 1, 2, 3, 4, 5, 6, 7].map((k) => (
           <group key={k} rotation={[0, (k * Math.PI) / 4 + (k % 2) * 0.2, 0]}>
             <mesh position={[1.25, 0.1, 0]} rotation={[0, 0, -0.38 - (k % 3) * 0.09]} castShadow>
@@ -163,6 +175,53 @@ function buildInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, items: X
 
 let seed = 31;
 const srnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+
+/** Phase 4: robbery register counters + the Coral pawn shop frontage. */
+function ShopFronts({ night }: { night: number }) {
+  const shutters = useRef<Array<THREE.Mesh | null>>([]);
+  const pawnTex = useMemo(() => makeSignTexture("CORAL PAWN · WE BUY GOLD", "#3a2c10", "#ffd34d", 512), []);
+  const shopTex = useMemo(() => makeSignTexture("CORAL SHORES GOODS", "#12303f", "#ffe9c9", 512), []);
+  useFrame(() => {
+    REGISTERS.forEach((r, i) => {
+      const s = shutters.current[i];
+      if (s) s.visible = (G.robbedUntil[r.id] ?? 0) > G.timeS;
+    });
+  });
+  return (
+    <group>
+      {REGISTERS.map((r, i) => (
+        <group key={r.id} position={[r.x, 0, r.z]}>
+          {/* counter with a till on top */}
+          <mesh position={[0, 0.55, 0]} castShadow><boxGeometry args={[1.7, 1.1, 0.7]} /><meshStandardMaterial color="#4c3b28" roughness={0.8} /></mesh>
+          <mesh position={[0.3, 1.22, 0]}><boxGeometry args={[0.5, 0.24, 0.4]} /><meshStandardMaterial color="#2c3138" metalness={0.5} roughness={0.4} /></mesh>
+          <mesh position={[0.3, 1.37, 0]}><boxGeometry args={[0.34, 0.06, 0.3]} /><meshStandardMaterial color="#ffb703" emissive="#ffb703" emissiveIntensity={0.4 + night * 0.8} /></mesh>
+          {/* robbed shutter (drops after a robbery, lifts next day) */}
+          <mesh ref={(n) => { shutters.current[i] = n; }} position={[0, 1.5, -0.55]} visible={false}>
+            <boxGeometry args={[2.4, 3, 0.08]} /><meshStandardMaterial color="#3c4249" metalness={0.55} roughness={0.5} />
+          </mesh>
+        </group>
+      ))}
+      {/* Coral Shores Goods building (register shop) */}
+      <group position={[48, 0, 218]}>
+        <mesh position={[0, 2.1, 0]} castShadow receiveShadow><boxGeometry args={[10, 4.2, 6.8]} /><meshStandardMaterial color="#77644c" roughness={0.9} /></mesh>
+        <mesh position={[0, 4.35, 0]}><boxGeometry args={[10.4, 0.3, 7.2]} /><meshStandardMaterial color="#14524f" roughness={0.85} /></mesh>
+        <mesh position={[0, 3.1, -3.46]}><planeGeometry args={[7.6, 1.1]} /><meshStandardMaterial map={shopTex} emissive="#ffffff" emissiveMap={shopTex} emissiveIntensity={0.2 + night * 0.7} /></mesh>
+        <mesh position={[0, 1.15, -3.44]}><boxGeometry args={[8.6, 2.3, 0.06]} /><meshStandardMaterial color="#22303a" roughness={0.2} metalness={0.4} emissive="#ffca7a" emissiveIntensity={night * 0.25} /></mesh>
+      </group>
+      {/* Coral Pawn building + counter */}
+      <group position={[88, 0, 218]}>
+        <mesh position={[0, 2.3, 0]} castShadow receiveShadow><boxGeometry args={[10, 4.6, 6.8]} /><meshStandardMaterial color="#5d5142" roughness={0.9} /></mesh>
+        <mesh position={[0, 4.75, 0]}><boxGeometry args={[10.4, 0.3, 7.2]} /><meshStandardMaterial color="#3a2c10" roughness={0.85} /></mesh>
+        <mesh position={[0, 3.3, -3.46]}><planeGeometry args={[8.2, 1.1]} /><meshStandardMaterial map={pawnTex} emissive="#ffffff" emissiveMap={pawnTex} emissiveIntensity={0.25 + night * 0.9} /></mesh>
+        <mesh position={[0, 1.15, -3.44]}><boxGeometry args={[8.6, 2.3, 0.06]} /><meshStandardMaterial color="#22303a" roughness={0.2} metalness={0.4} emissive="#ffca7a" emissiveIntensity={night * 0.25} /></mesh>
+      </group>
+      <group position={[PAWN_SHOP.x, 0, PAWN_SHOP.z]}>
+        <mesh position={[0, 0.55, 0]} castShadow><boxGeometry args={[1.9, 1.1, 0.7]} /><meshStandardMaterial color="#3a2c10" roughness={0.8} /></mesh>
+        <mesh position={[-0.4, 1.2, 0]}><boxGeometry args={[0.4, 0.18, 0.34]} /><meshStandardMaterial color="#ffd34d" metalness={0.8} roughness={0.3} /></mesh>
+      </group>
+    </group>
+  );
+}
 
 export default function World({ theme, night }: { theme: GameTheme; night: number }) {
   const water = useRef<THREE.MeshStandardMaterial>(null);
@@ -206,18 +265,28 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
   const overlookTex = useMemo(() => makeSignTexture("PORT SABLE OVERLOOK", "#12303f", "#f2c14e", 512), []);
 
   // ---- ground materials (wet-look at night: roughness drops as night rises)
+  // Visual V2: procedural normal + roughness maps so surfaces catch light
+  // directionally instead of reading flat.
   const mats = useMemo(() => {
     const rough = 0.96 - night * 0.5;
     const aV = asphaltTexture(); aV.repeat.set(1, 20);
     const aH = asphaltTextureH(); aH.repeat.set(1, 20);
     const cV = concreteTexture(); cV.repeat.set(1, 60);
     const cH = concreteTextureH(); cH.repeat.set(1, 60);
+    const aNV = asphaltNormal(); aNV.repeat.set(1, 20);
+    const aNH = asphaltNormal().clone(); aNH.center.set(0.5, 0.5); aNH.rotation = Math.PI / 2; aNH.repeat.set(1, 20); aNH.needsUpdate = true;
+    const aRV = asphaltRoughness(); aRV.repeat.set(1, 20);
+    const aRH = asphaltRoughness().clone(); aRH.center.set(0.5, 0.5); aRH.rotation = Math.PI / 2; aRH.repeat.set(1, 20); aRH.needsUpdate = true;
+    const cNV = concreteNormal(); cNV.repeat.set(1, 60);
+    const cNH = concreteNormal().clone(); cNH.center.set(0.5, 0.5); cNH.rotation = Math.PI / 2; cNH.repeat.set(1, 60); cNH.needsUpdate = true;
+    const cRV = concreteRoughness(); cRV.repeat.set(1, 60);
+    const nScale = new THREE.Vector2(0.55, 0.55);
     return {
-      asphaltV: new THREE.MeshStandardMaterial({ map: aV, roughness: rough, metalness: 0.04 + night * 0.1 }),
-      asphaltH: new THREE.MeshStandardMaterial({ map: aH, roughness: rough, metalness: 0.04 + night * 0.1 }),
-      concreteV: new THREE.MeshStandardMaterial({ map: cV, color: "#b0aa9e", roughness: 0.95 }),
-      concreteH: new THREE.MeshStandardMaterial({ map: cH, color: "#b0aa9e", roughness: 0.95 }),
-      curb: new THREE.MeshStandardMaterial({ map: cV, color: "#8f8a80", roughness: 0.95 }),
+      asphaltV: new THREE.MeshStandardMaterial({ map: aV, normalMap: aNV, normalScale: nScale, roughnessMap: aRV, roughness: rough, metalness: 0.04 + night * 0.1 }),
+      asphaltH: new THREE.MeshStandardMaterial({ map: aH, normalMap: aNH, normalScale: nScale, roughnessMap: aRH, roughness: rough, metalness: 0.04 + night * 0.1 }),
+      concreteV: new THREE.MeshStandardMaterial({ map: cV, normalMap: cNV, normalScale: nScale, roughnessMap: cRV, color: "#b0aa9e", roughness: 0.95 }),
+      concreteH: new THREE.MeshStandardMaterial({ map: cH, normalMap: cNH, normalScale: nScale, color: "#b0aa9e", roughness: 0.95 }),
+      curb: new THREE.MeshStandardMaterial({ map: cV, normalMap: cNV, normalScale: nScale, color: "#8f8a80", roughness: 0.95 }),
       edge: new THREE.MeshStandardMaterial({ color: "#e9e7de", roughness: 0.7, transparent: true, opacity: 0.78 }),
       yellow: new THREE.MeshStandardMaterial({ color: "#d9a41c", roughness: 0.7, transparent: true, opacity: 0.92 }),
     };
@@ -305,10 +374,19 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       if (i % 2) puddles.push({ x: c + off, z: along, s: 1.8 + srnd() * 2.2, sy: 1.2 + srnd() * 1.6, ry: srnd() * 3 });
       else puddles.push({ x: along, z: c + off, s: 1.8 + srnd() * 2.2, sy: 1.2 + srnd() * 1.6, ry: srnd() * 3 });
     }
+    // Visual V3: tyre-mark darkening swept through intersection corners
+    const tyres: { x: number; z: number; s: number; sy?: number; ry: number }[] = [];
+    for (const ix of ROAD_COORDS) for (const iz of ROAD_COORDS) {
+      tyres.push({ x: ix + 4.4, z: iz - 4.6, s: 1.1, sy: 4.6, ry: 0.5 });
+      tyres.push({ x: ix - 4.6, z: iz + 4.4, s: 1.1, sy: 4.6, ry: Math.PI + 0.5 });
+      tyres.push({ x: ix - 4.4, z: iz - 4.6, s: 1.1, sy: 4.6, ry: -0.5 });
+      tyres.push({ x: ix + 4.6, z: iz + 4.4, s: 1.1, sy: 4.6, ry: Math.PI - 0.5 });
+    }
     return {
       arrows: build(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ map: arrowTexture(), transparent: true, roughness: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), arrows),
       oils: build(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ map: oilTexture(), transparent: true, roughness: 0.35, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), oils),
       puddles: build(new THREE.CircleGeometry(0.5, 14), puddleMat, puddles),
+      tyres: build(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ map: oilTexture(), color: "#0c0c0e", transparent: true, opacity: 0.5, roughness: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), tyres),
     };
   }, [puddleMat]);
 
@@ -367,8 +445,8 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       let m = cache.get(key);
       if (!m) {
         m = kind === "glass"
-          ? new THREE.MeshStandardMaterial({ color: "#39657f", map: facadeTexture(), roughness: 0.1, metalness: 0.6, envMapIntensity: 1.25 })
-          : new THREE.MeshStandardMaterial({ color: b.color, map: kind === "brick" ? brickTexture() : facadeTexture(), roughness: 0.92 });
+          ? new THREE.MeshStandardMaterial({ color: "#39657f", map: facadeTexture(), normalMap: facadeNormal(), normalScale: new THREE.Vector2(0.4, 0.4), roughness: 0.1, metalness: 0.6, envMapIntensity: 1.25 })
+          : new THREE.MeshStandardMaterial({ color: b.color, map: kind === "brick" ? brickTexture() : facadeTexture(), normalMap: kind === "brick" ? brickNormal() : facadeNormal(), normalScale: new THREE.Vector2(0.65, 0.65), roughness: 0.92 });
         cache.set(key, m);
       }
       return m;
@@ -393,6 +471,10 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
     if (water.current) {
       water.current.emissiveIntensity = 0.15 + Math.sin(t * 1.4) * 0.08;
       water.current.color.set(theme.water).offsetHSL(0, 0, Math.sin(t * 0.7) * 0.02);
+      // Visual V5: drifting ripple normals — the surface actually moves
+      if (water.current.normalMap) {
+        water.current.normalMap.offset.set(t * 0.008, t * 0.005);
+      }
     }
     if (domeMat.current) {
       const base = theme.id === "midnight" ? "#3a4a68" : theme.id === "noir" ? "#9a9a9a" : "#ffffff";
@@ -498,15 +580,29 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       </points>
       {/* ground / grass — deep noisy grass texture (no more flat green) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.09, 0]} receiveShadow>
-        <planeGeometry args={[290, 300]} /><meshStandardMaterial map={grassTex} roughness={1} />
+        <planeGeometry args={[290, 300]} /><meshStandardMaterial map={grassTex} normalMap={grassNormal()} normalScale={new THREE.Vector2(0.5, 0.5)} roughness={1} />
       </mesh>
       {/* beach sand — warm textured sand */}
-      <mesh position={[0, 0.0, 121]} receiveShadow><boxGeometry args={[290, 0.1, 14]} /><meshStandardMaterial map={sandTex} roughness={1} /></mesh>
-      {/* harbour water (animated emissive shimmer) */}
-      <mesh position={[0, -0.05, WATER_Z + 32]} receiveShadow>
-        <boxGeometry args={[290, 0.08, 60]} />
-        <meshStandardMaterial ref={water} color={theme.water} emissive={theme.water} emissiveIntensity={0.2} roughness={0.35} metalness={0.1} />
+      <mesh position={[0, 0.0, 121]} receiveShadow><boxGeometry args={[290, 0.1, 14]} /><meshStandardMaterial map={sandTex} normalMap={sandNormal()} normalScale={new THREE.Vector2(0.5, 0.5)} roughness={1} /></mesh>
+      {/* harbour + bay water — one sheet from Port Sable beach around Coral
+          Shores (animated emissive shimmer + drifting ripple normals) */}
+      <mesh position={[0, -0.05, WATER_Z + 118]} receiveShadow>
+        <boxGeometry args={[560, 0.08, 236]} />
+        <meshStandardMaterial ref={water} color={theme.water} emissive={theme.water} emissiveIntensity={0.2} roughness={0.35} metalness={0.1} normalMap={sandNormal()} normalScale={new THREE.Vector2(0.32, 0.32)} />
       </mesh>
+      {/* ======== CORAL SHORES landmass (Phase 4): island slab + beach + grid ======== */}
+      <mesh position={[70, -0.22, 260]} receiveShadow>
+        <boxGeometry args={[92, 0.5, 140]} /><meshStandardMaterial map={grassTex} normalMap={grassNormal()} normalScale={new THREE.Vector2(0.5, 0.5)} color="#b9c4a4" roughness={1} />
+      </mesh>
+      <mesh position={[70, 0.02, 202.5]} receiveShadow>
+        <boxGeometry args={[92, 0.12, 13]} /><meshStandardMaterial map={sandTex} normalMap={sandNormal()} normalScale={new THREE.Vector2(0.5, 0.5)} roughness={1} />
+      </mesh>
+      {CORAL_ROAD_X.map((c) => (
+        <mesh key={`cx${c}`} position={[c, 0.06, 260]} receiveShadow><boxGeometry args={[ROAD_WIDTH, 0.12, 128]} /><primitive object={mats.asphaltV} attach="material" /></mesh>
+      ))}
+      {CORAL_ROAD_Z.map((c) => (
+        <mesh key={`cz${c}`} position={[70, 0.06, c]} receiveShadow><boxGeometry args={[84, 0.12, ROAD_WIDTH]} /><primitive object={mats.asphaltH} attach="material" /></mesh>
+      ))}
       {/* pier */}
       <mesh position={[0, 0.06, 122]} receiveShadow><boxGeometry args={[10, 0.16, 16]} /><meshStandardMaterial color="#8a6b48" /></mesh>
 
@@ -548,6 +644,7 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       <primitive object={decals.arrows} />
       <primitive object={decals.oils} />
       <primitive object={decals.puddles} />
+      <primitive object={decals.tyres} />
 
       {/* traffic lights at 8 intersections (cycling) */}
       {LIGHT_SPOTS.map(([ix, iz], i) => (
@@ -1020,40 +1117,49 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
         </mesh>
       </group>
 
-      {/* ======== BAY BRIDGE (Phase 2 scenery): suspension bridge over the
-           harbour toward a hazy far shore — pure backdrop, not drivable ======== */}
-      <group position={[64, 0, 0]}>
-        <mesh position={[0, 5.6, 163]} receiveShadow><boxGeometry args={[11, 0.8, 78]} /><meshStandardMaterial color="#3f464d" roughness={0.7} metalness={0.2} /></mesh>
-        <mesh position={[0, 6.05, 163]}><boxGeometry args={[11.3, 0.14, 78]} /><meshStandardMaterial color="#59616a" roughness={0.6} /></mesh>
-        {[-5.2, 5.2].map((x) => (
-          <group key={x}>
-            <mesh position={[x, 6.6, 163]}><boxGeometry args={[0.18, 1.1, 78]} /><meshStandardMaterial color="#aeb6bc" metalness={0.7} roughness={0.35} /></mesh>
+      {/* ======== BAY BRIDGE — DRIVABLE causeway (Phase 4): segmented deck
+           follows groundYAt() exactly; towers/cables stay as dressing ======== */}
+      <group>
+        {Array.from({ length: 38 }, (_, i) => {
+          const z0 = 88 + i * 4;
+          const y0 = groundYAt(BRIDGE.x, z0), y1 = groundYAt(BRIDGE.x, z0 + 4);
+          const ym = (y0 + y1) / 2;
+          const pitch = Math.atan2(y1 - y0, 4);
+          return (
+            <mesh key={i} position={[BRIDGE.x, ym - 0.28, z0 + 2]} rotation={[pitch, 0, 0]} receiveShadow>
+              <boxGeometry args={[11, 0.55, 4.6]} /><meshStandardMaterial color="#434a51" roughness={0.65} metalness={0.25} />
+            </mesh>
+          );
+        })}
+        {/* rails */}
+        {[-5.3, 5.3].map((o) => (
+          <group key={o}>
+            {Array.from({ length: 38 }, (_, i) => {
+              const z0 = 88 + i * 4;
+              const ym = (groundYAt(BRIDGE.x, z0) + groundYAt(BRIDGE.x, z0 + 4)) / 2;
+              const pitch = Math.atan2(groundYAt(BRIDGE.x, z0 + 4) - groundYAt(BRIDGE.x, z0), 4);
+              return <mesh key={i} position={[BRIDGE.x + o, ym + 0.55, z0 + 2]} rotation={[pitch, 0, 0]}><boxGeometry args={[0.16, 0.75, 4.6]} /><meshStandardMaterial color="#9aa4ac" metalness={0.65} roughness={0.35} /></mesh>;
+            })}
+          </group>
+        ))}
+        {/* towers + cables (dressing) */}
+        {[-5.2, 5.2].map((o) => (
+          <group key={`t${o}`}>
             {[140, 180].map((z) => (
-              <mesh key={z} position={[x, 15, z]} castShadow><boxGeometry args={[0.9, 19, 0.9]} /><meshStandardMaterial color="#7d8894" metalness={0.5} roughness={0.45} /></mesh>
+              <mesh key={z} position={[BRIDGE.x + o, 15, z]} castShadow><boxGeometry args={[0.9, 19, 0.9]} /><meshStandardMaterial color="#7d8894" metalness={0.5} roughness={0.45} /></mesh>
             ))}
-            <mesh position={[x, 24.6, 140]}><boxGeometry args={[1, 1, 1]} /><meshStandardMaterial color="#7d8894" /></mesh>
-            <mesh position={[x, 24.6, 180]}><boxGeometry args={[1, 1, 1]} /><meshStandardMaterial color="#7d8894" /></mesh>
-            {/* main cables: tower-top → deck anchors (thin rotated boxes) */}
-            <mesh position={[x, 15.5, 134]} rotation={[2.09, 0, 0]}><boxGeometry args={[0.14, 0.14, 24.2]} /><meshStandardMaterial color="#22262b" /></mesh>
-            <mesh position={[x, 15.5, 160]} rotation={[0.81, 0, 0]}><boxGeometry args={[0.14, 0.14, 29]} /><meshStandardMaterial color="#22262b" /></mesh>
-            <mesh position={[x, 15.5, 160]} rotation={[2.33, 0, 0]}><boxGeometry args={[0.14, 0.14, 29]} /><meshStandardMaterial color="#22262b" /></mesh>
-            <mesh position={[x, 15.5, 189]} rotation={[0.86, 0, 0]}><boxGeometry args={[0.14, 0.14, 27.9]} /><meshStandardMaterial color="#22262b" /></mesh>
-            {/* hangers */}
+            <mesh position={[BRIDGE.x + o, 15.5, 134]} rotation={[2.09, 0, 0]}><boxGeometry args={[0.14, 0.14, 24.2]} /><meshStandardMaterial color="#22262b" /></mesh>
+            <mesh position={[BRIDGE.x + o, 15.5, 160]} rotation={[0.81, 0, 0]}><boxGeometry args={[0.14, 0.14, 29]} /><meshStandardMaterial color="#22262b" /></mesh>
+            <mesh position={[BRIDGE.x + o, 15.5, 160]} rotation={[2.33, 0, 0]}><boxGeometry args={[0.14, 0.14, 29]} /><meshStandardMaterial color="#22262b" /></mesh>
+            <mesh position={[BRIDGE.x + o, 15.5, 189]} rotation={[0.86, 0, 0]}><boxGeometry args={[0.14, 0.14, 27.9]} /><meshStandardMaterial color="#22262b" /></mesh>
             {[146, 154, 166, 174].map((z) => (
-              <mesh key={z} position={[x, 15.5, z]}><boxGeometry args={[0.07, 18, 0.07]} /><meshStandardMaterial color="#2c3138" /></mesh>
+              <mesh key={z} position={[BRIDGE.x + o, 15.5, z]}><boxGeometry args={[0.07, 18, 0.07]} /><meshStandardMaterial color="#2c3138" /></mesh>
             ))}
           </group>
         ))}
-        {[140, 160, 180].map((z) => (
-          <mesh key={z} position={[0, 2.2, z]}><boxGeometry args={[9, 5.2, 1.6]} /><meshStandardMaterial color="#5a646c" roughness={0.7} /></mesh>
-        ))}
-        {/* far shore silhouette across the bay */}
-        <mesh position={[-64, 0.4, 212]} receiveShadow><boxGeometry args={[290, 1.2, 26]} /><meshStandardMaterial color="#46604f" roughness={1} /></mesh>
-        {[-120, -88, -54, -20, 18, 52, 88, 124].map((x, i) => (
-          <mesh key={x} position={[x - 64, 5 + (i % 4) * 2.4, 214 + (i % 3) * 3]}>
-            <boxGeometry args={[13 + (i % 3) * 4, 10 + (i % 4) * 5, 9]} />
-            <meshStandardMaterial color="#33454f" roughness={0.9} emissive="#ffca7a" emissiveIntensity={night * 0.35} />
-          </mesh>
+        {/* support piers standing in the bay */}
+        {[128, 152, 176, 200].map((z) => (
+          <mesh key={z} position={[BRIDGE.x, 1.8, z]}><boxGeometry args={[9, 5.4, 1.8]} /><meshStandardMaterial color="#5a646c" roughness={0.75} /></mesh>
         ))}
       </group>
 
@@ -1163,6 +1269,10 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
         </mesh>
       ))}
 
+      {/* ======== Phase 4 shopfronts: register counters (robbery points) +
+           Coral pawn shop. Shutters drop while a shop is "robbed" today. */}
+      <ShopFronts night={night} />
+
       {/* ======== Phase 3 distance depth: far skyline silhouette ring +
            a second, hazier bridge on the horizon ======== */}
       <group>
@@ -1170,8 +1280,10 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
           const a = (i / 26) * Math.PI * 2 + 0.12;
           const r = 238 + ((i * 37) % 22);
           const h = 20 + ((i * 53) % 42);
+          const sx = Math.sin(a) * r, sz = Math.cos(a) * r;
+          if (sz > 140 && Math.abs(sx) < 150) return null; // Coral Shores occupies this sector now
           return (
-            <mesh key={i} position={[Math.sin(a) * r, h / 2 - 2, Math.cos(a) * r]}>
+            <mesh key={i} position={[sx, h / 2 - 2, sz]}>
               <boxGeometry args={[15 + (i % 4) * 5, h, 12]} />
               <meshBasicMaterial color="#546a76" fog={false} />
             </mesh>

@@ -20,8 +20,15 @@ import { ROAD_COORDS, FUEL_STATIONS, districtAt } from "./world";
 import Weather from "./components/Weather";
 import Combat from "./components/Combat";
 import Interiors from "./components/Interiors";
+import Interactions from "./components/Interactions";
+import GaragePanel from "./components/GaragePanel";
+import CharacterSelect from "./components/CharacterSelect";
 import { POSTER_PANELS } from "./posterData";
 import Phone from "./components/Phone";
+import { loadCharacterChoice, persistCharacterChoice, presetById } from "./game/characters";
+import { gyroYawTrim } from "./game/gyro";
+import { stashTotal, persistSettings, toast as gameToast } from "./game/store";
+import { CORAL_ROAD_X, CORAL_ROAD_Z, OVERLOOK, PIER_SPAWN } from "./world";
 import { WEATHER_META, cycleWeather } from "./game/weather";
 import { audioTick, initAudio, sfx, startMenuTheme, stopMenuTheme, toggleMute } from "./game/audio";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -49,14 +56,23 @@ const COARSE_POINTER = typeof window !== "undefined" && window.matchMedia("(poin
 
 interface FpState { on: boolean; yaw: number; pitch: number; }
 
-function CameraRig({ target, camFar, fp }: { target: RefObject<THREE.Vector3>; camFar: RefObject<boolean>; fp: RefObject<FpState> }) {
+function CameraRig({ target, camFar, fp, orbit }: { target: RefObject<THREE.Vector3>; camFar: RefObject<boolean>; fp: RefObject<FpState>; orbit: boolean }) {
   const controls = useRef<ComponentRef<typeof OrbitControls> | null>(null);
   const { camera } = useThree();
   useFrame((_, delta) => {
     if (!target.current) return;
     const cam = camera as THREE.PerspectiveCamera;
-    // ---- Phase 3: first-person (V). Head-height camera; drag to look.
-    if (fp.current?.on) {
+    // impact shake (collision-driven amplitude, gated by the shake setting)
+    const applyShake = () => {
+      if (G.settings.shake && G.shakeAmp > 0.004) {
+        camera.position.x += (Math.random() - 0.5) * G.shakeAmp * 0.35;
+        camera.position.y += (Math.random() - 0.5) * G.shakeAmp * 0.3;
+        G.shakeAmp *= Math.exp(-5.5 * delta);
+      }
+    };
+    // ---- first-person (V) and photo mode: head-height, drag to look.
+    // Gyro gently trims yaw on foot (±~10°) when enabled.
+    if (fp.current?.on || G.photoMode) {
       if (controls.current) controls.current.enabled = false;
       const car = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
       const base = car ? car.state.heading : G.playerHeading;
@@ -64,22 +80,46 @@ function CameraRig({ target, camFar, fp }: { target: RefObject<THREE.Vector3>; c
       tmpV.copy(target.current); tmpV.y += headY;
       if (car) { tmpV.x += Math.sin(base) * 0.15; tmpV.z += Math.cos(base) * 0.15; }
       camera.position.copy(tmpV);
-      const h = base + fp.current.yaw; const p = fp.current.pitch;
+      const f = fp.current ?? { yaw: 0, pitch: 0 };
+      const h = base + f.yaw + (car ? 0 : gyroYawTrim()); const p = f.pitch;
       const cp = Math.cos(p);
       camera.lookAt(tmpV.x + Math.sin(h) * cp, tmpV.y + Math.sin(p), tmpV.z + Math.cos(h) * cp);
-      if (Math.abs(cam.fov - 62) > 0.4) { cam.fov += (62 - cam.fov) * 0.2; cam.updateProjectionMatrix(); }
+      const fpFov = G.settings.fov + 4;
+      if (Math.abs(cam.fov - fpFov) > 0.4) { cam.fov += (fpFov - cam.fov) * 0.2; cam.updateProjectionMatrix(); }
+      applyShake();
       return;
     }
     if (!controls.current) return;
     if (!controls.current.enabled) controls.current.enabled = true;
     tmpV.copy(target.current); tmpV.y += 1.1;
     controls.current.target.lerp(tmpV, 1 - Math.exp(-5 * delta));
-    controls.current.maxDistance = G.interior ? 6.5 : camFar.current ? 26 : 15;
-    const targetFov = 58 + Math.min(14, G.speedKph / 9);
+    controls.current.autoRotate = orbit;
+    controls.current.autoRotateSpeed = 0.65;
+    controls.current.maxDistance = orbit ? 8 : G.interior ? 6.5 : camFar.current ? 26 : 15;
+    controls.current.minDistance = orbit ? 5 : 4;
+    const targetFov = G.settings.fov + Math.min(14, G.speedKph / 9);
     if (Math.abs(cam.fov - targetFov) > 0.4) { cam.fov += (targetFov - cam.fov) * 0.08; cam.updateProjectionMatrix(); }
     controls.current.update();
+    applyShake();
   });
   return <OrbitControls ref={controls} makeDefault enablePan={false} minDistance={4} maxDistance={18} maxPolarAngle={Math.PI / 2.05} />;
+}
+
+/** Photo-mode capture: renders one frame then downloads the canvas PNG. */
+function PhotoCapture({ shotRef }: { shotRef: RefObject<number> }) {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+  const done = useRef(0);
+  useFrame(() => {
+    if (!shotRef.current || shotRef.current === done.current) return;
+    done.current = shotRef.current;
+    gl.render(scene, camera);
+    const url = gl.domElement.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url; a.download = "harborfall-photo.png"; a.click();
+  });
+  return null;
 }
 function RemoteAvatar({ player }: { player: RemotePlayer }) {
   const root = useRef<THREE.Group>(null);
@@ -104,8 +144,8 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist" };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -124,7 +164,26 @@ const LOAD_TIPS = [
   "Lina's Garage and Club Solace have doors now. Walk up and press E.",
   "Save $7,500 and the villa at Sable Heights is yours — park in its drive to keep a car for good.",
   "Deep water past the wet sand? You can swim — just paddle back to shore.",
+  "The Bay Bridge is open — Coral Shores waits across the water: new streets, a pawn shop, new cars.",
+  "Press G at the villa garage or Lina's to swap between your stored cars.",
+  "Sneak up BEHIND a pedestrian and press E to pickpocket. Crouch (X) first and you're harder to spot.",
+  "Hold E at a shop till to rob it — the alarm means 2 stars, so run. Fence loot at Coral Pawn.",
+  "Hold E on a locked car to break in — alarms are loud and witnesses talk.",
+  "On a phone? Tap GYRO and tilt to steer. Buttons still work as backup.",
+  "Your phone has a Camera app now — photo mode hides the HUD for clean shots.",
 ];
+/** Interaction prompt pill: pulls a leading key ("E — …", "Press E — …",
+ * "Hold E — …", "G — …") out into a keyboard-key cap. */
+function PromptPill({ text, warn }: { text: string; warn?: boolean }) {
+  const m = text.match(/^(?:Press\s+)?(Hold\s+)?([A-Z])\s+—\s+(.*)$/);
+  if (!m) return <p className={`interaction-prompt ${warn ? "warn" : ""}`}>{text}</p>;
+  return (
+    <p className={`interaction-prompt ${warn ? "warn" : ""}`}>
+      <span className="keycap">{m[2]}</span>{m[1] ? "Hold · " : ""}{m[3]}
+    </p>
+  );
+}
+
 function FirstFrame({ onReady }: { onReady: () => void }) {
   const done = useRef(false);
   useFrame(() => { if (!done.current) { done.current = true; onReady(); } });
@@ -165,6 +224,15 @@ export default function App() {
   const [ending, setEnding] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
+  // ---- Phase 4 state: character select, garage panel, photo mode, debrief
+  const [charChoice, setCharChoice] = useState(loadCharacterChoice);
+  const [charOpen, setCharOpen] = useState(false);
+  const [garageZoneId, setGarageZoneId] = useState<string | null>(null);
+  const [photoMode, setPhotoMode] = useState(false);
+  const [postFx, setPostFx] = useState(G.settings.postFx);
+  const [missionResult, setMissionResult] = useState<typeof G.missionResult>(null);
+  const photoShotRef = useRef(0);
+  const lastMissionAt = useRef(0);
   const [sceneReady, setSceneReady] = useState(false);
   const [minWait, setMinWait] = useState(false);
   const [tipIdx, setTipIdx] = useState(0);
@@ -215,7 +283,7 @@ export default function App() {
     banner: showBanner,
     storyFinished: () => setEnding(true),
     event: (name) => {
-      if (name === "shake") { setShake(true); window.setTimeout(() => setShake(false), 320); }
+      if (name === "shake") { if (G.settings.shake) { setShake(true); window.setTimeout(() => setShake(false), 320); } G.shakeAmp = Math.max(G.shakeAmp, 0.3); }
       if (name === "crime") multiplayerRef.current?.sendEvent("crime", { wanted: G.wanted });
       if (name === "missionEnd") multiplayerRef.current?.sendEvent("mission", { storyIndex: M.storyIndex, cash: G.cash });
     },
@@ -224,10 +292,53 @@ export default function App() {
   const respawn = useCallback(() => {
     if (G.status === "busted") resetAfterArrest(150 + G.wanted * 50);
     else resetAfterWasted();
-    G.status = ""; playerPositionRef.current.copy(G.playerPos);
+    G.status = ""; G.crouched = false; playerPositionRef.current.copy(G.playerPos);
   }, []);
   const respawnRef = useRef(respawn); respawnRef.current = respawn;
   const startMissionRef = useRef(startMission); startMissionRef.current = startMission;
+  const postFxRef = useRef(G.settings.postFx);
+
+  // ---- Phase 4: character select open/close ----
+  const savedPosRef = useRef<{ x: number; z: number } | null>(null);
+  const tryOpenCharSelect = useCallback(() => {
+    if (dialogueRef.current || G.status) return;
+    if (started && M.active && M.phase === "play") { gameToast("Can't change character mid-mission"); return; }
+    if (!started) {
+      savedPosRef.current = { x: G.playerPos.x, z: G.playerPos.z };
+      G.playerPos.set(OVERLOOK.x + 3, 0, OVERLOOK.z + 7);
+      G.followPos.set(OVERLOOK.x + 3, 0, OVERLOOK.z + 7);
+      G.playerHeading = 2.6;
+    }
+    setCharOpen(true);
+  }, [started]);
+  const tryOpenCharSelectRef = useRef(tryOpenCharSelect); tryOpenCharSelectRef.current = tryOpenCharSelect;
+  const closeCharSelect = useCallback(() => {
+    setCharOpen(false);
+    if (!started && savedPosRef.current) {
+      G.playerPos.set(PIER_SPAWN.x, 0, PIER_SPAWN.z);
+      G.followPos.set(PIER_SPAWN.x, 0, PIER_SPAWN.z);
+      G.playerHeading = Math.PI;
+      savedPosRef.current = null;
+    }
+  }, [started]);
+  const pickCharacter = useCallback((id: string) => {
+    setCharChoice((c) => { const next = { id, variant: c.variant }; persistCharacterChoice(next.id, next.variant); return next; });
+    sfx.click();
+  }, []);
+  const pickVariant = useCallback((v: number) => {
+    setCharChoice((c) => { const next = { id: c.id, variant: v }; persistCharacterChoice(next.id, next.variant); return next; });
+    sfx.click();
+  }, []);
+
+  // ---- PDF delta B: photo mode ----
+  const enterPhotoMode = useCallback(() => {
+    setPhoneOpen(false);
+    G.photoMode = true; setPhotoMode(true);
+    fpRef.current.yaw = 0; fpRef.current.pitch = 0;
+    gameToast("Photo mode — drag to look, Enter captures");
+  }, []);
+  const exitPhotoMode = useCallback(() => { G.photoMode = false; setPhotoMode(false); }, []);
+  const capturePhoto = useCallback(() => { photoShotRef.current += 1; sfx.click(); }, []);
 
   // multiplayer connect (optional; game is fully playable offline)
   const connectToRoom = useCallback((room: string) => {
@@ -262,25 +373,43 @@ export default function App() {
     const drawMap = (cv: HTMLCanvasElement | null, size: number) => {
       if (!cv) return;
       const g = cv.getContext("2d"); if (!g) return;
-      const mm = theme.minimap; const S = size / 260;
+      const mm = theme.minimap;
+      // world → map: covers Port Sable + the bay + Coral Shores
+      // (x −145..165, z −130..340 around centre (10, 105))
+      const S = size / 480;
+      const mx = (x: number) => (x - 10) * S + size / 2;
+      const mz = (z: number) => (z - 105) * S + size / 2;
       g.fillStyle = mm.bg; g.fillRect(0, 0, size, size);
-      g.strokeStyle = mm.road; g.lineWidth = 5 * S;
+      // water: the bay band + around Coral island
+      g.fillStyle = "#2c5d84";
+      g.fillRect(0, mz(128), size, mz(196) - mz(128));
+      g.fillRect(0, mz(324), size, size - mz(324));
+      g.fillRect(0, mz(196), mx(28), mz(324) - mz(196));
+      g.fillRect(mx(112), mz(196), size - mx(112), mz(324) - mz(196));
+      // Coral Shores landmass
+      g.fillStyle = mm.bg; g.fillRect(mx(28), mz(196), (112 - 28) * S, (324 - 196) * S);
+      g.strokeStyle = mm.road; g.lineWidth = Math.max(1.5, 5 * S);
       for (const c of ROAD_COORDS) {
-        g.beginPath(); g.moveTo((c + 130) * S, 0); g.lineTo((c + 130) * S, size); g.stroke();
-        g.beginPath(); g.moveTo(0, (c + 130) * S); g.lineTo(size, (c + 130) * S); g.stroke();
+        g.beginPath(); g.moveTo(mx(c), mz(-124)); g.lineTo(mx(c), mz(128)); g.stroke();
+        g.beginPath(); g.moveTo(mx(-124), mz(c)); g.lineTo(mx(124), mz(c)); g.stroke();
       }
-      g.fillStyle = "#3b82c4"; g.fillRect(0, (128 + 130) * S - 3, size, 5 * S); // water edge
-      const dot = (x: number, z: number, col: string, r: number) => { g.fillStyle = col; g.beginPath(); g.arc((x + 130) * S, (z + 130) * S, r * S, 0, 7); g.fill(); };
+      for (const c of CORAL_ROAD_X) { g.beginPath(); g.moveTo(mx(c), mz(200)); g.lineTo(mx(c), mz(320)); g.stroke(); }
+      for (const c of CORAL_ROAD_Z) { g.beginPath(); g.moveTo(mx(32), mz(c)); g.lineTo(mx(108), mz(c)); g.stroke(); }
+      // the bridge
+      g.strokeStyle = "#d9d4c5"; g.lineWidth = Math.max(1.5, 4 * S);
+      g.beginPath(); g.moveTo(mx(60), mz(112)); g.lineTo(mx(60), mz(214)); g.stroke();
+      const dot = (x: number, z: number, col: string, r: number) => { g.fillStyle = col; g.beginPath(); g.arc(mx(x), mz(z), Math.max(1.4, r * S * 2.2), 0, 7); g.fill(); };
       for (const st of FUEL_STATIONS) dot(st.x, st.z, "#ffb703", 3); // fuel pumps
-      for (const c of G.cars) dot(c.state.x, c.state.z, mm.car, 2.4);
+      for (const c of G.cars) if (!c.storedAway) dot(c.state.x, c.state.z, mm.car, 2.4);
       for (const c of G.traffic) dot(c.x, c.z, mm.car, 2);
       for (const c of G.cops) if (c.active) dot(c.x, c.z, mm.police, 3.4);
       if (G.objective && M.phase === "play") dot(G.objective.x, G.objective.z, mm.marker, 4);
       // player arrow
-      const px = (G.followPos.x + 130) * S, pz = (G.followPos.z + 130) * S;
+      const px = mx(G.followPos.x), pz = mz(G.followPos.z);
       const h = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.heading : playerRotationRef.current.y;
       g.save(); g.translate(px, pz); g.rotate(h); g.fillStyle = mm.player;
-      g.beginPath(); g.moveTo(0, -6 * S); g.lineTo(4 * S, 5 * S); g.lineTo(-4 * S, 5 * S); g.closePath(); g.fill(); g.restore();
+      const as = Math.max(3, 6 * S * 2.2);
+      g.beginPath(); g.moveTo(0, -as); g.lineTo(as * 0.66, as * 0.83); g.lineTo(-as * 0.66, as * 0.83); g.closePath(); g.fill(); g.restore();
     };
     const id = window.setInterval(() => {
       const px = G.followPos.x, pz = G.followPos.z;
@@ -296,7 +425,17 @@ export default function App() {
         weather: G.weather, weatherIcon: WEATHER_META[G.weather].icon,
         fuel: myCar ? Math.round(myCar.fuel) : 100, damage: myCar ? Math.round(myCar.damage) : 0,
         ammo: G.ammo, armed: G.armed, prompt: G.promptText, promptWarn: G.promptWarn,
+        loot: stashTotal(), lootCount: G.inventory.length, eye: G.stealthEye,
+        holdLabel: G.hold?.label ?? "", holdP: G.hold?.progress ?? 0, weapon: G.weaponSel,
       });
+      // Phase 4/V6: mission debrief + phone-driven requests + settings sync
+      if (G.missionResult && G.missionResult.at !== lastMissionAt.current) {
+        lastMissionAt.current = G.missionResult.at;
+        setMissionResult(G.missionResult);
+        window.setTimeout(() => setMissionResult((r) => (r && r.at === lastMissionAt.current ? null : r)), 9000);
+      }
+      if (G.requestCharSelect) { G.requestCharSelect = false; tryOpenCharSelectRef.current(); }
+      if (G.settings.postFx !== postFxRef.current) { postFxRef.current = G.settings.postFx; setPostFx(G.settings.postFx); }
       if (G.toastAt !== lastToastAt.current) { lastToastAt.current = G.toastAt; if (G.toast) showPopup(G.toast); }
       if (G.health < prevHud.current.health) { setFlash(true); window.setTimeout(() => setFlash(false), 350); }
       if (G.wanted > prevHud.current.wanted) { setStarPulse(true); window.setTimeout(() => setStarPulse(false), 900); }
@@ -320,8 +459,24 @@ export default function App() {
         if (key === "e" || key === "enter" || key === " ") { e.preventDefault(); advanceDialogue(); }
         return;
       }
+      // Phase 4/V6: mission debrief dismiss
+      if (missionResult && (key === "enter" || key === "e")) { e.preventDefault(); setMissionResult(null); return; }
+      // PDF delta B: photo mode owns H / U / Enter / Esc while active
+      if (G.photoMode) {
+        if (key === "h" || key === "u" || key === "escape") { e.preventDefault(); exitPhotoMode(); }
+        else if (key === "enter") { e.preventDefault(); capturePhoto(); }
+        return;
+      }
+      if (charOpen && (key === "escape" || key === "enter")) { e.preventDefault(); closeCharSelect(); return; }
+      if (garageZoneId && key === "escape") { e.preventDefault(); setGarageZoneId(null); return; }
       // Phase 3: contextual E (doors, mansion gate) — set by Interiors
       if (key === "e" && G.interact) { e.preventDefault(); G.interact(); return; }
+      if (key === "g" && started && G.garageZone) { e.preventDefault(); setGarageZoneId(G.garageZone.id); sfx.click(); return; }
+      if ((key === "q" || key === "tab") && started) {
+        e.preventDefault();
+        if (G.armed) { G.weaponSel = G.weaponSel === "pistol" ? "fist" : "pistol"; showPopup(G.weaponSel === "pistol" ? "Weapon: pistol" : "Weapon: fists"); }
+        return;
+      }
       if (key === "v") {
         const fp = fpRef.current;
         fp.on = !fp.on; fp.yaw = 0; fp.pitch = 0;
@@ -346,7 +501,7 @@ export default function App() {
     };
     window.addEventListener("keydown", down);
     return () => window.removeEventListener("keydown", down);
-  }, [advanceDialogue, applyTheme, showHelp, showPopup, theme]);
+  }, [advanceDialogue, applyTheme, showHelp, showPopup, theme, missionResult, charOpen, garageZoneId, started, exitPhotoMode, capturePhoto, closeCharSelect]);
 
   // first-person drag-look (mouse or touch drag while FP is on)
   useEffect(() => {
@@ -360,7 +515,7 @@ export default function App() {
     return () => window.removeEventListener("pointermove", move);
   }, []);
 
-  const effectivePaused = paused || !!dialogue || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen;
+  const effectivePaused = paused || !!dialogue || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen || charOpen || !!garageZoneId;
   // ---- poster loading screen: real first-frame signal + minimum display ----
   const loaded = sceneReady && minWait;
   useEffect(() => { const id = window.setTimeout(() => setMinWait(true), 1800); return () => window.clearTimeout(id); }, []);
@@ -398,7 +553,7 @@ export default function App() {
   }, [started]);
 
   const startGame = (story: boolean) => {
-    initAudio(); sfx.playStart(); stopMenuTheme(); setStarted(true);
+    initAudio(); sfx.playStart(); stopMenuTheme(); setStarted(true); setCharOpen(false); savedPosRef.current = null;
     if (story && M.storyIndex === 0 && !localStorage.getItem("harborfall-intro")) setIntroIdx(0);
     else if (story && M.storyIndex < 6) startMission(STORY_MISSIONS[M.storyIndex]);
   };
@@ -417,17 +572,21 @@ export default function App() {
           <Vehicle playerPositionRef={playerPositionRef} vehiclePositionRef={vehiclePositionRef} vehicleStateRef={vehicleStateRef}
             driving={driving} paused={effectivePaused} onDrivingChange={setDriving} onExit={exitVehicle}
             onNearVehicleChange={setNearVehicle} physicsRef={physicsRef} themeAccent={theme.carAccent} />
-          <Player positionRef={playerPositionRef} rotationRef={playerRotationRef} driving={driving} paused={effectivePaused} shirt={theme.shirt} />
+          <Player positionRef={playerPositionRef} rotationRef={playerRotationRef} driving={driving} paused={effectivePaused}
+            preset={presetById(charChoice.id)} variant={charChoice.variant} showcase={charOpen} />
           <GameSystems paused={effectivePaused} physicsRef={physicsRef} theme={theme} cb={sysCb} tokenCountRef={tokenCountRef} />
           <Weather paused={effectivePaused} theme={theme} />
           <Combat enabled={started && !effectivePaused} />
           <Interiors />
+          <Interactions />
+          <PhotoCapture shotRef={photoShotRef} />
           <FirstFrame onReady={() => setSceneReady(true)} />
           {players.map((pl) => <RemoteAvatar key={pl.playerId} player={pl} />)}
-          <CameraRig target={followRef} camFar={camFar} fp={fpRef} />
+          <CameraRig target={followRef} camFar={camFar} fp={fpRef} orbit={charOpen} />
           {/* Phase 3 film grade: bloom + warm grade + grain + vignette +
-              SMAA. Skipped entirely on coarse pointers (mobile) for fps. */}
-          {!COARSE_POINTER && (
+              SMAA. Skipped entirely on coarse pointers (mobile) for fps,
+              and when the player turns Post FX off in Settings. */}
+          {!COARSE_POINTER && postFx && (
             <EffectComposer multisampling={0}>
               <>
                 <Bloom intensity={0.55} luminanceThreshold={0.55} luminanceSmoothing={0.25} mipmapBlur />
@@ -443,41 +602,86 @@ export default function App() {
       </Canvas>
 
       {flash && <div className="damage-flash" />}
-      {started && !hud.status && (
+      {started && !hud.status && !photoMode && (
         <section className="hud" aria-label="Game status">
           <div className="hud-topleft">
             <div className="hud-brand">HARBOR<span>FALL</span></div>
-            <div className="hud-meta">{hud.district} · Port Sable · {theme.name}{hud.storyDone ? " · ★ Story Complete" : ""}</div>
+            <div className="hud-meta">{hud.district} · {theme.name}{hud.storyDone ? " · Story Complete" : ""}</div>
             <div className="weather-chip" title="Weather (Y to change)">{hud.weatherIcon} {hud.weather}</div>
             <canvas ref={minimapRef} className="minimap" width={148} height={148} aria-label="Minimap" />
-            <div className="health-wrap"><div className="health-bar" style={{ width: `${hud.health}%` }} /><span>HP {hud.health}</span></div>
+            <div className="health-wrap"><div className="health-bar" style={{ width: `${hud.health}%` }} /><span>{hud.health}</span></div>
             {hud.bust > 0.2 && <div className="bust-bar"><div style={{ width: `${Math.min(100, (hud.bust / 3) * 100)}%` }} /></div>}
+            {hud.eye && <div className={`stealth-eye ${hud.eye}`}>{hud.eye === "open" ? "◉ SEEN" : "◎ HIDDEN"}</div>}
           </div>
           <div className="hud-topright">
             <div className={`stars ${starPulse ? "pulse" : ""}`} aria-label={`Wanted ${hud.wanted} stars`}>
               {[1, 2, 3, 4, 5].map((i) => <span key={i} className={i <= hud.wanted ? "on" : ""}>★</span>)}
             </div>
             <div className="cash">${hud.cash.toLocaleString()}</div>
-            {hud.armed && <div className="ammo-chip" title="Pistol ammo — click or J to fire">🔫 {hud.ammo}</div>}
+            {hud.lootCount > 0 && <div className="loot-chip" title="Stolen goods — fence them at Coral Pawn or Lina's">⚿ ${hud.loot.toLocaleString()} <span>· {hud.lootCount} item{hud.lootCount > 1 ? "s" : ""}</span></div>}
+            {hud.armed && hud.weapon === "pistol" && <div className="ammo-chip" title="Pistol ammo — click or J to fire">PISTOL · {hud.ammo}</div>}
             <div className="hud-meta">Tokens {hud.tokens}/6 · {players.length + 1} player{players.length ? "s" : ""}</div>
           </div>
           {hud.objective && (
-            <div className="objective-banner"><b>{M.active?.title}</b> — {hud.objective}{hud.dist ? ` · ${hud.dist}m` : ""}{M.phase === "play" ? ` · ⏱ ${Math.floor(hud.timer / 60)}:${String(hud.timer % 60).padStart(2, "0")}` : ""}</div>
+            <div className="objective-banner"><span className="objective-label">{M.active?.title}</span>{hud.objective}{hud.dist ? ` · ${hud.dist}m` : ""}{M.phase === "play" ? ` · ${Math.floor(hud.timer / 60)}:${String(hud.timer % 60).padStart(2, "0")}` : ""}</div>
           )}
-          {nearVehicle && !driving && <p className="interaction-prompt">Press <b>E</b> to enter the car</p>}
-          {hud.prompt && <p className={`interaction-prompt ${hud.promptWarn ? "warn" : ""}`}>{hud.prompt}</p>}
+          <div className="prompt-stack">
+            {nearVehicle && !driving && !hud.prompt && <p className="interaction-prompt"><span className="keycap">E</span>Enter car<span className="prompt-sub">hold — break in</span></p>}
+            {hud.prompt && <PromptPill text={hud.prompt} warn={hud.promptWarn} />}
+            {hud.holdLabel && (
+              <div className="hold-bar"><span>{hud.holdLabel}</span><div className="hold-track"><div style={{ width: `${hud.holdP * 100}%` }} /></div></div>
+            )}
+          </div>
           {driving && <div className="speedo"><div className="speedo-arc" style={{ ["--speed" as string]: `${Math.min(100, hud.speed / 1.4)}%` }} /><strong>{hud.speed}</strong><span>km/h</span></div>}
+          {hud.armed && !driving && (
+            <button type="button" className="weapon-chip" onClick={() => { G.weaponSel = G.weaponSel === "pistol" ? "fist" : "pistol"; }}>
+              <span className="keycap">Q</span>{hud.weapon === "pistol" ? "PISTOL" : "FISTS"}
+            </button>
+          )}
           {driving && (
             <div className="car-bars">
-              <div className="car-bar"><span>⛽</span><div className="car-bar-track"><div className={`car-bar-fill fuel ${hud.fuel < 20 ? "low" : ""}`} style={{ width: `${hud.fuel}%` }} /></div><b>{hud.fuel}%</b></div>
-              <div className="car-bar"><span>🔧</span><div className="car-bar-track"><div className={`car-bar-fill dmg ${hud.damage > 60 ? "bad" : ""}`} style={{ width: `${hud.damage}%` }} /></div><b>{hud.damage}%</b></div>
+              <div className="car-bar"><span>FUEL</span><div className="car-bar-track"><div className={`car-bar-fill fuel ${hud.fuel < 20 ? "low" : ""}`} style={{ width: `${hud.fuel}%` }} /></div><b>{hud.fuel}%</b></div>
+              <div className="car-bar"><span>DMG</span><div className="car-bar-track"><div className={`car-bar-fill dmg ${hud.damage > 60 ? "bad" : ""}`} style={{ width: `${hud.damage}%` }} /></div><b>{hud.damage}%</b></div>
             </div>
           )}
-          <button type="button" className="phone-fab" aria-label="Open phone (U)" onClick={() => setPhoneOpen(true)}>📱</button>
+          <button type="button" className="phone-fab" aria-label="Open phone (U)" onClick={() => setPhoneOpen(true)}>▣</button>
           {popup && <div className="cash-popup">{popup}</div>}
           {banner && <div className={`mission-banner ${banner.ok ? "ok" : "bad"}`}>{banner.text}</div>}
-          <div className="controls"><b>WASD</b> Move <i /><b>E/F</b> Car · Doors <i /><b>V</b> 1st person <i /><b>Click/J</b> Punch · Fire <i /><b>T</b> Theme <i /><b>M</b> Map <i /><b>H</b> Help <i /><b>ESC/P</b> Pause</div>
+          <div className="controls"><b>WASD</b> Move <i /><b>E</b> Interact · hold: rob / break in <i /><b>G</b> Garage <i /><b>X</b> Crouch <i /><b>Q</b> Weapon <i /><b>V</b> 1st person <i /><b>U</b> Phone <i /><b>M</b> Map <i /><b>ESC</b> Pause</div>
         </section>
+      )}
+
+      {photoMode && started && (
+        <div className="photo-bar">
+          <span>Photo mode — H or U to exit · drag to look</span>
+          <button type="button" onClick={capturePhoto}>Capture ⏎</button>
+        </div>
+      )}
+
+      {missionResult && started && (
+        <div className="debrief glass" role="dialog" aria-label="Mission debrief">
+          <div className={`debrief-kicker ${missionResult.ok ? "ok" : "bad"}`}>{missionResult.ok ? "MISSION COMPLETE" : "MISSION FAILED"}</div>
+          <div className="debrief-title">{missionResult.title}</div>
+          {missionResult.ok ? (
+            <div className="debrief-lines">
+              <div><span>Reward</span><b>+${missionResult.reward.toLocaleString()}</b></div>
+              {missionResult.timeLeft > 0 && <div><span>Time remaining</span><b>{Math.floor(missionResult.timeLeft / 60)}:{String(missionResult.timeLeft % 60).padStart(2, "0")}</b></div>}
+              <div><span>Balance</span><b>${hud.cash.toLocaleString()}</b></div>
+            </div>
+          ) : (
+            <div className="debrief-lines"><div><span>Reason</span><b>{missionResult.reason}</b></div></div>
+          )}
+          <button type="button" className="debrief-btn" onClick={() => setMissionResult(null)}>Continue ⏎</button>
+        </div>
+      )}
+
+      {garageZoneId && (
+        <GaragePanel zoneId={garageZoneId} onClose={() => setGarageZoneId(null)} />
+      )}
+      {charOpen && (
+        <CharacterSelect selectedId={charChoice.id} variant={charChoice.variant} started={started}
+          onSelect={pickCharacter} onVariant={pickVariant}
+          onDone={() => { if (started) closeCharSelect(); else { closeCharSelect(); startGame(true); } }} />
       )}
 
       <button type="button" className="panel-toggle" onClick={() => setPanelOpen((v) => !v)}>☰ Panel</button>
@@ -527,6 +731,8 @@ export default function App() {
 
       <Phone open={phoneOpen && started} onClose={() => setPhoneOpen(false)} theme={theme} applyTheme={applyTheme}
         onOpenMap={() => { setPhoneOpen(false); setBigMap(true); }}
+        onPhotoMode={enterPhotoMode}
+        onChangeCharacter={() => { setPhoneOpen(false); G.requestCharSelect = true; }}
         onContact={(name, line, hint) => { setPhoneOpen(false); beginDialogue([{ who: name, text: line }, { who: name, text: hint }], () => {}); }} />
 
       {!started && (
@@ -553,6 +759,7 @@ export default function App() {
                 <div className="start-actions">
                   <button type="button" className="big-btn" onClick={() => startGame(true)}>▶ Play Story</button>
                   <button type="button" className="big-btn ghost" onClick={() => startGame(false)}>Free Roam</button>
+                  <button type="button" className="big-btn ghost" onClick={() => tryOpenCharSelect()}>Character</button>
                 </div>
                 <p className="press-enter">Press <b>Enter</b> / tap Play to start</p>
                 <button type="button" className="how-toggle" onClick={() => setShowHow((v) => !v)}>{showHow ? "Hide" : "How to play + story"}</button>
@@ -642,8 +849,16 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <h3 className="settings-head">Settings</h3>
+            <div className="settings-list">
+              <label><span>Camera shake</span><input type="checkbox" checked={G.settings.shake} onChange={(e) => { G.settings.shake = e.target.checked; persistSettings(); showPopup(`Camera shake ${e.target.checked ? "on" : "off"}`); }} /></label>
+              <label><span>Post FX (bloom / grade)</span><input type="checkbox" checked={postFx} onChange={(e) => { G.settings.postFx = e.target.checked; persistSettings(); setPostFx(e.target.checked); }} /></label>
+              <label><span>Shadows</span><input type="checkbox" checked={G.settings.shadows} onChange={(e) => { G.settings.shadows = e.target.checked; persistSettings(); showPopup(`Shadows ${e.target.checked ? "on" : "off"}`); }} /></label>
+              <label><span>Field of view · {G.settings.fov}°</span><input type="range" min={50} max={75} step={1} defaultValue={G.settings.fov} onChange={(e) => { G.settings.fov = Number(e.target.value); persistSettings(); }} /></label>
+            </div>
             <div className="dialog-actions">
               <button type="button" className="primary" onClick={() => setPaused(false)}>Resume</button>
+              <button type="button" onClick={() => { setPaused(false); G.requestCharSelect = true; }}>Change character</button>
               <button type="button" onClick={() => setShowHelp(true)}>Shortcuts</button>
             </div>
           </section>
@@ -659,6 +874,12 @@ export default function App() {
               <div><dt>WASD / Arrows</dt><dd>Move</dd></div><div><dt>Shift</dt><dd>Sprint</dd></div>
               <div><dt>Space</dt><dd>Jump</dd></div><div><dt>E / F</dt><dd>Enter car · doors · buy · advance dialogue</dd></div>
               <div><dt>Click / J</dt><dd>Punch — or fire the pistol once you find one</dd></div>
+              <div><dt>Q / Tab</dt><dd>Weapon selector — fists ↔ pistol</dd></div>
+              <div><dt>X / Ctrl</dt><dd>Crouch — slower, stealthier pickpockets, harder to spot</dd></div>
+              <div><dt>Behind a ped + E</dt><dd>Pickpocket (cash or loot for your stash)</dd></div>
+              <div><dt>Hold E</dt><dd>Rob a shop till (3s) · break into a locked car (1.5s)</dd></div>
+              <div><dt>G</dt><dd>Garage car select (villa garage / Lina's)</dd></div>
+              <div><dt>R (in car, at garage)</dt><dd>Repair damage + broken windows for cash</dd></div>
               <div><dt>V</dt><dd>First-person camera (drag to look) — works in cars too</dd></div>
               <div><dt>Swim</dt><dd>Wade past the wet sand and you swim; paddle to shore to climb out</dd></div>
             </dl>

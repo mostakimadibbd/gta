@@ -161,10 +161,23 @@ export function facadeTexture(): THREE.CanvasTexture {
   g.fillStyle = "rgba(60,58,54,0.35)";
   for (let y = 0; y <= 512; y += 64) { g.fillRect(0, y, 512, 2); g.fillStyle = "rgba(255,255,255,0.20)"; g.fillRect(0, y + 2, 512, 1); g.fillStyle = "rgba(60,58,54,0.35)"; }
   for (let row = 0; row < 8; row++) for (let x = (row % 2) * 128; x <= 512; x += 256) g.fillRect(x, row * 64, 2, 64);
-  // weather streaks
-  for (let i = 0; i < 26; i++) {
-    g.fillStyle = `rgba(90,85,78,${0.03 + rnd() * 0.05})`;
-    g.fillRect(rnd() * 512, rnd() * 200, 2 + rnd() * 4, 120 + rnd() * 260);
+  // weather streaks — rain-washed grime running down from seams/rooflines
+  for (let i = 0; i < 44; i++) {
+    g.fillStyle = `rgba(90,85,78,${0.04 + rnd() * 0.07})`;
+    g.fillRect(rnd() * 512, rnd() * 200, 2 + rnd() * 5, 120 + rnd() * 300);
+  }
+  // water stains: soft vertical blotches with a darker drip tail
+  for (let i = 0; i < 12; i++) {
+    const x = rnd() * 512, y = rnd() * 300, w = 14 + rnd() * 30, h = 60 + rnd() * 160;
+    const sg = g.createLinearGradient(0, y, 0, y + h);
+    sg.addColorStop(0, `rgba(70,64,54,${0.10 + rnd() * 0.08})`); sg.addColorStop(1, "rgba(70,64,54,0)");
+    g.fillStyle = sg; g.fillRect(x, y, w, h);
+  }
+  // grime collected under each panel seam row (dirt sits on ledges)
+  for (let y = 64; y < 512; y += 64) {
+    const ug = g.createLinearGradient(0, y, 0, y + 14);
+    ug.addColorStop(0, "rgba(52,48,40,0.16)"); ug.addColorStop(1, "rgba(52,48,40,0)");
+    g.fillStyle = ug; g.fillRect(0, y, 512, 14);
   }
   // grime at the base
   const grad = g.createLinearGradient(0, 512, 0, 380);
@@ -474,6 +487,212 @@ export function oilTexture(): THREE.CanvasTexture {
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   _oil = t;
   return _oil;
+}
+
+// ================================================================
+// Phase 4 / Visual Upgrade V2 — procedural NORMAL + ROUGHNESS maps.
+// A height canvas is drawn per surface, then converted with a Sobel
+// filter into a tangent-space normal map. Data maps must NOT be sRGB.
+// ================================================================
+function finishData(c: HTMLCanvasElement, rx = 1, ry = 1): THREE.CanvasTexture {
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(rx, ry);
+  t.anisotropy = 4;
+  return t; // linear data — no colour space conversion
+}
+
+/** Sobel height→normal conversion. strength ~1.5–3 for architectural relief. */
+function normalFromHeight(height: HTMLCanvasElement, strength = 2): THREE.CanvasTexture {
+  const w = height.width, h = height.height;
+  const src = height.getContext("2d")!.getImageData(0, 0, w, h).data;
+  const [c, g] = canvas(w, h);
+  const img = g.createImageData(w, h);
+  const d = img.data;
+  const hv = (x: number, y: number) => src[(((y + h) % h) * w + ((x + w) % w)) * 4] / 255;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dx = (hv(x + 1, y - 1) + 2 * hv(x + 1, y) + hv(x + 1, y + 1)) - (hv(x - 1, y - 1) + 2 * hv(x - 1, y) + hv(x - 1, y + 1));
+    const dy = (hv(x, y + 1) + 2 * hv(x + 1, y + 1) + hv(x - 1, y + 1)) - (hv(x, y - 1) + 2 * hv(x + 1, y - 1) + hv(x - 1, y - 1));
+    let nx = -dx * strength, ny = dy * strength, nz = 1;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    const i = (y * w + x) * 4;
+    d[i] = ((nx / len) * 0.5 + 0.5) * 255;
+    d[i + 1] = ((ny / len) * 0.5 + 0.5) * 255;
+    d[i + 2] = ((nz / len) * 0.5 + 0.5) * 255;
+    d[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return finishData(c);
+}
+
+function heightCanvas(size: number, base: number, draw: (g: CanvasRenderingContext2D, rnd: () => number) => void, seed: number): HTMLCanvasElement {
+  const rnd = mulberry32(seed);
+  const [c, g] = canvas(size);
+  g.fillStyle = `rgb(${base},${base},${base})`; g.fillRect(0, 0, size, size);
+  // per-pixel grain
+  const img = g.getImageData(0, 0, size, size); const d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (rnd() - 0.5) * 26; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  g.putImageData(img, 0, 0);
+  draw(g, rnd);
+  return c;
+}
+
+let _asphaltN: THREE.CanvasTexture | undefined;
+export function asphaltNormal(): THREE.CanvasTexture {
+  if (_asphaltN) return _asphaltN;
+  _asphaltN = normalFromHeight(heightCanvas(512, 128, (g, rnd) => {
+    g.strokeStyle = "rgba(30,30,30,0.9)"; g.lineWidth = 2; // cracks sink
+    for (let i = 0; i < 9; i++) { let x = rnd() * 512, y = rnd() * 512; g.beginPath(); g.moveTo(x, y); for (let s = 0; s < 6; s++) { x += (rnd() - 0.5) * 70; y += rnd() * 42; g.lineTo(x, y); } g.stroke(); }
+    g.fillStyle = "rgba(70,70,70,0.5)"; // patched areas sit lower
+    for (let i = 0; i < 7; i++) { g.beginPath(); g.ellipse(rnd() * 512, rnd() * 512, 30 + rnd() * 60, 20 + rnd() * 40, rnd() * 3, 0, Math.PI * 2); g.fill(); }
+  }, 1101), 1.6);
+  return _asphaltN;
+}
+
+let _concreteN: THREE.CanvasTexture | undefined;
+export function concreteNormal(): THREE.CanvasTexture {
+  if (_concreteN) return _concreteN;
+  _concreteN = normalFromHeight(heightCanvas(512, 140, (g) => {
+    g.fillStyle = "rgba(28,28,28,1)"; // expansion joints are deep grooves
+    for (let i = 0; i <= 512; i += 128) { g.fillRect(i - 2, 0, 4, 512); g.fillRect(0, i - 2, 512, 4); }
+    g.fillStyle = "rgba(210,210,210,0.6)"; // chipped slab edges catch light
+    for (let i = 0; i <= 512; i += 128) { g.fillRect(i + 2, 0, 2, 512); g.fillRect(0, i + 2, 512, 2); }
+  }, 1202), 2.2);
+  return _concreteN;
+}
+
+let _facadeN: THREE.CanvasTexture | undefined;
+export function facadeNormal(): THREE.CanvasTexture {
+  if (_facadeN) return _facadeN;
+  _facadeN = normalFromHeight(heightCanvas(512, 150, (g, rnd) => {
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 4; col++) { // per-panel relief variance
+      const v = 138 + Math.floor((rnd() - 0.5) * 22);
+      g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(col * 128, row * 64, 128, 64);
+    }
+    g.fillStyle = "rgba(26,26,26,1)"; // panel seams
+    for (let y = 0; y <= 512; y += 64) g.fillRect(0, y - 1, 512, 3);
+    for (let row = 0; row < 8; row++) for (let x = (row % 2) * 128; x <= 512; x += 256) g.fillRect(x, row * 64, 3, 64);
+  }, 1303), 2.4);
+  return _facadeN;
+}
+
+let _brickN: THREE.CanvasTexture | undefined;
+export function brickNormal(): THREE.CanvasTexture {
+  if (_brickN) return _brickN;
+  _brickN = normalFromHeight(heightCanvas(512, 70, (g, rnd) => {
+    const bh = 21, bw = 62;
+    for (let row = 0; row * bh < 512; row++) {
+      const off = (row % 2) * (bw / 2);
+      for (let x = -1; x * bw < 512 + bw; x++) {
+        const v = 168 + Math.floor((rnd() - 0.5) * 26);
+        g.fillStyle = `rgb(${v},${v},${v})`;
+        g.fillRect(x * bw + off + 2, row * bh + 2, bw - 4, bh - 4);
+      }
+    }
+  }, 1404), 2.6);
+  return _brickN;
+}
+
+let _sandN: THREE.CanvasTexture | undefined;
+export function sandNormal(): THREE.CanvasTexture {
+  if (_sandN) return _sandN;
+  _sandN = normalFromHeight(heightCanvas(256, 128, (g, rnd) => {
+    for (let y = 0; y < 256; y++) { // wind ripples
+      const v = 128 + Math.sin(y * 0.55) * 26 + (rnd() - 0.5) * 10;
+      g.fillStyle = `rgba(${v},${v},${v},0.55)`; g.fillRect(0, y, 256, 1);
+    }
+  }, 1505), 1.4);
+  _sandN.repeat.set(24, 8);
+  return _sandN;
+}
+
+let _grassN: THREE.CanvasTexture | undefined;
+export function grassNormal(): THREE.CanvasTexture {
+  if (_grassN) return _grassN;
+  _grassN = normalFromHeight(heightCanvas(256, 120, (g, rnd) => {
+    g.strokeStyle = "rgba(215,215,215,0.8)"; g.lineWidth = 1; // blade tips
+    for (let i = 0; i < 900; i++) { const x = rnd() * 256, y = rnd() * 256; g.beginPath(); g.moveTo(x, y); g.lineTo(x + (rnd() - 0.5) * 3, y - 2 - rnd() * 3); g.stroke(); }
+  }, 1606), 1.8);
+  _grassN.repeat.set(60, 60);
+  return _grassN;
+}
+
+let _asphaltR: THREE.CanvasTexture | undefined;
+/** Roughness variation: polished tyre bands are smoother (darker = shinier). */
+export function asphaltRoughness(): THREE.CanvasTexture {
+  if (_asphaltR) return _asphaltR;
+  const rnd = mulberry32(1707);
+  const [c, g] = canvas(512);
+  g.fillStyle = "rgb(228,228,228)"; g.fillRect(0, 0, 512, 512); // mostly rough
+  const band = g.createLinearGradient(0, 0, 512, 0);
+  band.addColorStop(0.16, "rgba(0,0,0,0)"); band.addColorStop(0.25, "rgba(120,120,120,0.85)");
+  band.addColorStop(0.34, "rgba(0,0,0,0)"); band.addColorStop(0.66, "rgba(0,0,0,0)");
+  band.addColorStop(0.75, "rgba(120,120,120,0.85)"); band.addColorStop(0.84, "rgba(0,0,0,0)");
+  g.fillStyle = band; g.fillRect(0, 0, 512, 512); // wheel-polished lanes
+  g.fillStyle = "rgba(150,150,150,0.5)"; // damp patches read smoother
+  for (let i = 0; i < 6; i++) { g.beginPath(); g.ellipse(rnd() * 512, rnd() * 512, 26 + rnd() * 54, 16 + rnd() * 34, rnd() * 3, 0, Math.PI * 2); g.fill(); }
+  _asphaltR = finishData(c);
+  return _asphaltR;
+}
+
+let _concreteR: THREE.CanvasTexture | undefined;
+export function concreteRoughness(): THREE.CanvasTexture {
+  if (_concreteR) return _concreteR;
+  const rnd = mulberry32(1808);
+  const [c, g] = canvas(512);
+  g.fillStyle = "rgb(238,238,238)"; g.fillRect(0, 0, 512, 512);
+  g.fillStyle = "rgba(196,196,196,0.55)";
+  for (let i = 0; i < 9; i++) { g.beginPath(); g.ellipse(rnd() * 512, rnd() * 512, 20 + rnd() * 60, 14 + rnd() * 40, rnd() * 3, 0, Math.PI * 2); g.fill(); }
+  _concreteR = finishData(c);
+  return _concreteR;
+}
+
+// ---- shattered safety glass: dark pane + bright radial crack web --------
+let _shattered: THREE.CanvasTexture | undefined;
+export function shatteredTexture(): THREE.CanvasTexture {
+  if (_shattered) return _shattered;
+  const rnd = mulberry32(1909);
+  const [c, g] = canvas(256);
+  g.fillStyle = "#232e33"; g.fillRect(0, 0, 256, 256);
+  const cx = 90 + rnd() * 70, cy = 90 + rnd() * 70;
+  g.strokeStyle = "rgba(215,230,235,0.9)";
+  for (let i = 0; i < 26; i++) { // radial cracks from the impact point
+    const a = (i / 26) * Math.PI * 2 + rnd() * 0.2;
+    g.lineWidth = 1 + rnd();
+    g.beginPath(); g.moveTo(cx, cy);
+    let x = cx, y = cy;
+    for (let s = 0; s < 4; s++) { x += Math.cos(a + (rnd() - 0.5) * 0.5) * (22 + rnd() * 26); y += Math.sin(a + (rnd() - 0.5) * 0.5) * (22 + rnd() * 26); g.lineTo(x, y); }
+    g.stroke();
+  }
+  g.strokeStyle = "rgba(190,210,218,0.55)"; // concentric fracture rings
+  for (let r = 16; r < 130; r += 13 + rnd() * 10) { g.lineWidth = 0.8; g.beginPath(); g.arc(cx, cy, r, rnd() * 2, Math.PI * (1.1 + rnd() * 0.8)); g.stroke(); }
+  for (let i = 0; i < 500; i++) { g.fillStyle = `rgba(200,220,228,${0.1 + rnd() * 0.25})`; g.fillRect(rnd() * 256, rnd() * 256, 1.6, 1.6); }
+  _shattered = finish(c);
+  return _shattered;
+}
+
+// ---- car dirt/scratch overlay (alpha canvas; opacity keyed to damage) --
+let _carDirt: THREE.CanvasTexture | undefined;
+export function carDirtTexture(): THREE.CanvasTexture {
+  if (_carDirt) return _carDirt;
+  const rnd = mulberry32(2010);
+  const [c, g] = canvas(256);
+  g.clearRect(0, 0, 256, 256);
+  const dust = g.createLinearGradient(0, 90, 0, 256); // road dust settles low
+  dust.addColorStop(0, "rgba(112,96,74,0)"); dust.addColorStop(1, "rgba(112,96,74,0.85)");
+  g.fillStyle = dust; g.fillRect(0, 90, 256, 166);
+  for (let i = 0; i < 260; i++) { // mud/dust splatter
+    g.fillStyle = `rgba(${96 + rnd() * 40},${82 + rnd() * 30},${58 + rnd() * 22},${0.12 + rnd() * 0.3})`;
+    g.beginPath(); g.ellipse(rnd() * 256, 150 + rnd() * 106, 1 + rnd() * 4, 1 + rnd() * 2.4, rnd() * 3, 0, Math.PI * 2); g.fill();
+  }
+  g.strokeStyle = "rgba(226,226,220,0.75)"; // key/panel scratches
+  for (let i = 0; i < 16; i++) {
+    g.lineWidth = 0.7 + rnd() * 0.7;
+    const y = 60 + rnd() * 150, x = rnd() * 200;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 18 + rnd() * 44, y + (rnd() - 0.5) * 7); g.stroke();
+  }
+  _carDirt = finish(c);
+  return _carDirt;
 }
 
 // ---- cloud puffs: overlapping soft blobs, warm-white (tinted at runtime) ----

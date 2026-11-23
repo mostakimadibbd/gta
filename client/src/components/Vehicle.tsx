@@ -1,12 +1,14 @@
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { PhysicsEngine } from "../physics/GamePhysics";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
-import { isBlocked, FUEL_STATIONS } from "../world";
+import { isBlocked, FUEL_STATIONS, groundYAt, isWaterAt, BRIDGE } from "../world";
 import { G, addCrime, toast } from "../game/store";
 import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
+import { gyroSteer } from "../game/gyro";
+import { completeBreakIn, carAlarms } from "../game/theft";
 
 interface Props {
   playerPositionRef: MutableRefObject<THREE.Vector3>;
@@ -20,6 +22,19 @@ interface Props {
   themeAccent: string;
 }
 import CarBody from "./CarBody";
+
+/** CarBody wrapper that re-renders when the car's window gets smashed
+ * (break-ins mutate G.cars outside React). Damage/steer stay ref-driven. */
+function LiveCarBody({ index, steerRef }: { index: number; steerRef: MutableRefObject<number> }) {
+  const [, setTick] = useState(0);
+  const last = useRef(G.cars[index].brokenWindow);
+  useFrame(() => {
+    const bw = G.cars[index].brokenWindow;
+    if (bw !== last.current) { last.current = bw; setTick((t) => t + 1); }
+  });
+  const c = G.cars[index];
+  return <CarBody kind={c.kind} color={c.color} carIndex={index} steerRef={steerRef} liveDamage={() => G.cars[index].damage} brokenWindow={c.brokenWindow} interior />;
+}
 
 export default function Vehicle(p: Props) {
   const groups = useRef<Array<THREE.Group | null>>([]);
@@ -38,8 +53,31 @@ export default function Vehicle(p: Props) {
   const spawnAcc = useRef(0);
   const skidCd = useRef(0);
   const puffTex = glowTexture();
+  // Phase 4: shared steering ref (front wheels + cabin wheel), break-in hold
+  const steerRef = useRef(0);
+  const alarmRefs = useRef<Array<THREE.Sprite | null>>([]);
+  const eHeld = useRef(false);
+  const breakIn = useRef<{ car: number; since: number } | null>(null);
+  const alarmBeep = useRef(0);
 
   useEffect(() => {
+    const enterCar = (best: number) => {
+      G.activeCarId = best; G.driving = true; refs.current.onDrivingChange(true); sfx.door();
+      warnedRef.current = { wrecked: false, empty: false };
+      if (G.cars[best].damage >= 100) toast("This car is wrecked — it won't move. Find another ride.");
+      else if (G.cars[best].fuel <= 0.5) toast("This car is out of fuel. A fuel station can fill it — if you can push it there… (find another car)");
+      if (!G.cars[best].owned && !G.cars[best].stolen) { G.cars[best].stolen = true; addCrime("steal"); sfx.crime(); }
+    };
+    const nearestCar = (): number => {
+      const pl = refs.current.playerPositionRef.current;
+      let best = -1; let bestD = 3.6 ** 2;
+      G.cars.forEach((c, i) => { const d = (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2; if (d < bestD) { bestD = d; best = i; } });
+      return best;
+    };
+    const breakInEligible = (i: number) => {
+      const c = G.cars[i];
+      return !!c && !c.owned && !c.stolen && !c.brokenWindow && c.kind !== "motorcycle";
+    };
     const down = (e: KeyboardEvent) => {
       if (refs.current.paused || G.dialogueActive || isInteractiveTarget(e.target)) return;
       const key = normalizeGameKey(e.key);
@@ -52,21 +90,34 @@ export default function Vehicle(p: Props) {
           G.driving = false; refs.current.onDrivingChange(false); refs.current.onExit(exit);
           G.playerPos.copy(exit); keys.current.clear(); sfx.door(); e.preventDefault(); return;
         }
-        const pl = refs.current.playerPositionRef.current;
-        let best = -1; let bestD = 3.6 ** 2;
-        G.cars.forEach((c, i) => { const d = (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2; if (d < bestD) { bestD = d; best = i; } });
+        const best = nearestCar();
         if (best >= 0) {
-          G.activeCarId = best; G.driving = true; refs.current.onDrivingChange(true); sfx.door();
-          warnedRef.current = { wrecked: false, empty: false };
-          if (G.cars[best].damage >= 100) toast("This car is wrecked — it won't move. Find another ride.");
-          else if (G.cars[best].fuel <= 0.5) toast("This car is out of fuel. A fuel station can fill it — if you can push it there… (find another car)");
-          if (!G.cars[best].owned && !G.cars[best].stolen) { G.cars[best].stolen = true; addCrime("steal"); sfx.crime(); }
+          // Phase 4: HOLD E on a locked, unowned car = break-in; a quick
+          // TAP still just gets in (existing steal flow). F always enters.
+          if (key === "e" && breakInEligible(best)) {
+            eHeld.current = true;
+            breakIn.current = { car: best, since: performance.now() };
+            e.preventDefault(); return;
+          }
+          enterCar(best);
           e.preventDefault();
         }
       }
     };
-    const up = (e: KeyboardEvent) => keys.current.delete(normalizeGameKey(e.key));
-    const blur = () => keys.current.clear();
+    const up = (e: KeyboardEvent) => {
+      const key = normalizeGameKey(e.key);
+      keys.current.delete(key);
+      if (key === "e") {
+        eHeld.current = false;
+        if (breakIn.current) {
+          const heldMs = performance.now() - breakIn.current.since;
+          const carIdx = breakIn.current.car;
+          breakIn.current = null; G.hold = null;
+          if (heldMs < 250) enterCar(carIdx); // it was a tap after all
+        }
+      }
+    };
+    const blur = () => { keys.current.clear(); eHeld.current = false; breakIn.current = null; G.hold = null; };
     window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("blur", blur);
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
   }, []);
@@ -84,8 +135,14 @@ export default function Vehicle(p: Props) {
       if (empty && !warnedRef.current.empty) { warnedRef.current.empty = true; toast("Out of fuel! Coast to a stop and find another car — fuel stations refill runners."); }
       const power = wrecked || empty ? 0 : car.damage > 60 ? 0.55 : car.damage > 35 ? 0.82 : 1;
       const throttle = (Number(k.has("w")) - Number(k.has("s"))) * power;
-      const steering = Number(k.has("a")) - Number(k.has("d"));
-      const next = physicsRef.current.stepVehicle(car.state, throttle, steering, k.has(" "), delta);
+      // gyro tilt steering feeds the same path; touch/key steer overrides
+      const keySteer = Number(k.has("a")) - Number(k.has("d"));
+      const steering = keySteer !== 0 ? keySteer : gyroSteer();
+      steerRef.current = steering;
+      const stepped = physicsRef.current.stepVehicleV2(car.state, throttle, steering, k.has(" "), delta);
+      const next = stepped.state;
+      car.pitch += (stepped.pitch - car.pitch) * Math.min(1, dt * 7); // weight transfer (C++ v2)
+      car.roll += (stepped.roll - car.roll) * Math.min(1, dt * 7);
       // ---- Phase 3: motorcycle character — harder launch, higher top end,
       // tighter turning (heading bias applied post-step, arcade style) ----
       if (car.kind === "motorcycle") {
@@ -94,8 +151,13 @@ export default function Vehicle(p: Props) {
         next.heading += steering * 2.0 * sf * dt * (next.speed < 0 ? -1 : 1);
       }
       next.x = THREE.MathUtils.clamp(next.x, -122, 122);
-      next.z = THREE.MathUtils.clamp(next.z, -122, 126);
-      if (isBlocked(next.x, next.z, 1.3)) {
+      next.z = THREE.MathUtils.clamp(next.z, -122, 330);
+      // bridge causeway: stay on the deck corridor while elevated
+      if (groundYAt(next.x, next.z) > 0.05 || groundYAt(car.state.x, car.state.z) > 0.05) {
+        next.x = THREE.MathUtils.clamp(next.x, BRIDGE.x - BRIDGE.halfW + 0.6, BRIDGE.x + BRIDGE.halfW - 0.6);
+      }
+      const hitsWater = isWaterAt(next.x, next.z) && groundYAt(next.x, next.z) <= 0.05;
+      if (hitsWater || isBlocked(next.x, next.z, 1.3)) {
         if (!wasBlocked.current && Math.abs(car.state.speed) > 6) {
           G.eventQueue.push("shake", "hitwall"); G.health = Math.max(0, G.health - 4);
           car.damage = Math.min(100, car.damage + Math.min(18, Math.abs(car.state.speed) * 0.9));
@@ -126,10 +188,33 @@ export default function Vehicle(p: Props) {
         }
       } else refuelTimer.current = 0;
       vehicleStateRef.current = next;
-      vehiclePositionRef.current.set(next.x, 0, next.z);
-      G.followPos.set(next.x, 0, next.z);
+      const gy = groundYAt(next.x, next.z);
+      vehiclePositionRef.current.set(next.x, gy, next.z);
+      G.followPos.set(next.x, gy, next.z);
       G.speedKph = Math.round(Math.abs(next.speed) * 3.6);
     } else if (!G.driving) G.speedKph = 0;
+    // ---- Phase 4: break-in hold progress (E held near a locked car) ----
+    if (breakIn.current && !paused) {
+      if (!eHeld.current) { breakIn.current = null; G.hold = null; }
+      else {
+        const progress = (performance.now() - breakIn.current.since) / 1500;
+        G.hold = { label: "Breaking in…", progress: Math.min(1, progress) };
+        if (progress >= 1) { completeBreakIn(breakIn.current.car); breakIn.current = null; G.hold = null; }
+      }
+    }
+    // ---- car alarms: beep + light-flash sprite while active ----
+    alarmBeep.current = Math.max(0, alarmBeep.current - dt);
+    G.cars.forEach((c, i) => {
+      const sp = alarmRefs.current[i]; if (!sp) return;
+      const until = carAlarms.get(i) ?? 0;
+      const active = until > G.timeS;
+      sp.visible = active;
+      if (active) {
+        const pulse = 0.6 + Math.abs(Math.sin(G.timeS * 9)) * 0.9;
+        sp.scale.set(pulse * 2.2, pulse * 2.2, 1);
+        if (alarmBeep.current <= 0 && (c.state.x - G.followPos.x) ** 2 + (c.state.z - G.followPos.z) ** 2 < 45 ** 2) { sfx.alarm(); alarmBeep.current = 0.9; }
+      }
+    });
     // ---- burnout / drift tyre smoke ----
     skidCd.current = Math.max(0, skidCd.current - dt);
     if (G.driving && !paused && G.activeCarId >= 0) {
@@ -185,17 +270,21 @@ export default function Vehicle(p: Props) {
     } else if (nearRef.current) { nearRef.current = false; refs.current.onNearVehicleChange(false); }
     G.cars.forEach((c, i) => {
       const g = groups.current[i]; if (!g) return;
-      g.position.set(c.state.x, 0, c.state.z);
+      g.position.set(c.state.x, groundYAt(c.state.x, c.state.z), c.state.z);
       if (c.kind === "motorcycle") {
         // bank into turns ∝ steering × speed; wheelie-lite pitch on launch
         const active = G.driving && G.activeCarId === i && !paused;
-        const steer = active ? Number(keys.current.has("a")) - Number(keys.current.has("d")) : 0;
+        const steer = active ? steerRef.current : 0;
         const sf = THREE.MathUtils.clamp(Math.abs(c.state.speed) / 22, 0, 1);
         const lean = -steer * sf * 0.48;
         const launching = active && keys.current.has("w") && c.state.speed > 0.5 && c.state.speed < 7;
         g.rotation.order = "YXZ";
         g.rotation.set(launching ? -0.1 : 0, c.state.heading, lean);
-      } else g.rotation.y = c.state.heading;
+      } else {
+        // suspension: weight-transfer pitch/roll from the C++ v2 step
+        g.rotation.order = "YXZ";
+        g.rotation.set(c.pitch, c.state.heading, c.roll);
+      }
     });
   });
 
@@ -205,7 +294,11 @@ export default function Vehicle(p: Props) {
         const isActive = G.activeCarId === i;
         return (
           <group key={c.id} ref={(n) => { groups.current[i] = n; }} position={[c.state.x, 0, c.state.z]} rotation={[0, c.state.heading, 0]}>
-            <CarBody kind={c.kind} color={c.color} />
+            <LiveCarBody index={i} steerRef={steerRef} />
+            {/* car-alarm flash (break-in alarms, Phase 4) */}
+            <sprite ref={(n) => { alarmRefs.current[i] = n; }} position={[0, 1.5, 0]} visible={false}>
+              <spriteMaterial map={puffTex} color="#ffd34d" transparent opacity={0.55} depthWrite={false} blending={THREE.AdditiveBlending} />
+            </sprite>
             {/* engine smoke (visible when damage > 60, animated in useFrame) */}
             <group ref={(n) => { smokeRefs.current[i] = n; }} position={[0, 1.05, 1.25]} visible={false}>
               {[0, 1, 2].map((j) => (

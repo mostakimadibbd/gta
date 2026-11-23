@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { isBlocked, INTERIORS } from "../world";
+import { isBlocked, INTERIORS, groundYAt, isWaterAt, blockersNear, BRIDGE } from "../world";
 import { G } from "../game/store";
 import { sfx } from "../game/audio";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
 import { buildHumanoid, animateHumanoid } from "../humanoid";
+import { fallbackPhysics } from "../physics/GamePhysics";
+import type { CharacterPreset } from "../game/characters";
 
 type AnimationState = "Idle" | "Walk" | "Run" | "Driving";
 
@@ -14,10 +16,12 @@ interface PlayerProps {
   rotationRef: MutableRefObject<THREE.Vector3>;
   driving: boolean;
   paused: boolean;
-  shirt?: string;
+  preset: CharacterPreset;
+  variant: number;
+  showcase: boolean; // character-select turntable (runs while "paused")
 }
 
-export default function Player({ positionRef, rotationRef, driving, paused, shirt = "#1f7a72" }: PlayerProps) {
+export default function Player({ positionRef, rotationRef, driving, paused, preset, variant, showcase }: PlayerProps) {
   const root = useRef<THREE.Group>(null);
   const keys = useRef(new Set<string>());
   const jumpRequested = useRef(false);
@@ -28,14 +32,10 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
   const [animationLabel, setAnimationLabel] = useState<AnimationState>("Idle");
   const { camera } = useThree();
 
-  // Rayan: varsity jacket (chest follows the personal theme colour),
-  // dark jeans, black shoes, dark hair.
-  const rig = useMemo(() => buildHumanoid({
-    top: "#1f7a72", sleeve: "#22303a", bottom: "#232c38", skin: "#c68863",
-    hair: "#191008", shoes: "#101216", undershirt: "#e8e2d4",
-    topStyle: "varsity", bottomStyle: "jeans", gender: "m", hairStyle: "cap",
-  }), []);
-  useEffect(() => { rig.setTop(shirt); }, [rig, shirt]);
+  // Character preset drives the rig (Phase 4); outfit variants recolour the
+  // top via setTop without a rebuild.
+  const rig = useMemo(() => buildHumanoid({ ...preset.options, top: preset.variants[0] }), [preset]);
+  useEffect(() => { rig.setTop(preset.variants[variant] ?? preset.variants[0]); }, [rig, preset, variant]);
 
   const phase = useRef(0);
   const intensity = useRef(0);
@@ -44,6 +44,12 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
     const onKeyDown = (event: KeyboardEvent) => {
       if (paused || isInteractiveTarget(event.target)) return;
       const key = normalizeGameKey(event.key);
+      // crouch / stealth toggle (Blueprint movement): Ctrl or X
+      if ((key === "x" || key === "control") && !event.repeat && !G.driving) {
+        G.crouched = !G.crouched;
+        event.preventDefault();
+        return;
+      }
       if (["w", "a", "s", "d", "shift", " "].includes(key)) {
         event.preventDefault();
         keys.current.add(key);
@@ -75,7 +81,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
   }, [driving]);
 
   useFrame((_, delta) => {
-    if (!root.current || paused) return;
+    if (!root.current || (paused && !showcase)) return;
     const dt = Math.min(delta, 0.05);
     const tNow = performance.now() / 1000;
     const pressed = keys.current;
@@ -88,13 +94,13 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
     root.current.visible = !driving || onMoto;
 
     if (!driving) {
-      const swimmingNow = !G.interior && positionRef.current.z > 128.5;
+      const swimmingNow = !G.interior && isWaterAt(positionRef.current.x, positionRef.current.z);
       G.swimming = swimmingNow;
       if (swimmingNow && !wasSwimming.current) sfx.splash();
       wasSwimming.current = swimmingNow;
 
-      const forwardInput = Number(pressed.has("w")) - Number(pressed.has("s"));
-      const sideInput = Number(pressed.has("d")) - Number(pressed.has("a"));
+      const forwardInput = showcase ? 0 : Number(pressed.has("w")) - Number(pressed.has("s"));
+      const sideInput = showcase ? 0 : Number(pressed.has("d")) - Number(pressed.has("a"));
       const direction = new THREE.Vector3();
       camera.getWorldDirection(direction);
       direction.y = 0;
@@ -103,25 +109,46 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
       const movement = direction.multiplyScalar(forwardInput).addScaledVector(right, sideInput);
 
       // collision: interiors clamp to the room; open water is free (to a
-      // sane offshore limit); everywhere else uses the city blocker map
+      // sane offshore limit); the bridge deck is a corridor; everywhere
+      // else uses the city blocker map
       const canStand = (x: number, z: number) => {
         if (G.interior) {
           const r = INTERIORS[G.interior];
           return Math.abs(x - r.cx) < r.w / 2 - 0.55 && Math.abs(z - r.cz) < r.d / 2 - 0.55;
         }
-        if (z > 127.5) return z < 168 && Math.abs(x) < 142;
+        if (isWaterAt(x, z)) return Math.abs(x) < 175 && z > -140 && z < 365;
+        if (groundYAt(x, z) > 0.05 || groundYAt(positionRef.current.x, positionRef.current.z) > 0.05) {
+          return Math.abs(x - BRIDGE.x) <= BRIDGE.halfW + 0.4 && z > 86 && z < 238;
+        }
         return !isBlocked(x, z, 0.45);
       };
 
       if (movement.lengthSq() > 0) {
         moving = true;
         movement.normalize();
-        running = pressed.has("shift") && !swimmingNow;
-        const speed = swimmingNow ? 2.4 : running ? 8 : 4.2;
-        const nextX = positionRef.current.x + movement.x * speed * dt;
-        const nextZ = positionRef.current.z + movement.z * speed * dt;
+        running = pressed.has("shift") && !swimmingNow && !G.crouched;
+        const speed = (swimmingNow ? 2.4 : running ? 8 : 4.2) * (G.crouched && !swimmingNow ? 0.45 : 1);
+        const fromX = positionRef.current.x, fromZ = positionRef.current.z;
+        const nextX = fromX + movement.x * speed * dt;
+        const nextZ = fromZ + movement.z * speed * dt;
         if (canStand(nextX, positionRef.current.z)) positionRef.current.x = nextX;
         if (canStand(positionRef.current.x, nextZ)) positionRef.current.z = nextZ;
+        // swept AABB (C++ physics): if the diagonal was blocked, stop at
+        // first contact instead of sticking/sliding past thin blockers
+        if (!swimmingNow && !G.interior
+          && Math.abs(positionRef.current.x - nextX) > 0.001 && Math.abs(positionRef.current.z - nextZ) > 0.001
+          && !canStand(nextX, nextZ)) {
+          let bestT = -1;
+          for (const b of blockersNear(nextX, nextZ, 16)) {
+            const t = fallbackPhysics.sweptAabb(fromX, fromZ, nextX, nextZ, 0.45, b.x, b.z, b.hw, b.hd);
+            if (t >= 0 && (bestT < 0 || t < bestT)) bestT = t;
+          }
+          if (bestT > 0) {
+            const cx = fromX + (nextX - fromX) * bestT * 0.92;
+            const cz = fromZ + (nextZ - fromZ) * bestT * 0.92;
+            if (canStand(cx, cz)) { positionRef.current.x = cx; positionRef.current.z = cz; }
+          }
+        }
         root.current.rotation.y = Math.atan2(movement.x, movement.z);
       }
 
@@ -149,15 +176,18 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
 
     // ---- root transform ----
     if (onMoto && activeVehicle) {
-      root.current.position.set(activeVehicle.state.x, 0, activeVehicle.state.z);
+      root.current.position.set(activeVehicle.state.x, groundYAt(activeVehicle.state.x, activeVehicle.state.z), activeVehicle.state.z);
       root.current.rotation.set(0, activeVehicle.state.heading, 0);
     } else {
       root.current.position.copy(positionRef.current);
+      root.current.position.y = groundYAt(positionRef.current.x, positionRef.current.z) + positionRef.current.y;
       if (G.swimming) {
         // prone at the surface, gentle bob
         root.current.position.y = -0.52 + Math.sin(tNow * 2.1) * 0.06;
         root.current.rotation.x = -1.02;
       } else root.current.rotation.x = 0;
+      if (!driving) G.followPos.set(positionRef.current.x, groundYAt(positionRef.current.x, positionRef.current.z), positionRef.current.z);
+      if (showcase) root.current.rotation.y += dt * 0.35; // select-screen turntable
     }
     G.playerHeading = root.current.rotation.y;
     rotationRef.current.set(root.current.rotation.x, root.current.rotation.y, root.current.rotation.z);
@@ -173,7 +203,15 @@ export default function Player({ positionRef, rotationRef, driving, paused, shir
     animateHumanoid(rig, phase.current, intensity.current, tNow);
 
     // ---- pose overrides (applied after the base animation) ----
-    rig.group.position.y = onMoto ? -0.15 : 0;
+    const crouchPose = G.crouched && !driving && !G.swimming && !onMoto;
+    rig.group.position.y = onMoto ? -0.15 : crouchPose ? -0.48 : 0;
+    if (crouchPose) {
+      // crouch: knees bent, torso pitched — reads ~1.25u tall
+      rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.05;
+      rig.lShin.rotation.x = rig.rShin.rotation.x = 1.25;
+      rig.torso.rotation.x = 0.34;
+      rig.head.rotation.x = -0.18;
+    }
     if (onMoto) {
       // seated rider: thighs forward, shins down to the pegs, arms to the bars
       rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.5;

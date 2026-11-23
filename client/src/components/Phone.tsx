@@ -1,10 +1,12 @@
-// Harborfall smartphone (Blueprint §8) — DOM overlay styled as a phone.
-// Apps: Contacts (call → in-game dialogue + hint), Messages (live feed of
-// mission/story/bank messages), Map, Bank (SableBank stats), Music
-// (Port Sable Sunset player), Settings (personal themes).
+// Harborfall smartphone — DOM overlay styled as a realistic handset:
+// near-black body, thin bezel, notch, status bar with the game clock.
+// Apps: Contacts, Messages, SableBank, Music, Maps, Garage (view-only),
+// Stash (stolen goods), Camera (photo mode), Settings (themes + game
+// settings: shake, FOV, post FX, shadows, character).
 import { useEffect, useState } from "react";
 import { CONTACTS, phoneMsgs, onPhoneMsgs } from "../game/phone";
-import { G } from "../game/store";
+import { G, persistSettings, stashTotal } from "../game/store";
+import { CAR_MODELS } from "../world";
 import { M } from "../game/missionState";
 import { THEMES, type GameTheme } from "../themes";
 import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
@@ -16,39 +18,68 @@ interface Props {
   applyTheme: (t: GameTheme) => void;
   onOpenMap: () => void;
   onContact: (name: string, line: string, hint: string) => void;
+  onPhotoMode: () => void;
+  onChangeCharacter: () => void;
 }
-type AppId = "home" | "contacts" | "messages" | "bank" | "music" | "settings";
-const APPS: { id: AppId; icon: string; label: string }[] = [
-  { id: "contacts", icon: "👤", label: "Contacts" },
-  { id: "messages", icon: "💬", label: "Messages" },
-  { id: "bank", icon: "🏦", label: "SableBank" },
-  { id: "music", icon: "🎵", label: "Music" },
-  { id: "map" as AppId, icon: "🗺️", label: "Maps" },
-  { id: "settings", icon: "🎨", label: "Themes" },
+type AppId = "home" | "contacts" | "messages" | "bank" | "music" | "settings" | "garage" | "stash";
+const APPS: { id: AppId | "map" | "camera"; icon: string; label: string }[] = [
+  { id: "contacts", icon: "◉", label: "Contacts" },
+  { id: "messages", icon: "✉", label: "Messages" },
+  { id: "bank", icon: "$", label: "SableBank" },
+  { id: "music", icon: "♪", label: "Music" },
+  { id: "map", icon: "⌖", label: "Maps" },
+  { id: "garage", icon: "▣", label: "Garage" },
+  { id: "stash", icon: "⚿", label: "Stash" },
+  { id: "camera", icon: "◎", label: "Camera" },
+  { id: "settings", icon: "⚙", label: "Settings" },
 ];
 
-export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onContact }: Props) {
+function gameClock(): string {
+  const mins = Math.floor(((G.dayTime * 24 + 6) % 24) * 60);
+  const hh = Math.floor(mins / 60), mm = mins % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onContact, onPhotoMode, onChangeCharacter }: Props) {
   const [app, setApp] = useState<AppId>("home");
-  const [, setMsgTick] = useState(0);
+  const [, setTick] = useState(0);
   const [playing, setPlaying] = useState(isMenuThemePlaying());
-  useEffect(() => onPhoneMsgs(() => setMsgTick((v) => v + 1)), []);
-  useEffect(() => { if (open) { setApp("home"); setPlaying(isMenuThemePlaying()); } }, [open ]);
+  useEffect(() => onPhoneMsgs(() => setTick((v) => v + 1)), []);
+  useEffect(() => {
+    if (!open) return;
+    setApp("home"); setPlaying(isMenuThemePlaying());
+    const iv = setInterval(() => setTick((v) => v + 1), 1000); // live clock/bank
+    return () => clearInterval(iv);
+  }, [open ]);
   if (!open) return null;
-  const go = (id: AppId) => { sfx.click(); if (id === ("map" as AppId)) { onOpenMap(); return; } setApp(id); };
+  const go = (id: AppId | "map" | "camera") => {
+    sfx.click();
+    if (id === "map") { onOpenMap(); return; }
+    if (id === "camera") { onPhotoMode(); return; }
+    setApp(id);
+  };
+  const setSetting = (patch: Partial<typeof G.settings>) => { Object.assign(G.settings, patch); persistSettings(); setTick((v) => v + 1); };
+  const current = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
   return (
     <div className="phone-wrap" role="dialog" aria-label="Smartphone">
       <div className="phone">
         <div className="phone-notch" />
-        <div className="phone-status"><span>SableTel</span><span>{M.storyDone ? "★ Story done" : `Chapter ${Math.min(6, M.storyIndex + 1)}`}</span><span>📶 🔋</span></div>
+        <div className="phone-status">
+          <span className="phone-clock-sm">{gameClock()}</span>
+          <span className="phone-carrier">SableTel</span>
+          <span className="phone-glyphs">▂▄▆ ▰▰▰▱</span>
+        </div>
         {app !== "home" && <button type="button" className="phone-back" onClick={() => setApp("home")}>‹ Apps</button>}
         {app === "home" && (
           <div className="phone-home">
-            <div className="phone-clock">Port Sable</div>
+            <div className="phone-clock">{gameClock()}</div>
+            <div className="phone-date">Port Sable · {M.storyDone ? "Story complete" : `Chapter ${Math.min(6, M.storyIndex + 1)} of 6`}</div>
             <div className="phone-apps">
               {APPS.map((a) => (
                 <button key={a.label} type="button" className="phone-app" onClick={() => go(a.id)}>
                   <span className="phone-app-icon">{a.icon}</span>{a.label}
                   {a.id === "messages" && phoneMsgs.length > 0 && <span className="phone-badge">{Math.min(9, phoneMsgs.length)}</span>}
+                  {a.id === "stash" && G.inventory.length > 0 && <span className="phone-badge">{Math.min(9, G.inventory.length)}</span>}
                 </button>
               ))}
             </div>
@@ -61,7 +92,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             {CONTACTS.map((c) => (
               <button key={c.name} type="button" className="phone-row" onClick={() => onContact(c.name, c.line, c.hint)}>
                 <span className="phone-avatar">{c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>
-                <span><b>{c.name}</b><small>{c.role}</small></span><span className="phone-call">📞</span>
+                <span><b>{c.name}</b><small>{c.role}</small></span><span className="phone-call">Call</span>
               </button>
             ))}
           </div>
@@ -76,10 +107,10 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
         )}
         {app === "bank" && (
           <div className="phone-page">
-            <h3>🏦 SableBank</h3>
+            <h3>SableBank</h3>
             <div className="bank-card">
               <span>Balance</span><strong>${G.cash.toLocaleString()}</strong>
-              <small>Rayan Kade · Harbour Current Account</small>
+              <small>Harbour Current Account</small>
             </div>
             <div className="bank-row"><span>Lifetime earnings</span><b>${G.lifetimeEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Fines & hospital bills paid</span><b>−${G.finesPaid.toLocaleString()}</b></div>
@@ -89,21 +120,63 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
         )}
         {app === "music" && (
           <div className="phone-page">
-            <h3>🎵 SableSounds</h3>
+            <h3>SableSounds</h3>
             <div className="music-card">
-              <div className="music-disc">{playing ? "💿" : "🎷"}</div>
+              <div className="music-disc">{playing ? "◉" : "♪"}</div>
               <b>Port Sable Sunset</b>
               <small>The Harborfall opening theme — original recording</small>
-              <button type="button" className="primary phone-play" onClick={() => {
+              <button type="button" className="phone-play" onClick={() => {
                 if (playing) { stopMenuTheme(); setPlaying(false); } else { startMenuTheme(); setPlaying(true); }
-              }}>{playing ? "⏸ Stop theme" : "▶ Play theme"}</button>
+              }}>{playing ? "Stop theme" : "Play theme"}</button>
             </div>
             <p className="phone-tip">The theme also plays on the title screen. N mutes everything.</p>
           </div>
         )}
+        {app === "garage" && (
+          <div className="phone-page">
+            <h3>Garage</h3>
+            {current && (
+              <div className="phone-car">
+                <span className="garage-chip" style={{ background: current.color }} />
+                <span><b>{CAR_MODELS[current.kind].name}</b><small>Current car · condition {Math.round(100 - current.damage)}% · fuel {Math.round(current.fuel)}%</small></span>
+              </div>
+            )}
+            {G.storedCars.map((s, i) => (
+              <div key={i} className="phone-car">
+                <span className="garage-chip" style={{ background: s.color }} />
+                <span><b>{s.name}</b><small>Stored · condition {Math.round(100 - s.damage)}% · fuel {Math.round(s.fuel)}%{s.brokenWindow ? " · broken window" : ""}</small></span>
+              </div>
+            ))}
+            {G.storedCars.length === 0 && !current && <p className="phone-tip">No cars yet.</p>}
+            <p className="phone-tip">Visit the villa garage or Lina's Garage and press G to swap cars.</p>
+          </div>
+        )}
+        {app === "stash" && (
+          <div className="phone-page">
+            <h3>Stash</h3>
+            {G.inventory.map((it, i) => (
+              <div key={i} className="bank-row"><span>{it.name}</span><b>${it.value}</b></div>
+            ))}
+            {G.inventory.length === 0 && <p className="phone-tip">Empty. Pickpocket pedestrians, break into cars, rob tills…</p>}
+            <div className="bank-row"><span><b>Fence value</b></span><b>${stashTotal()}</b></div>
+            <p className="phone-tip">Sell all at Coral Pawn (Coral Shores) or Lina's workbench. Getting busted confiscates the lot.</p>
+          </div>
+        )}
         {app === "settings" && (
           <div className="phone-page">
-            <h3>🎨 Personal theme</h3>
+            <h3>Settings</h3>
+            <div className="bank-row"><span>Camera shake</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ shake: !G.settings.shake })}>{G.settings.shake ? "On" : "Off"}</button></div>
+            <div className="bank-row"><span>Post FX</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ postFx: !G.settings.postFx })}>{G.settings.postFx ? "On" : "Off"}</button></div>
+            <div className="bank-row"><span>Shadows</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ shadows: !G.settings.shadows })}>{G.settings.shadows ? "On" : "Off"}</button></div>
+            <div className="bank-row"><span>Field of view · {G.settings.fov}°</span>
+              <input type="range" min={50} max={75} step={1} value={G.settings.fov} onChange={(e) => setSetting({ fov: Number(e.target.value) })} /></div>
+            <button type="button" className="phone-row" onClick={onChangeCharacter}>
+              <span><b>Change character</b><small>Pick who you play as in Port Sable</small></span><span>›</span>
+            </button>
+            <h3 className="phone-subhead">Personal theme</h3>
             {THEMES.map((t) => (
               <button key={t.id} type="button" className={`phone-row ${t.id === theme.id ? "active" : ""}`} onClick={() => applyTheme(t)}>
                 <span className="swatch" style={{ background: `linear-gradient(135deg, ${t.sky} 50%, ${t.css["--accent"]} 50%)`, width: 26, height: 26, borderRadius: 7 }} />

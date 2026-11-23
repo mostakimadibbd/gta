@@ -5,11 +5,14 @@ import { sfx } from "./audio";
 import { CAR_SPAWNS, PIER_SPAWN, MANSION } from "../world";
 import type { VehicleState } from "../physics/GamePhysics";
 
-export interface NpcCar extends VehicleState { axis: "x" | "z"; dir: 1 | -1; lane: number; color: string; stopped: number; fleeing: number; }
-export interface Ped { x: number; z: number; heading: number; speed: number; axis: "x" | "z"; dir: 1 | -1; side: number; color: string; fleeUntil: number; swing: number; zone: string; active: boolean; downUntil: number; }
-export interface Cop extends VehicleState { active: boolean; lightPhase: number; }
+export interface NpcCar extends VehicleState { axis: "x" | "z"; dir: 1 | -1; lane: number; color: string; stopped: number; fleeing: number; side: "main" | "coral"; steerVis: number; pitch: number; damage: number; }
+export interface Ped { x: number; z: number; heading: number; speed: number; axis: "x" | "z"; dir: 1 | -1; side: number; color: string; fleeUntil: number; swing: number; zone: string; active: boolean; downUntil: number; area: "main" | "coral"; }
+export interface Cop extends VehicleState { active: boolean; lightPhase: number; pitch: number; roll: number; }
 export type WeatherKind = "Clear" | "Cloudy" | "Rain" | "Storm" | "Fog";
-export type CrimeKind = "steal" | "hit" | "ped" | "reckless" | "assault" | "shoot";
+export type CrimeKind = "steal" | "hit" | "ped" | "reckless" | "assault" | "shoot" | "theft" | "robbery";
+export interface StashItem { type: string; name: string; value: number; }
+export interface StoredCar { kind: string; color: string; name: string; damage: number; fuel: number; brokenWindow: boolean; }
+export interface MissionResult { ok: boolean; title: string; reward: number; items: number; timeLeft: number; reason: string; at: number; }
 export interface PendingCrime { kind: CrimeKind; due: number; }
 export const nowS = () => (typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000);
 
@@ -19,7 +22,7 @@ export const G = {
   followPos: new THREE.Vector3(PIER_SPAWN.x, 0, PIER_SPAWN.z),
   driving: false,
   activeCarId: -1,
-  cars: CAR_SPAWNS.map((s, i) => ({ ...s, state: { x: s.x, z: s.z, heading: s.heading, speed: 0 } as VehicleState, stolen: false, damage: 0, fuel: 58 + ((i * 29) % 38) })),
+  cars: CAR_SPAWNS.map((s, i) => ({ ...s, state: { x: s.x, z: s.z, heading: s.heading, speed: 0 } as VehicleState, stolen: false, damage: 0, fuel: 58 + ((i * 29) % 38), brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false })),
   traffic: [] as NpcCar[],
   peds: [] as Ped[],
   cops: [] as Cop[],
@@ -68,6 +71,20 @@ export const G = {
   interact: null as null | (() => void),
   ownsMansion: false,
   savedCarId: -1, // G.cars index of the garage-saved car, if any
+  // ---- Phase 4: theft / garages / crouch / photo mode / settings ----
+  inventory: [] as StashItem[], // stolen goods carried (fence at a pawn shop)
+  storedCars: [] as StoredCar[], // garage-kept cars (max 6, persisted)
+  crouched: false,
+  stealthEye: "" as "" | "open" | "closed", // HUD stealth indicator state
+  hold: null as null | { label: string; progress: number }, // hold-E progress (robbery / break-in)
+  garageZone: null as null | { id: string; label: string }, // garage zone the player is standing in
+  requestCharSelect: false, // phone/pause → App opens the character select
+  photoMode: false,
+  weaponSel: "fist" as "fist" | "pistol",
+  missionResult: null as null | MissionResult, // debrief panel data (Visual V6)
+  robbedUntil: {} as Record<string, number>, // register id → G.timeS when it can be robbed again
+  settings: { shake: true, fov: 58, postFx: true, shadows: true },
+  shakeAmp: 0, // current camera-shake amplitude (gated by settings.shake)
 };
 export function toast(msg: string) { G.toast = msg; G.toastAt = nowS(); }
 
@@ -80,6 +97,17 @@ export function loadSavedCar(): SavedCar | null {
 export function persistSavedCar(c: SavedCar | null) {
   try { if (c) localStorage.setItem("harborfall-garage-car", JSON.stringify(c)); else localStorage.removeItem("harborfall-garage-car"); } catch { /* ignore */ }
 }
+// ---- Phase 4 persistence: stash, stored cars, settings ----
+export function persistInventory() { try { localStorage.setItem("harborfall-stash", JSON.stringify(G.inventory)); } catch { /* ignore */ } }
+export function persistStoredCars() { try { localStorage.setItem("harborfall-stored-cars", JSON.stringify(G.storedCars)); } catch { /* ignore */ } }
+export function persistSettings() { try { localStorage.setItem("harborfall-settings", JSON.stringify(G.settings)); } catch { /* ignore */ } }
+export const stashTotal = () => G.inventory.reduce((a, i) => a + i.value, 0);
+try {
+  const stash = localStorage.getItem("harborfall-stash"); if (stash) G.inventory = JSON.parse(stash) as StashItem[];
+  const stored = localStorage.getItem("harborfall-stored-cars"); if (stored) G.storedCars = (JSON.parse(stored) as StoredCar[]).slice(0, 6);
+  const st = localStorage.getItem("harborfall-settings"); if (st) G.settings = { ...G.settings, ...(JSON.parse(st) as Partial<typeof G.settings>) };
+} catch { /* storage unavailable */ }
+
 try {
   G.ownsMansion = localStorage.getItem("harborfall-mansion") === "1";
   const saved = loadSavedCar();
@@ -88,6 +116,7 @@ try {
       id: G.cars.length, x: saved.x, z: saved.z, heading: saved.heading, color: saved.color,
       model: "Garage-kept", kind: saved.kind as typeof G.cars[number]["kind"], owned: true,
       state: { x: saved.x, z: saved.z, heading: saved.heading, speed: 0 }, stolen: false, damage: 0, fuel: 85,
+      brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
     });
     G.savedCarId = G.cars.length - 1;
   }
@@ -98,6 +127,7 @@ function applyCrime(kind: CrimeKind) {
   G.crimeCooldown = 4;
   const before = G.wanted;
   if (kind === "shoot") G.wanted = Math.min(5, Math.max(G.wanted + 1, 2)); // gunfire: 2★ minimum
+  else if (kind === "robbery") G.wanted = Math.min(5, Math.max(G.wanted + 1, 2)); // shop alarm: 2★ minimum
   else G.wanted = Math.min(5, G.wanted + (kind === "ped" ? 2 : 1));
   if (G.wanted > before) sfx.star();
   G.wantedCooldown = 0;
@@ -113,7 +143,7 @@ function applyCrime(kind: CrimeKind) {
  * the victim, so it applies immediately. No witness = no report.
  */
 export function addCrime(kind: CrimeKind) {
-  if (kind === "ped" || kind === "shoot") { applyCrime(kind); return; } // victim/gunfire: known at once
+  if (kind === "ped" || kind === "shoot" || kind === "robbery") { applyCrime(kind); return; } // victim/gunfire/alarm: known at once
   const px = G.followPos.x, pz = G.followPos.z;
   let wi = -1; let wd = 26 ** 2;
   G.peds.forEach((p, i) => { const d = (p.x - px) ** 2 + (p.z - pz) ** 2; if (d < wd) { wd = d; wi = i; } });
@@ -142,6 +172,7 @@ function respawnPoint() {
 export function resetAfterArrest(fine: number) {
   G.finesPaid += Math.min(fine, G.cash);
   G.cash = Math.max(0, G.cash - fine);
+  if (G.inventory.length) { G.inventory = []; persistInventory(); toast("Busted — your stash was confiscated"); }
   G.wanted = 0; G.bustTimer = 0; G.health = Math.max(60, G.health);
   G.driving = false; G.activeCarId = -1;
   respawnPoint();

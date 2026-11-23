@@ -5,10 +5,12 @@
 // canopies, wheel-arch insets, side skirts — so the silhouette stops being
 // stacked rectangles. Glossy paint, rim/spoke wheels, lights, mirrors,
 // plates, bumpers, exhaust. Facing +Z = front.
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { RoundedBox } from "@react-three/drei";
-import { glowTexture, tyreTexture } from "../textures";
+import { useFrame } from "@react-three/fiber";
+import { glowTexture, tyreTexture, shatteredTexture, carDirtTexture } from "../textures";
+import { G } from "../game/store";
 
 export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle";
 
@@ -25,6 +27,13 @@ const PLATE = new THREE.MeshStandardMaterial({ color: "#eef1f4", roughness: 0.6 
 const WHITEWALL = new THREE.MeshStandardMaterial({ color: "#e9e6dc", roughness: 0.7 });
 const ARCH = new THREE.MeshStandardMaterial({ color: "#0a0b0d", roughness: 0.95 }); // dark wheel-arch inset
 const DARKTRIM = new THREE.MeshStandardMaterial({ color: "#191c20", roughness: 0.7, metalness: 0.2 });
+// Phase 4 (Visual V4): clearer glass for the player's car so the cabin
+// interior reads through it; broken-window variant uses the shattered map.
+const GLASS_CLEAR = new THREE.MeshStandardMaterial({ color: "#2a3d49", metalness: 0.4, roughness: 0.06, envMapIntensity: 1.4, transparent: true, opacity: 0.62 });
+const GLASS_BROKEN = new THREE.MeshStandardMaterial({ map: shatteredTexture(), color: "#cfd8dc", metalness: 0.2, roughness: 0.45, envMapIntensity: 0.7 });
+const CABIN = new THREE.MeshStandardMaterial({ color: "#17181c", roughness: 0.92 });
+const SEATMAT = new THREE.MeshStandardMaterial({ color: "#232028", roughness: 0.95 });
+const WHEELMAT = new THREE.MeshStandardMaterial({ color: "#101114", roughness: 0.6 });
 
 /** RoundedBox with a shared material attached — the Phase 3 sculpting unit. */
 function RB({ args, radius = 0.07, mat, pos, rot, shadow = true }: {
@@ -38,9 +47,12 @@ function RB({ args, radius = 0.07, mat, pos, rot, shadow = true }: {
   );
 }
 
-function Wheel({ x, z, r, w, classic }: { x: number; z: number; r: number; w: number; classic?: boolean }) {
+function Wheel({ x, z, r, w, classic, steerRef, carIndex }: { x: number; z: number; r: number; w: number; classic?: boolean; steerRef?: MutableRefObject<number>; carIndex?: number }) {
+  const steerG = useRef<THREE.Group>(null);
+  useFrame(() => { if (steerG.current && steerRef) steerG.current.rotation.y = (carIndex === undefined || (G.driving && G.activeCarId === carIndex)) ? steerRef.current * 0.42 : 0; });
   return (
     <group position={[x, r, z]}>
+      <group ref={steerG}>
       <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
         <cylinderGeometry args={[r, r, w, 14]} /><primitive object={TYRE} attach="material" />
       </mesh>
@@ -55,6 +67,7 @@ function Wheel({ x, z, r, w, classic }: { x: number; z: number; r: number; w: nu
           <ringGeometry args={[r * 0.62, r * 0.82, 16]} /><primitive object={WHITEWALL} attach="material" />
         </mesh>
       )}
+      </group>
     </group>
   );
 }
@@ -108,6 +121,58 @@ function Mirrors({ w, y, z }: { w: number; y: number; z: number }) {
   );
 }
 
+/** Cabin interior (Visual V4) — dash, a steering wheel that turns with the
+ * steering input, front seats + rear bench, headliner. Player car only. */
+function CabinInterior({ y, z, w, steerRef, carIndex }: { y: number; z: number; w: number; steerRef?: MutableRefObject<number>; carIndex?: number }) {
+  const wheelG = useRef<THREE.Group>(null);
+  useFrame(() => { if (wheelG.current && steerRef) wheelG.current.rotation.z = (carIndex === undefined || (G.driving && G.activeCarId === carIndex)) ? -steerRef.current * 1.9 : 0; });
+  return (
+    <group>
+      <RB args={[w, 0.16, 0.34]} radius={0.05} mat={CABIN} pos={[0, y + 0.1, z + 0.66]} shadow={false} />
+      <RB args={[w, 0.05, 1.5]} radius={0.02} mat={CABIN} pos={[0, y + 0.44, z - 0.1]} shadow={false} />
+      <group position={[-w * 0.27, y + 0.06, z + 0.44]} rotation={[0.5, 0, 0]}>
+        <group ref={wheelG}>
+          <mesh><torusGeometry args={[0.17, 0.028, 8, 20]} /><primitive object={WHEELMAT} attach="material" /></mesh>
+          <mesh><boxGeometry args={[0.3, 0.035, 0.02]} /><primitive object={WHEELMAT} attach="material" /></mesh>
+          <mesh><boxGeometry args={[0.035, 0.3, 0.02]} /><primitive object={WHEELMAT} attach="material" /></mesh>
+        </group>
+      </group>
+      {[-w * 0.27, w * 0.27].map((sx) => (
+        <group key={sx}>
+          <RB args={[0.5, 0.14, 0.5]} radius={0.05} mat={SEATMAT} pos={[sx, y - 0.2, z + 0.05]} shadow={false} />
+          <RB args={[0.5, 0.55, 0.13]} radius={0.05} mat={SEATMAT} pos={[sx, y + 0.03, z - 0.24]} rot={[0.16, 0, 0]} shadow={false} />
+        </group>
+      ))}
+      <RB args={[w * 0.92, 0.14, 0.45]} radius={0.05} mat={SEATMAT} pos={[0, y - 0.2, z - 0.58]} shadow={false} />
+    </group>
+  );
+}
+
+const CABIN_POS: Record<string, { y: number; z: number; w: number }> = {
+  sedan: { y: 0.98, z: -0.05, w: 1.5 }, coupe: { y: 0.86, z: -0.3, w: 1.45 },
+  hatch: { y: 1.02, z: -0.1, w: 1.45 }, muscle: { y: 1.02, z: -0.5, w: 1.5 },
+  suv: { y: 1.38, z: -0.1, w: 1.7 }, classic: { y: 1.02, z: -0.15, w: 1.45 },
+  pickup: { y: 1.18, z: 0.85, w: 1.6 }, van: { y: 1.0, z: 1.15, w: 1.65 },
+  supercar: { y: 0.6, z: -0.25, w: 1.5 },
+};
+/** Dirt/scratch shell (Visual V3): opacity follows live damage. */
+const SHELL: Record<string, [number, number, number, number]> = {
+  sedan: [2.05, 0.63, 3.75, 0.6], coupe: [2.05, 0.51, 3.95, 0.52], hatch: [1.95, 0.65, 3.2, 0.62],
+  muscle: [2.1, 0.67, 4.45, 0.62], suv: [2.15, 0.93, 4.25, 0.78], classic: [2.0, 0.61, 4.55, 0.6],
+  pickup: [2.15, 0.77, 4.15, 0.68], van: [2.15, 1.17, 4.25, 0.92], supercar: [2.25, 0.47, 4.35, 0.44],
+};
+function DirtShell({ kind, liveDamage }: { kind: string; liveDamage?: () => number }) {
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({ map: carDirtTexture(), transparent: true, opacity: 0, roughness: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), []);
+  useFrame(() => { if (liveDamage) mat.opacity = Math.max(0, Math.min(1, (liveDamage() - 12) / 88)) * 0.88; });
+  const s = SHELL[kind];
+  if (!s) return null;
+  return (
+    <RoundedBox args={[s[0], s[1], s[2]]} radius={0.09} smoothness={2} position={[0, s[3], 0]}>
+      <primitive object={mat} attach="material" />
+    </RoundedBox>
+  );
+}
+
 /** Rideable motorcycle — Sable Stinger: thin wheels, tube frame, tank, seat. */
 export function MotorcycleBody({ color }: { color: string }) {
   const paint = useMemo(() => new THREE.MeshStandardMaterial({ color, metalness: 0.45, roughness: 0.3, envMapIntensity: 1.25 }), [color]);
@@ -140,17 +205,22 @@ export function MotorcycleBody({ color }: { color: string }) {
   );
 }
 
-export default function CarBody({ kind, color, police }: { kind: CarKind; color: string; police?: boolean }) {
+export default function CarBody({ kind, color, police, steerRef, liveDamage, brokenWindow, interior, carIndex }: {
+  kind: CarKind; color: string; police?: boolean;
+  steerRef?: MutableRefObject<number>; liveDamage?: () => number;
+  brokenWindow?: boolean; interior?: boolean; carIndex?: number;
+}) {
   // deep glossy paint: low roughness + strong environment reflections
   const paint = useMemo(() => new THREE.MeshStandardMaterial({ color, metalness: 0.25, roughness: 0.27, envMapIntensity: 1.2 }), [color]);
   if (kind === "motorcycle") return <MotorcycleBody color={color} />;
   const classic = kind === "classic";
+  const glassMat = brokenWindow ? GLASS_BROKEN : interior ? GLASS_CLEAR : GLASS;
   let body: ReactNode = null;
   let wheels: ReactNode = null;
   const wheelSet = (w: number, len: number, r: number, ww: number, rearR?: number, rearW?: number) => (
     <>
-      <Wheel x={-w / 2 - 0.02} z={len / 2 - 0.72} r={r} w={ww} classic={classic} />
-      <Wheel x={w / 2 + 0.02} z={len / 2 - 0.72} r={r} w={ww} classic={classic} />
+      <Wheel x={-w / 2 - 0.02} z={len / 2 - 0.72} r={r} w={ww} classic={classic} steerRef={steerRef} carIndex={carIndex} />
+      <Wheel x={w / 2 + 0.02} z={len / 2 - 0.72} r={r} w={ww} classic={classic} steerRef={steerRef} carIndex={carIndex} />
       <Wheel x={-w / 2 - 0.02} z={-len / 2 + 0.72} r={rearR ?? r} w={rearW ?? ww} classic={classic} />
       <Wheel x={w / 2 + 0.02} z={-len / 2 + 0.72} r={rearR ?? r} w={rearW ?? ww} classic={classic} />
       <ArchesSkirts w={w} len={len} r={r} />
@@ -163,7 +233,7 @@ export default function CarBody({ kind, color, police }: { kind: CarKind; color:
         <RB args={[2.2, 0.42, 4.3]} radius={0.13} mat={paint} pos={[0, 0.44, 0]} />
         <RB args={[2.02, 0.2, 1.15]} radius={0.08} mat={paint} pos={[0, 0.4, 1.72]} rot={[0.16, 0, 0]} />
         {/* curved glass canopy (scaled sphere) instead of a glass box */}
-        <mesh position={[0, 0.68, -0.28]} scale={[1.42, 0.62, 1.7]} castShadow><sphereGeometry args={[0.55, 16, 12]} /><primitive object={GLASS} attach="material" /></mesh>
+        <mesh position={[0, 0.68, -0.28]} scale={[1.42, 0.62, 1.7]} castShadow><sphereGeometry args={[0.55, 16, 12]} /><primitive object={glassMat} attach="material" /></mesh>
         <mesh position={[0, 0.3, 0]}><boxGeometry args={[2.24, 0.16, 3.4]} /><primitive object={BUMPER} attach="material" /></mesh>
         <RB args={[2.15, 0.07, 0.44]} radius={0.03} mat={BUMPER} pos={[0, 0.98, -2.02]} />
         <mesh position={[-0.8, 0.8, -1.95]}><boxGeometry args={[0.09, 0.3, 0.09]} /><primitive object={BUMPER} attach="material" /></mesh>
@@ -176,7 +246,7 @@ export default function CarBody({ kind, color, police }: { kind: CarKind; color:
         <RB args={[2.05, 0.62, 4.4]} radius={0.1} mat={paint} pos={[0, 0.62, 0]} />
         <RB args={[1.94, 0.18, 1.5]} radius={0.07} mat={paint} pos={[0, 0.9, 1.32]} rot={[0.07, 0, 0]} />{/* long sloped hood */}
         <mesh position={[0, 0.99, 0.75]} castShadow><boxGeometry args={[0.72, 0.13, 1.05]} /><primitive object={BUMPER} attach="material" /></mesh>
-        <RB args={[1.68, 0.5, 1.5]} radius={0.13} mat={GLASS} pos={[0, 1.12, -0.6]} />
+        <RB args={[1.68, 0.5, 1.5]} radius={0.13} mat={glassMat} pos={[0, 1.12, -0.6]} />
         <LightsBumpers w={2.05} len={4.4} y={0.66} />
         <Mirrors w={2.05} y={1.18} z={0.1} />
       </>); wheels = wheelSet(2.05, 4.4, 0.4, 0.3); break;
@@ -184,7 +254,7 @@ export default function CarBody({ kind, color, police }: { kind: CarKind; color:
       body = (<>
         <RB args={[2.1, 0.88, 4.2]} radius={0.11} mat={paint} pos={[0, 0.78, 0]} />
         <RB args={[1.98, 0.22, 1.3]} radius={0.08} mat={paint} pos={[0, 1.06, 1.5]} rot={[0.1, 0, 0]} />
-        <RB args={[1.92, 0.6, 2.5]} radius={0.1} mat={GLASS} pos={[0, 1.5, -0.15]} />
+        <RB args={[1.92, 0.6, 2.5]} radius={0.1} mat={glassMat} pos={[0, 1.5, -0.15]} />
         <mesh position={[-0.7, 1.85, -0.15]}><boxGeometry args={[0.07, 0.06, 2.3]} /><primitive object={CHROME} attach="material" /></mesh>
         <mesh position={[0.7, 1.85, -0.15]}><boxGeometry args={[0.07, 0.06, 2.3]} /><primitive object={CHROME} attach="material" /></mesh>
         <LightsBumpers w={2.1} len={4.2} y={0.82} />
@@ -194,14 +264,14 @@ export default function CarBody({ kind, color, police }: { kind: CarKind; color:
       body = (<>
         <RB args={[1.95, 0.56, 4.5]} radius={0.12} mat={paint} pos={[0, 0.6, 0]} />
         <RB args={[2.0, 0.17, 2.7]} radius={0.07} mat={paint} pos={[0, 0.95, 0]} />
-        <RB args={[1.66, 0.48, 1.8]} radius={0.14} mat={GLASS} pos={[0, 1.14, -0.2]} />
+        <RB args={[1.66, 0.48, 1.8]} radius={0.14} mat={glassMat} pos={[0, 1.14, -0.2]} />
         <LightsBumpers w={1.95} len={4.5} y={0.64} classic />
         <Mirrors w={1.95} y={1.2} z={0.65} />
       </>); wheels = wheelSet(1.95, 4.5, 0.38, 0.26); break;
     case "pickup":
       body = (<>
         <RB args={[2.1, 0.72, 4.1]} radius={0.09} mat={paint} pos={[0, 0.68, 0]} />
-        <RB args={[1.85, 0.55, 1.35]} radius={0.11} mat={GLASS} pos={[0, 1.28, 0.85]} />
+        <RB args={[1.85, 0.55, 1.35]} radius={0.11} mat={glassMat} pos={[0, 1.28, 0.85]} />
         <mesh position={[0, 1.0, -1.15]}><boxGeometry args={[1.9, 0.34, 1.5]} /><meshStandardMaterial color="#4c3b28" roughness={0.9} /></mesh>
         <LightsBumpers w={2.1} len={4.1} y={0.7} />
         <Mirrors w={2.1} y={1.3} z={1.45} />
@@ -210,7 +280,7 @@ export default function CarBody({ kind, color, police }: { kind: CarKind; color:
       body = (<>
         <RB args={[2.1, 1.12, 4.2]} radius={0.12} mat={paint} pos={[0, 0.92, 0]} />
         <RB args={[1.9, 0.24, 1.15]} radius={0.09} mat={paint} pos={[0, 1.32, 1.55]} rot={[0.13, 0, 0]} />
-        <mesh position={[0, 1.12, 1.95]}><boxGeometry args={[1.85, 0.55, 0.3]} /><primitive object={GLASS} attach="material" /></mesh>
+        <mesh position={[0, 1.12, 1.95]}><boxGeometry args={[1.85, 0.55, 0.3]} /><primitive object={glassMat} attach="material" /></mesh>
         <LightsBumpers w={2.1} len={4.2} y={0.66} />
         <Mirrors w={2.1} y={1.3} z={1.9} />
       </>); wheels = wheelSet(2.1, 4.2, 0.4, 0.28); break;
@@ -218,7 +288,7 @@ export default function CarBody({ kind, color, police }: { kind: CarKind; color:
       body = (<>
         <RB args={[1.9, 0.6, 3.15]} radius={0.1} mat={paint} pos={[0, 0.62, 0]} />
         <RB args={[1.8, 0.18, 1.0]} radius={0.07} mat={paint} pos={[0, 0.88, 1.12]} rot={[0.1, 0, 0]} />
-        <RB args={[1.66, 0.52, 1.85]} radius={0.13} mat={GLASS} pos={[0, 1.14, -0.15]} />
+        <RB args={[1.66, 0.52, 1.85]} radius={0.13} mat={glassMat} pos={[0, 1.14, -0.15]} />
         <LightsBumpers w={1.9} len={3.15} y={0.64} />
         <Mirrors w={1.9} y={1.18} z={0.7} />
       </>); wheels = wheelSet(1.9, 3.15, 0.35, 0.24); break;
@@ -226,7 +296,7 @@ export default function CarBody({ kind, color, police }: { kind: CarKind; color:
       body = (<>
         <RB args={[2.0, 0.46, 3.9]} radius={0.11} mat={paint} pos={[0, 0.52, 0]} />
         <RB args={[1.9, 0.16, 1.2]} radius={0.06} mat={paint} pos={[0, 0.72, 1.3]} rot={[0.09, 0, 0]} />
-        <RB args={[1.62, 0.44, 1.55]} radius={0.15} mat={GLASS} pos={[0, 0.94, -0.35]} />
+        <RB args={[1.62, 0.44, 1.55]} radius={0.15} mat={glassMat} pos={[0, 0.94, -0.35]} />
         <LightsBumpers w={2.0} len={3.9} y={0.56} />
         <Mirrors w={2.0} y={1.0} z={0.4} />
       </>); wheels = wheelSet(2.0, 3.9, 0.37, 0.26); break;
@@ -234,11 +304,12 @@ export default function CarBody({ kind, color, police }: { kind: CarKind; color:
       body = (<>
         <RB args={[2.0, 0.58, 3.7]} radius={0.1} mat={paint} pos={[0, 0.6, 0]} />
         <RB args={[1.9, 0.17, 1.25]} radius={0.07} mat={paint} pos={[0, 0.85, 1.28]} rot={[0.08, 0, 0]} />{/* sloped hood */}
-        <RB args={[1.7, 0.5, 1.8]} radius={0.14} mat={GLASS} pos={[0, 1.1, -0.12]} />
+        <RB args={[1.7, 0.5, 1.8]} radius={0.14} mat={glassMat} pos={[0, 1.1, -0.12]} />
         {police && <mesh position={[0, 0.6, 0.1]}><boxGeometry args={[2.03, 0.34, 1.75]} /><meshStandardMaterial color="#f2f4f6" roughness={0.4} /></mesh>}
         <LightsBumpers w={2.0} len={3.7} y={0.62} />
         <Mirrors w={2.0} y={1.14} z={0.72} />
       </>); wheels = wheelSet(2.0, 3.7, 0.36, 0.25); break;
   }
-  return (<group>{body}{wheels}</group>);
+  const cabin = CABIN_POS[kind];
+  return (<group>{body}{wheels}{interior && cabin ? <CabinInterior y={cabin.y} z={cabin.z} w={cabin.w} steerRef={steerRef} carIndex={carIndex} /> : null}<DirtShell kind={kind} liveDamage={liveDamage} /></group>);
 }

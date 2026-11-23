@@ -89,7 +89,8 @@ export default function Combat({ enabled }: { enabled: boolean }) {
     const fire = () => {
       const t = performance.now() / 1000;
       if (t < atkCd.current) return;
-      if (!G.armed) { punch(); return; }
+      // weapon selector (Visual V6): pistol fires only when selected
+      if (!G.armed || G.weaponSel !== "pistol") { punch(); return; }
       atkCd.current = t + 0.26;
       if (G.ammo <= 0) { sfx.dryFire(); return; }
       G.ammo -= 1;
@@ -143,9 +144,10 @@ export default function Combat({ enabled }: { enabled: boolean }) {
       if (!G.driving && !G.interior && (G.playerPos.x - x) ** 2 + (G.playerPos.z - z) ** 2 < 2.2 ** 2) {
         pickupReadyAt.current[i] = G.timeS + RESPAWN_S;
         G.armed = true;
+        G.weaponSel = "pistol";
         G.ammo = Math.min(72, G.ammo + 24);
         sfx.pickup();
-        toast("🔫 Pistol acquired — click or J to fire (+24 shells)");
+        toast("Pistol acquired — click or J to fire, Q to holster (+24 shells)");
       }
     });
     // shot FX: muzzle flash (60ms), tracer (80ms), impact sparks (120ms)

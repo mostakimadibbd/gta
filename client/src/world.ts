@@ -24,6 +24,8 @@ export interface PropSpot { x: number; z: number; kind: "bench" | "hydrant" | "c
 // District names (original): Docks (south), Market Row (centre),
 // Lantern Park (NE), Gull Heights (north), Ferry Quarter (west), East Yards (east)
 export function districtAt(x: number, z: number): string {
+  if (z >= 190) return "Coral Shores";
+  if (z > 118 && Math.abs(x - 60) < 18) return "Bay Bridge";
   if (z > 90) return "The Docks";
   if (x < -60) return "Ferry Quarter";
   if (x > 60 && z < -60) return "Lantern Park";
@@ -68,6 +70,65 @@ for (const bx of BLOCK_CENTERS) {
     if (bz > 60) props.push({ x: bx + 12, z: bz - 15, kind: "crate", rot: rnd() });
   }
 }
+// ================================================================
+// Phase 4 — Coral Shores: a second small city across the bay, joined
+// to Port Sable by the (now drivable) Bay Bridge causeway at x = 60.
+// Own grid: roads along X at z ∈ {224, 264, 304}, along Z at
+// x ∈ {40, 72, 104}; landmass x ∈ [28, 112], z ∈ [196, 324].
+// ================================================================
+export const BRIDGE = { x: 60, halfW: 5, z0: 116, z1: 208, deckH: 5.5, ramp: 26, rampN: 14 };
+export const CORAL = { x0: 28, x1: 112, z0: 196, z1: 324 };
+export const CORAL_ROAD_X = [40, 72, 104];
+export const CORAL_ROAD_Z = [224, 264, 304];
+
+/** Ground height — 0 everywhere except the bridge causeway profile. */
+export function groundYAt(x: number, z: number): number {
+  if (Math.abs(x - BRIDGE.x) > BRIDGE.halfW + 1.6) return 0;
+  const south = (z - (BRIDGE.z0 - BRIDGE.ramp)) / BRIDGE.ramp; // 0→1 up the south ramp
+  const north = ((BRIDGE.z1 + BRIDGE.rampN) - z) / BRIDGE.rampN; // 1→0 down the shorter north ramp (lands before Coral's z=224 road)
+  const s = Math.max(0, Math.min(1, Math.min(south, north)));
+  return BRIDGE.deckH * s * s * (3 - 2 * s); // smoothstep ramps
+}
+export const onBridge = (x: number, z: number) => groundYAt(x, z) > 0.05;
+export const inCoral = (x: number, z: number) => x >= CORAL.x0 && x <= CORAL.x1 && z >= CORAL.z0 && z <= CORAL.z1;
+/** Open water (swimmable; blocks cars). Land = Port Sable shore, Coral landmass, or the bridge deck. */
+export function isWaterAt(x: number, z: number): boolean {
+  if (onBridge(x, z)) return false;
+  if (z <= WATER_Z && Math.abs(x) <= WORLD_BOUND + 8 && z >= -WORLD_BOUND - 8) return false; // Port Sable land
+  if (inCoral(x, z)) return false;
+  return true;
+}
+
+// Coral Shores buildings — same generator idiom as Port Sable blocks.
+for (const bx of [56, 88]) {
+  for (const bz of [244, 284]) {
+    const spots: [number, number][] = [[-9, -9], [9, -9], [-9, 9], [9, 9]];
+    for (const [ox, oz] of spots) {
+      if (rnd() < 0.1) { trees.push({ x: bx + ox, z: bz + oz, scale: 0.8 + rnd() * 0.4 }); continue; }
+      const w = 9 + rnd() * 5, d = 9 + rnd() * 5;
+      buildings.push({
+        x: bx + ox, z: bz + oz, width: w, depth: d,
+        height: 8 + rnd() * 22,
+        color: palette[Math.floor(rnd() * palette.length)],
+        roof: roofs[Math.floor(rnd() * roofs.length)],
+        district: "Coral Shores",
+      });
+    }
+    props.push({ x: bx - 15, z: bz - 15, kind: "bench", rot: rnd() * 3 });
+    props.push({ x: bx + 15, z: bz + 15, kind: "hydrant", rot: 0 });
+  }
+}
+// waterfront row facing the bridge landing + 4 glass towers
+for (const wx of [44, 84, 100]) {
+  buildings.push({ x: wx, z: 214, width: 10 + rnd() * 3, depth: 7, height: 9 + rnd() * 10, color: palette[Math.floor(rnd() * palette.length)], roof: roofs[Math.floor(rnd() * roofs.length)], district: "Coral Shores" });
+}
+[[47, 235], [97, 253], [65, 275], [88, 293]].forEach(([tx, tz], i) => {
+  buildings.push({ x: tx, z: tz, width: 11, depth: 11, height: 36 + ((i * 5) % 13), color: "#3d7296", roof: "#274b5e", district: "Coral Shores", glass: true });
+});
+// Coral street lamps along its roads
+for (const c of CORAL_ROAD_X) for (let t = 206; t <= 318; t += 24) lamps.push([c + 7, 0, t], [c - 7, 0, t]);
+for (const c of CORAL_ROAD_Z) for (let t = 34; t <= 108; t += 24) lamps.push([t, 0, c + 7], [t, 0, c - 7]);
+
 // ---- Downtown skyline: tall glass towers on free spots of central blocks
 // (generated building spots are (-9,-9), (9,-9), (0,10); towers use (9,10)).
 const towerBlocks: [number, number][] = [[0, 0], [-40, 0], [40, 0], [0, -40], [0, 40], [-40, -40], [40, 40], [-40, 40], [40, -40]];
@@ -87,6 +148,9 @@ for (const bz of [-40, 0, 40]) {
 // ---- Palm trees: beach row + harbour boulevard (visual only, thin trunks
 // are excluded from isBlocked so they never trap the player)
 export const palms: { x: number; z: number; scale: number; lean: number }[] = [];
+// Coral palms: boulevard rows + beach row
+for (let x = 34; x <= 110; x += 19) { palms.push({ x, z: 217.5, scale: 0.95 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); palms.push({ x: x + 8, z: 230.5, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); }
+for (let x = 33; x <= 108; x += 16) palms.push({ x, z: 201, scale: 1 + rnd() * 0.35, lean: (rnd() - 0.5) * 0.22 });
 for (let x = -105; x <= 105; x += 21) palms.push({ x, z: 117.5, scale: 0.95 + rnd() * 0.35, lean: (rnd() - 0.5) * 0.24 });
 for (let z = -58; z <= 58; z += 29) { palms.push({ x: 27.6, z, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); palms.push({ x: -27.6, z: z + 14, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); }
 palms.push({ x: 14, z: 116, scale: 1.15, lean: 0.12 }, { x: -14, z: 116, scale: 1.1, lean: -0.1 });
@@ -103,6 +167,8 @@ for (const c of ROAD_COORDS) {
 for (let x = -105; x <= 105; x += 15) trees.push({ x, z: 120 + rnd() * 4, scale: 1 + rnd() * 0.4 });
 
 export function isOnRoad(x: number, z: number): boolean {
+  if (onBridge(x, z)) return true;
+  if (inCoral(x, z)) return CORAL_ROAD_X.some((c) => Math.abs(x - c) < ROAD_WIDTH / 2) || CORAL_ROAD_Z.some((c) => Math.abs(z - c) < ROAD_WIDTH / 2);
   return ROAD_COORDS.some((c) => Math.abs(x - c) < ROAD_WIDTH / 2 || Math.abs(z - c) < ROAD_WIDTH / 2);
 }
 
@@ -114,7 +180,36 @@ export const FUEL_STATIONS: FuelStation[] = [
   { x: 27.5, z: 100, name: "Docks Fuel" },
   { x: -53.5, z: -27, name: "Ferry Quarter Fuel" },
   { x: 66, z: 47, name: "East Yards Fuel" },
+  { x: 99, z: 229, name: "Coral Shores Fuel" },
 ];
+
+// ---- Phase 4: theft + garage data points --------------------------------
+export const PAWN_SHOP = { x: 88, z: 213.2, name: "Coral Pawn" }; // fence counter, Coral Shores
+export interface RegisterPoint { id: string; name: string; x: number; z: number; }
+export const REGISTERS: RegisterPoint[] = [
+  { id: "mart", name: "Sable Mart", x: 13.5, z: 33 },
+  { id: "goods", name: "Harbour Goods", x: -33, z: 13.5 },
+  { id: "grocer", name: "Lantern Groceries", x: 53, z: -13.5 },
+  { id: "coral", name: "Coral Shores Goods", x: 48, z: 213.2 },
+];
+export interface GarageZone { id: "villa" | "lina"; label: string; x: number; z: number; r: number; exitX: number; exitZ: number; exitHeading: number; }
+export const GARAGE_ZONES: GarageZone[] = [
+  { id: "villa", label: "Villa Garage", x: MANSION.x + 4.4, z: MANSION.z + 4.4, r: 6.5, exitX: -75.6, exitZ: 96, exitHeading: 0 },
+  { id: "lina", label: "Lina's Garage", x: -25, z: 100.6, r: 7.5, exitX: -25, exitZ: 95.5, exitHeading: 0 },
+];
+/** Canonical model names + display stats per car kind (garage UI). */
+export const CAR_MODELS: Record<CarSpawn["kind"], { name: string; topSpeed: number; handling: number }> = {
+  sedan: { name: "Meridian Sedan", topSpeed: 152, handling: 62 },
+  hatch: { name: "Pico Hatch", topSpeed: 134, handling: 58 },
+  pickup: { name: "Harbor Hauler", topSpeed: 140, handling: 48 },
+  van: { name: "Ferry Van", topSpeed: 128, handling: 42 },
+  coupe: { name: "Coral Coupe", topSpeed: 182, handling: 74 },
+  supercar: { name: "Gullwing GT", topSpeed: 238, handling: 88 },
+  muscle: { name: "Yardbird V8", topSpeed: 198, handling: 55 },
+  suv: { name: "Ferry Rover", topSpeed: 160, handling: 52 },
+  classic: { name: "Dune Classic '74", topSpeed: 150, handling: 50 },
+  motorcycle: { name: "Sable Stinger", topSpeed: 208, handling: 82 },
+};
 // ---- Phase 2: hillside scenic overlook (final mood-board image) ----
 export const OVERLOOK = { x: -102, z: -114 };
 
@@ -123,6 +218,8 @@ export const OVERLOOK = { x: -102, z: -114 };
 export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[] = [
   { x: -25, z: 106.5, hw: 6.1, hd: 4.1 }, // Lina's Garage exterior (Docks frontage)
   { x: 44, z: 117, hw: 7.6, hd: 4.6 },   // Club Solace exterior
+  { x: 48, z: 218, hw: 5, hd: 3.4 },     // Coral Shores Goods (register shop)
+  { x: 88, z: 218, hw: 5, hd: 3.4 },     // Coral Pawn shop
 ];
 export const GARAGE_EXT_DOOR = { x: -25, z: 100.6 }; // prompt point, street side
 export const CLUB_EXT_DOOR = { x: 44, z: 110.2 };    // prompt point, beach side
@@ -145,7 +242,13 @@ export function isBlocked(x: number, z: number, radius: number): boolean {
   for (const b of STATIC_BLOCKERS) {
     if (Math.abs(x - b.x) < b.hw + radius && Math.abs(z - b.z) < b.hd + radius) return true;
   }
-  if (Math.abs(x) > WORLD_BOUND + 8 || z < -WORLD_BOUND - 8 || z > WATER_Z + 6) return true;
+  if (onBridge(x, z)) {
+    // on the causeway: only the deck corridor is passable
+    if (Math.abs(x - BRIDGE.x) > BRIDGE.halfW + 1.6) return true;
+  } else {
+    const inMain = Math.abs(x) <= WORLD_BOUND + 8 && z >= -WORLD_BOUND - 8 && z <= WATER_Z + 6;
+    if (!inMain && !inCoral(x, z)) return true;
+  }
   for (const b of buildings) {
     if (Math.abs(x - b.x) < b.width / 2 + radius && Math.abs(z - b.z) < b.depth / 2 + radius) return true;
   }
@@ -157,6 +260,17 @@ export function isBlocked(x: number, z: number, radius: number): boolean {
     if (Math.abs(x - h.x) < 3.1 + radius && Math.abs(z - h.z) < 2.9 + radius) return true;
   }
   return false;
+}
+
+/** AABB blockers near a point — feeds the swept-collision query (physics). */
+export function blockersNear(x: number, z: number, r: number): { x: number; z: number; hw: number; hd: number }[] {
+  const out: { x: number; z: number; hw: number; hd: number }[] = [];
+  const near = (bx: number, bz: number) => Math.abs(bx - x) < r && Math.abs(bz - z) < r;
+  if (near(MANSION.x, MANSION.z)) out.push({ x: MANSION.x, z: MANSION.z, hw: 6.6, hd: 4.6 });
+  for (const b of STATIC_BLOCKERS) if (near(b.x, b.z)) out.push(b);
+  for (const b of buildings) if (near(b.x, b.z)) out.push({ x: b.x, z: b.z, hw: b.width / 2, hd: b.depth / 2 });
+  for (const h of houses) if (near(h.x, h.z)) out.push({ x: h.x, z: h.z, hw: 3.1, hd: 2.9 });
+  return out;
 }
 
 /** Nearest road-grid intersection to a point (used by traffic/police turns). */
@@ -181,4 +295,9 @@ export const CAR_SPAWNS: CarSpawn[] = [
   { id: 9, x: -63, z: -20, heading: Math.PI / 2, color: "#6b3a4a", model: "Yardbird", kind: "hatch", owned: false },
   { id: 10, x: -99, z: -112, heading: -2.35, color: "#c8ccd2", model: "Gullwing GT-S", kind: "supercar", owned: false }, // silver supercar at the overlook
   { id: 11, x: 8, z: 117, heading: -0.4, color: "#c22e2e", model: "Sable Stinger", kind: "motorcycle", owned: false }, // rideable bike at the beach (Phase 3)
+  // Coral Shores parked cars (Phase 4)
+  { id: 12, x: 46, z: 221, heading: Math.PI / 2, color: "#3f7fae", model: "Meridian Sedan", kind: "sedan", owned: false },
+  { id: 13, x: 78, z: 261, heading: -Math.PI / 2, color: "#8a3324", model: "Pico Hatch", kind: "hatch", owned: false },
+  { id: 14, x: 101, z: 290, heading: Math.PI, color: "#2e4a5a", model: "Coral Coupe", kind: "coupe", owned: false },
+  { id: 15, x: 58, z: 301, heading: 0, color: "#946b2d", model: "Yardbird V8", kind: "muscle", owned: false },
 ];
