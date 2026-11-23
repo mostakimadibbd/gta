@@ -10,6 +10,24 @@
   box-sizing: border-box;
 }
 
+/* Harborfall is a game surface: NOTHING is text-selectable, on any platform.
+   Kills the iOS Copy/Look Up callout, Android selection handles, desktop
+   drag-select and the long-press menu over HUD text and buttons. */
+html,
+body,
+#root,
+.game-shell,
+.game-shell * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.game-shell canvas {
+  touch-action: none;
+}
+
 button,
 input {
   font: inherit;
