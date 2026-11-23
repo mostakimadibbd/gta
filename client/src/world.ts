@@ -48,10 +48,14 @@ export const BUS_STOPS: { x: number; z: number }[] = [
   { x: 27.7, z: -30 }, { x: -67.7, z: 14 }, { x: 34, z: 67.7 },
 ];
 /** Cars the Northgate dealership sells (delivered to your garage). */
-export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv"; color: string; price: number }[] = [
+export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv" | "wedge" | "hyper" | "gt"; color: string; price: number }[] = [
   { kind: "coupe", color: "#3f7fae", price: 4200 },
   { kind: "supercar", color: "#c22e2e", price: 9800 },
   { kind: "suv", color: "#2e4a5a", price: 3600 },
+  // ---- Phase 8 exotics: original Harborfall designs (see CarBody) ----
+  { kind: "gt", color: "#31556e", price: 12500 },
+  { kind: "wedge", color: "#d99a3d", price: 25000 },
+  { kind: "hyper", color: "#e8ecef", price: 40000 },
 ];
 /** Northgate mansion row (west edge, gated) — visuals in World.tsx. */
 export const NORTH_MANSIONS: { x: number; z: number; color: string; roof: string }[] = [
@@ -308,6 +312,12 @@ export const CAR_MODELS: Record<CarSpawn["kind"], { name: string; topSpeed: numb
   taxi: { name: "Sable Cab", topSpeed: 150, handling: 60 },
   bicycle: { name: "Shoreline Cruiser", topSpeed: 28, handling: 70 },
   boat: { name: "Sable Skiff 240", topSpeed: 88, handling: 55 },
+  // ---- Phase 8 exotics + wrecker (original designs; collision radius
+  // 1.6 for wedge/hyper/gt per VISUAL_AUDIT Phase 8 addendum) ----
+  wedge: { name: "Vantara S", topSpeed: 262, handling: 90 },
+  hyper: { name: "Kestrel One", topSpeed: 288, handling: 92 },
+  gt: { name: "Marlowe GT", topSpeed: 224, handling: 76 },
+  tow: { name: "Sable Wrecker", topSpeed: 132, handling: 46 },
 };
 // ---- Phase 2: hillside scenic overlook (final mood-board image) ----
 export const OVERLOOK = { x: -102, z: -114 };
@@ -470,7 +480,7 @@ export function nearestIntersection(x: number, z: number): [number, number] {
 }
 
 // ---- Drivable parked cars (original model names, Harborfall range) ----
-export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat"; owned: boolean; }
+export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow"; owned: boolean; }
 export const CAR_SPAWNS: CarSpawn[] = [
   { id: 0, x: 3, z: 106, heading: Math.PI, color: "#1f7a72", model: "Sable Sprinter", kind: "sedan", owned: true },   // Rayan's own car at the pier
   { id: 1, x: -17, z: -40, heading: Math.PI / 2, color: "#d99a3d", model: "Harbor Hauler", kind: "pickup", owned: false },
@@ -499,4 +509,8 @@ export const CAR_SPAWNS: CarSpawn[] = [
   { id: 22, x: 16, z: 116, heading: 0.4, color: "#c22e2e", model: "Shoreline Cruiser", kind: "bicycle", owned: false }, // beach bike
   { id: 23, x: 72, z: -72, heading: -0.6, color: "#274268", model: "Shoreline Cruiser", kind: "bicycle", owned: false }, // Lantern Park bike
   { id: 24, x: 4, z: 134.5, heading: Math.PI, color: "#e8ecef", model: "Sable Skiff 240", kind: "boat", owned: false }, // speedboat off the pier
+  // ---- Phase 8: Sable Motors display pair + Lina's wrecker ----
+  { id: 25, x: -28, z: -238, heading: Math.PI / 2, color: "#d99a3d", model: "Vantara S", kind: "wedge", owned: false },   // dealership display wedge
+  { id: 26, x: -44, z: -238, heading: Math.PI / 2, color: "#31556e", model: "Marlowe GT", kind: "gt", owned: false },    // dealership display GT
+  { id: 27, x: -17, z: 105, heading: 0, color: "#d99a3d", model: "Sable Wrecker", kind: "tow", owned: false },           // tow truck at Lina's yard
 ];

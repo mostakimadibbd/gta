@@ -16,11 +16,15 @@ import { G, resetAfterArrest, resetAfterWasted, windLabel } from "./game/store";
 import { M, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission } from "./game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
 import Phase7Systems from "./components/Phase7";
+import Phase8Systems from "./components/Phase8";
 import { jobTarget } from "./game/jobs";
+import { currentMiniUi, clearClothingOverride, type MiniUi } from "./game/phase8";
+import { padCam } from "./game/gamepad";
+import { perf, DPR_LADDER, tierDprCap, autoDropTier, manualTier, showFps, setShowFps } from "./game/perf";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
 import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints } from "./world";
 import { skyEnvTexture, setNormalsEnabled } from "./textures";
-import { gates, initQuality, runFpsSampleOnce, setTier, type QualityTier } from "./game/quality";
+import { gates, initQuality, runFpsSampleOnce, type QualityTier } from "./game/quality";
 import Weather from "./components/Weather";
 import Combat from "./components/Combat";
 import Interiors from "./components/Interiors";
@@ -65,6 +69,8 @@ function EnvSetup({ theme, quality }: { theme: GameTheme; quality: QualityTier }
 
 const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
 const tmpV = new THREE.Vector3();
+const tmpOff = new THREE.Vector3(); // Phase 8: gamepad orbit scratch (no per-frame allocation)
+const tmpSph = new THREE.Spherical();
 // (Phase 5: the composer is gated by the quality tier now, not by pointer
 // type — see game/quality.ts. Auto-detection still starts coarse-pointer
 // devices on Low/Medium.)
@@ -130,6 +136,16 @@ function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THR
     if (!controls.current.enabled) controls.current.enabled = true;
     tmpV.copy(target.current); tmpV.y += 1.1;
     controls.current.target.lerp(tmpV, 1 - Math.exp(-5 * delta));
+    // Phase 8 gamepad: right-stick orbit — rotate the camera offset
+    // around the (already damped) target, then let OrbitControls settle
+    if ((padCam.yaw !== 0 || padCam.pitch !== 0) && !orbit) {
+      const yaw = padCam.yaw, pitch = padCam.pitch;
+      padCam.yaw = 0; padCam.pitch = 0;
+      tmpSph.setFromVector3(tmpOff.copy(camera.position).sub(controls.current.target));
+      tmpSph.theta -= yaw;
+      tmpSph.phi = THREE.MathUtils.clamp(tmpSph.phi + pitch, 0.18, 1.45);
+      camera.position.copy(controls.current.target).add(tmpOff.setFromSpherical(tmpSph));
+    }
     controls.current.autoRotate = orbit;
     controls.current.autoRotateSpeed = 0.65;
     controls.current.maxDistance = orbit ? 8 : G.interior ? 6.5 : camFar.current ? 26 : 15;
@@ -165,6 +181,45 @@ function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THR
     applyShake();
   });
   return <OrbitControls ref={controls} makeDefault enablePan={false} minDistance={4} maxDistance={18} maxPolarAngle={Math.PI / 2.05} />;
+}
+
+/** Phase 8 smoothness governor: dynamic resolution + continuous
+ * adaptive quality (game/perf.ts holds the policy). Samples frame time
+ * over rolling 1 s windows INSIDE gameplay only; applies DPR through
+ * gl.setPixelRatio without remounting the canvas. */
+function PerfGovernor({ active }: { active: boolean }) {
+  const gl = useThree((s) => s.gl);
+  const acc = useRef({ frames: 0, winT: 0, lastStep: 0, highSince: 0, lowFpsSince: 0, idx: -1 });
+  useFrame((_, delta) => {
+    const a = acc.current;
+    if (!active) { a.frames = 0; a.winT = 0; a.lowFpsSince = 0; return; }
+    a.frames += 1;
+    a.winT += delta;
+    if (a.winT < 1) return;
+    const fps = a.frames / a.winT;
+    a.frames = 0; a.winT = 0;
+    perf.fps = fps;
+    const now = performance.now() / 1000;
+    const cap = tierDprCap(G.settings.quality);
+    // ladder index for the current cap (start at the cap, only adapt down/up within it)
+    const capIdx = DPR_LADDER.reduce((best, v, i) => (v <= cap + 0.001 ? i : best), 0);
+    if (a.idx < 0 || a.idx > capIdx) a.idx = capIdx;
+    const canStep = now - a.lastStep > 2.5;
+    if (fps < 47 && a.idx > 0 && canStep) {
+      a.idx -= 1; a.lastStep = now; a.highSince = 0;
+    } else if (fps > 57 && a.idx < capIdx) {
+      a.highSince += 1;
+      if (a.highSince >= 5 && canStep) { a.idx += 1; a.lastStep = now; a.highSince = 0; }
+    } else a.highSince = 0;
+    const dpr = DPR_LADDER[a.idx];
+    if (Math.abs(dpr - perf.dpr) > 0.001) { perf.dpr = dpr; gl.setPixelRatio(dpr); }
+    // adaptive tier: sustained < 40 FPS for 8 s → one notch down
+    if (fps < 40) {
+      if (a.lowFpsSince === 0) a.lowFpsSince = now;
+      else if (now - a.lowFpsSince > 8) { a.lowFpsSince = 0; autoDropTier(); }
+    } else a.lowFpsSince = 0;
+  });
+  return null;
 }
 
 /** Photo-mode capture: renders one frame then downloads the canvas PNG. */
@@ -206,8 +261,8 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy" };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0 };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -475,11 +530,22 @@ export default function App() {
       savedPosRef.current = null;
     }
   }, [started]);
+  // Phase 8: Thread & Tide override — bumped on shop purchases; picking
+  // a character or variant in Character Select CLEARS the override (the
+  // documented rule: the select screen is the change-out moment)
+  const [clothingKey, setClothingKey] = useState(0);
+  useEffect(() => {
+    const onCloth = () => setClothingKey((k) => k + 1);
+    window.addEventListener("harborfall-clothing-changed", onCloth);
+    return () => window.removeEventListener("harborfall-clothing-changed", onCloth);
+  }, []);
   const pickCharacter = useCallback((id: string) => {
+    clearClothingOverride();
     setCharChoice((c) => { const next = { id, variant: c.variant }; persistCharacterChoice(next.id, next.variant); return next; });
     sfx.click();
   }, []);
   const pickVariant = useCallback((v: number) => {
+    clearClothingOverride();
     setCharChoice((c) => { const next = { id: c.id, variant: v }; persistCharacterChoice(next.id, next.variant); return next; });
     sfx.click();
   }, []);
@@ -602,6 +668,8 @@ export default function App() {
         holdLabel: G.hold?.label ?? "", holdP: G.hold?.progress ?? 0, weapon: G.weaponSel,
         stamina: Math.round(G.stamina),
         wind: windLabel(G.wind),
+        mini: currentMiniUi(), // Phase 8: fishing/gym minigame bar (8 Hz poll)
+        fps: showFps() ? Math.round(perf.fps) : 0,
       });
       setCamFlash(nowS() - G.camFlashAt < 0.22);
       // ---- Phase 6 flow bits polled with the HUD: door fade, respawn
@@ -653,7 +721,7 @@ export default function App() {
       if (bigMap) drawMap(bigmapRef.current, 520);
       audioTick(G.driving, G.speedKph, G.wanted);
       if (G.status) { /* overlay visible via hud.status */ }
-    }, 125);
+    }, 200); // Phase 8 smoothness: HUD snapshot throttled to 5 Hz (was 8 Hz)
     return () => window.clearInterval(id);
   }, [theme, bigMap]);
 
@@ -684,7 +752,7 @@ export default function App() {
       if ((key === "q" || key === "tab") && started) {
         e.preventDefault();
         // Phase 6: Q cycles every OWNED slot — fists → pistol → SMG → shotgun
-        const order = ["fist", "pistol", "smg", "shotgun"] as const;
+        const order = ["fist", "pistol", "smg", "shotgun", "bat"] as const;
         const owned = order.filter((w) => w === "fist" || G.weaponOwned[w]);
         const next = owned[(owned.indexOf(G.weaponSel) + 1) % owned.length] ?? "fist";
         G.weaponSel = next;
@@ -852,13 +920,15 @@ export default function App() {
             driving={driving} paused={effectivePaused} onDrivingChange={setDriving} onExit={exitVehicle}
             onNearVehicleChange={setNearVehicle} physicsRef={physicsRef} themeAccent={theme.carAccent} />
           <Player positionRef={playerPositionRef} rotationRef={playerRotationRef} driving={driving} paused={effectivePaused}
-            preset={presetById(charChoice.id)} variant={charChoice.variant} showcase={charOpen} />
+            preset={presetById(charChoice.id)} variant={charChoice.variant} clothingKey={clothingKey} showcase={charOpen} />
           <GameSystems paused={effectivePaused} physicsRef={physicsRef} theme={theme} cb={sysCb} tokenCountRef={tokenCountRef} quality={quality} stage={worldStage} />
           <Weather paused={effectivePaused} theme={theme} />
           <Combat enabled={started && !effectivePaused} />
           <Interiors />
           <Interactions />
           <Phase7Systems />
+          <Phase8Systems />
+          <PerfGovernor active={started && !paused && flow === "game"} />
           <PhotoCapture shotRef={photoShotRef} />
           <FirstFrame onReady={() => setSceneReady(true)} />
           {players.map((pl) => <RemoteAvatar key={pl.playerId} player={pl} />)}
@@ -913,8 +983,9 @@ export default function App() {
               </div>
               <div className="cash">${hud.cash.toLocaleString()}</div>
               {hud.lootCount > 0 && <div className="loot-chip" title="Stolen goods — fence them at Coral Pawn or Lina's">STASH ${hud.loot.toLocaleString()} <span>· {hud.lootCount} item{hud.lootCount > 1 ? "s" : ""}</span></div>}
-              {hud.armed && hud.weapon !== "fist" && <div className="ammo-chip" title="Ammo — click or J to fire, Q to cycle weapons">{hud.weapon.toUpperCase()} · {hud.ammo}</div>}
-              <div className="hud-meta">Tokens {hud.tokens}/6 · {players.length + 1} player{players.length ? "s" : ""} · GFX {quality.toUpperCase()}</div>
+              {hud.armed && hud.weapon !== "fist" && hud.weapon !== "bat" && <div className="ammo-chip" title="Ammo — click or J to fire, Q to cycle weapons">{hud.weapon.toUpperCase()} · {hud.ammo}</div>}
+              {hud.weapon === "bat" && !driving && <div className="ammo-chip" title="Baseball bat — click or J to swing, Q to cycle weapons">BAT · WOOD</div>}
+              <div className="hud-meta">Tokens {hud.tokens}/6 · {players.length + 1} player{players.length ? "s" : ""} · GFX {quality.toUpperCase()}{hud.fps > 0 ? ` · ${hud.fps} FPS` : ""}</div>
             </div>
             <div className="hud-right-row">
               <button type="button" className="phone-fab" aria-label="Open phone (U)" onClick={() => setPhoneOpen(true)}>
@@ -930,9 +1001,9 @@ export default function App() {
                 <div className="car-bar"><span>DMG</span><div className="car-bar-track"><div className={`car-bar-fill dmg ${hud.damage > 60 ? "bad" : ""}`} style={{ width: `${hud.damage}%` }} /></div><b>{hud.damage}%</b></div>
               </div>
             )}
-            {hud.armed && !driving && (
+            {(hud.armed || hud.weapon === "bat") && !driving && (
               <button type="button" className="weapon-chip" onClick={() => {
-                const order = ["fist", "pistol", "smg", "shotgun"] as const;
+                const order = ["fist", "pistol", "smg", "shotgun", "bat"] as const;
                 const owned = order.filter((w) => w === "fist" || G.weaponOwned[w]);
                 G.weaponSel = owned[(owned.indexOf(G.weaponSel) + 1) % owned.length] ?? "fist";
                 syncWeaponMirrors();
@@ -950,6 +1021,16 @@ export default function App() {
             {hud.prompt && <PromptPill text={hud.prompt} warn={hud.promptWarn} />}
             {hud.holdLabel && (
               <div className="hold-bar"><span>{hud.holdLabel}</span><div className="hold-track"><div style={{ width: `${hud.holdP * 100}%` }} /></div></div>
+            )}
+            {hud.mini && (
+              <div className="mini-bar" role="meter" aria-label={hud.mini.label}>
+                <span>{hud.mini.label}</span>
+                <div className="mini-track">
+                  {hud.mini.zone && <div className="mini-zone" style={{ left: `${hud.mini.zone[0] * 100}%`, width: `${(hud.mini.zone[1] - hud.mini.zone[0]) * 100}%` }} />}
+                  {hud.mini.fill != null && <div className="mini-fill" style={{ width: `${hud.mini.fill * 100}%` }} />}
+                  <div className="mini-marker" style={{ left: `${hud.mini.marker * 100}%` }} />
+                </div>
+              </div>
             )}
           </div>
           {banner && <div className={`mission-banner ${banner.ok ? "ok" : "bad"}`}>{banner.text}</div>}
@@ -1232,10 +1313,13 @@ export default function App() {
             <h3 className="settings-head">Graphics · quality {quality.toUpperCase()}</h3>
             <div className="seg-row" role="group" aria-label="Quality tier">
               {(["low", "medium", "high"] as QualityTier[]).map((t) => (
-                <button key={t} type="button" className={`seg-btn ${quality === t ? "active" : ""}`} onClick={() => { setTier(t); setQualityState(t); showPopup(`Quality: ${t}`); }}>{t}</button>
+                <button key={t} type="button" className={`seg-btn ${quality === t ? "active" : ""}`} onClick={() => { manualTier(t); setQualityState(t); showPopup(`Quality: ${t}`); }}>{t}</button>
               ))}
             </div>
-            <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + SSAO, stronger bloom, CC0 at full size.</p>
+            <div className="settings-list">
+              <label><span>Show FPS</span><input type="checkbox" defaultChecked={showFps()} onChange={(e) => { setShowFps(e.target.checked); showPopup(`FPS readout ${e.target.checked ? "on" : "off"}`); }} /></label>
+            </div>
+            <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + SSAO, stronger bloom, CC0 at full size. Resolution adapts automatically for smoothness; picking a tier here turns the auto tier-drop off for this session.</p>
             <h3 className="settings-head">Subtitles</h3>
             <div className="seg-row" role="group" aria-label="Subtitle size">
               {(["S", "M", "L"] as const).map((s) => (
@@ -1265,7 +1349,10 @@ export default function App() {
               <div><dt>WASD / Arrows</dt><dd>Move</dd></div><div><dt>Shift</dt><dd>Sprint</dd></div>
               <div><dt>Space</dt><dd>Jump</dd></div><div><dt>E / F</dt><dd>Enter car · doors · buy · advance dialogue</dd></div>
               <div><dt>Click / J</dt><dd>Punch — or fire your weapon (SMG auto-fires while held)</dd></div>
-              <div><dt>Q / Tab</dt><dd>Weapon selector — fists · pistol · SMG · shotgun</dd></div>
+              <div><dt>Q / Tab</dt><dd>Weapon selector — fists · pistol · SMG · shotgun · bat</dd></div>
+              <div><dt>E at the pier / island dock</dt><dd>Fish — hold E to charge, release to cast, tap E on the bite, hold E to reel (keep the marker in the green)</dd></div>
+              <div><dt>E at Lantern Park gym</dt><dd>Bench press / treadmill session ($10, once a day each) — tap E in the zone to build Strength &amp; Stamina</dd></div>
+              <div><dt>Thread &amp; Tide (Market Row)</dt><dd>Tap E to browse outfits, hold E to buy — worn until you change character or variant</dd></div>
               <div><dt>Hold B (1★, unarmed)</dt><dd>Surrender — pay a $100 fine, no cell, no teleport</dd></div>
               <div><dt>Space near a bench/hedge</dt><dd>Vault over it</dd></div>
               <div><dt>X / Ctrl</dt><dd>Crouch — stealthier; crouch at a wall/car for cover (cops spot you slower)</dd></div>
@@ -1298,11 +1385,27 @@ export default function App() {
               <div><dt>N</dt><dd>Mute / unmute</dd></div><div><dt>R</dt><dd>Respawn (busted/wasted) · retry from checkpoint after a fail · restart mission</dd></div>
               <div><dt>U</dt><dd>Smartphone (contacts · messages · bank · jobs · story · news · social · music · themes)</dd></div>
               <div><dt>Jobs &amp; businesses</dt><dd>Phone Jobs app: taxi + delivery work. Hold E at the Wraps stall, Car Wash or Club Solace to buy in — income lands every morning</dd></div>
+              <div><dt>Tow work</dt><dd>Jobs app → Tow shift: take the Sable Wrecker at Lina's, reverse the hook to a marked car, hold still to hitch, deliver to Lina's yard — $150 a drop</dd></div>
+              <div><dt>SableBank Invest</dt><dd>Bank app: three local stocks in $100 lots — prices walk hourly and react to your heists, race wins and business buys</dd></div>
+              <div><dt>Reputation</dt><dd>Port Sable remembers: witnesses recognise repeat offenders, pickpocket victims avoid you for a day, friendly faces wave back</dd></div>
               <div><dt>The Harbour Heist</dt><dd>After Chapter 4, call Old Elias from Contacts — a two-night job: prep, then the strongroom</dd></div>
               <div><dt>Y</dt><dd>Change the weather</dd></div>
               <div><dt>⛽ Fuel</dt><dd>Cars burn fuel — park at a red FUEL canopy to refill for cash</dd></div>
               <div><dt>🔧 Damage</dt><dd>Crashes damage your car; 100% = wrecked</dd></div>
               <div><dt>Enter</dt><dd>Confirm dialogue</dd></div><div><dt>Mouse drag / wheel</dt><dd>Orbit / zoom camera</dd></div>
+            </dl>
+            <h3>Gamepad</h3>
+            <dl className="key-list">
+              <div><dt>Left stick</dt><dd>Move / steer (analog — push further to run; past the edge = sprint)</dd></div>
+              <div><dt>Right stick</dt><dd>Camera orbit</dd></div>
+              <div><dt>RT / LT</dt><dd>Accelerate / brake-reverse</dd></div>
+              <div><dt>A</dt><dd>Interact / advance dialogue</dd></div>
+              <div><dt>B</dt><dd>Exit car · back / pause</dd></div>
+              <div><dt>X</dt><dd>Jump · handbrake (hold, in car)</dd></div>
+              <div><dt>Y</dt><dd>Phone</dd></div>
+              <div><dt>LB / RB</dt><dd>Weapon cycle / horn</dd></div>
+              <div><dt>Start</dt><dd>Pause</dd></div>
+              <div><dt>Touch</dt><dd>Floating analog stick (left thumb, appears where you touch) — gyro steers only while the stick is centred</dd></div>
             </dl>
             <button type="button" className="primary" onClick={() => setShowHelp(false)}>Close</button>
           </section>

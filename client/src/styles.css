@@ -525,7 +525,21 @@ body,
 }
 .touch-pause { position:absolute; top:52px; right:12px; width:42px; height:42px; border-radius:50%; border:1.5px solid var(--accent); background:var(--panel); color:var(--hud-text); font-weight:800; }
 .touch-joy { position:absolute; left:18px; bottom:26px; width:128px; height:128px; border-radius:50%; border:2px solid #ffffff45; background:#0b141855; pointer-events:auto; touch-action:none; display:flex; align-items:center; justify-content:center; }
+/* Phase 8 floating joystick: the left control zone + the stick that
+   materialises under the thumb (dark-glass Phase 5 look, transform-only
+   rendering, will-change on the moving parts) */
+.touch-zone { position:absolute; left:0; bottom:0; width:47%; height:64%; pointer-events:auto; touch-action:none; }
+.touch-joy.ghost { position:absolute; left:18px; bottom:26px; opacity:0.32; pointer-events:none; }
+.touch-joy-base { position:absolute; left:0; top:0; width:128px; height:128px; border-radius:50%; border:2px solid #ffffff50; background:#0b141866; backdrop-filter:blur(3px); opacity:0; scale:0.92; pointer-events:none; will-change:transform,opacity; display:flex; align-items:center; justify-content:center; }
+.touch-joy-knob2 { width:54px; height:54px; border-radius:50%; background:#ffffff38; border:1.5px solid #fff8; box-shadow:0 2px 10px #0009; will-change:transform; }
 .touch-joy-knob { width:52px; height:52px; border-radius:50%; background:#ffffff30; border:1.5px solid #fff7; }
+/* Phase 8 minigame bar (fishing charge/reel, gym timing) */
+.mini-bar { display:flex; align-items:center; gap:10px; background:rgba(8,11,13,0.78); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:6px 12px; backdrop-filter:blur(6px); }
+.mini-bar span { font-size:11px; font-weight:700; letter-spacing:0.06em; color:#e8ece7; white-space:nowrap; }
+.mini-track { position:relative; width:220px; height:12px; border-radius:6px; background:#1c2a26; overflow:hidden; }
+.mini-zone { position:absolute; top:0; bottom:0; background:#22c55e88; }
+.mini-fill { position:absolute; left:0; top:0; bottom:0; background:#f0b35e99; }
+.mini-marker { position:absolute; top:-2px; bottom:-2px; width:4px; margin-left:-2px; border-radius:2px; background:#fff; box-shadow:0 0 6px #fff; }
 .touch-steer { position:absolute; left:16px; bottom:30px; display:flex; gap:12px; }
 .touch-actions { position:absolute; right:16px; bottom:26px; display:flex; flex-wrap:wrap; gap:10px; justify-content:flex-end; max-width:46vw; }
 .touch-btn { min-width:58px; height:58px; padding:0 10px; border-radius:50%; border:1.5px solid var(--accent); background:#12262ab8; color:var(--hud-text); font-weight:800; font-size:13px; }

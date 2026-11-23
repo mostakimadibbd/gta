@@ -16,6 +16,12 @@ export interface PhysicsEngine {
   collideAabb(x: number, z: number, radius: number, boxX: number, boxZ: number, halfW: number, halfD: number): boolean;
   resolveAabb(x: number, z: number, radius: number, boxX: number, boxZ: number, halfW: number, halfD: number): { x: number; z: number };
   stepPedestrian(state: PedState, targetX: number, targetZ: number, threatX: number, threatZ: number, flee: boolean, walkSpeed: number, deltaTime: number): PedState;
+  // Phase 8 — Harborfall Core decision logic
+  trafficDecision(speed: number, cruise: number, distStop: number, lightState: number, queueGap: number): { target: number; braking: boolean };
+  stepPedestrianV2(state: PedState, targetX: number, targetZ: number, threatX: number, threatZ: number, flee: boolean, walkSpeed: number, others: { x: number; z: number }[], sepRadius: number, deltaTime: number): PedState;
+  losSampled(ox: number, oz: number, tx: number, tz: number, blockers: { x: number; z: number; hw: number; hd: number }[]): number;
+  boatBuoyancy(phase: number, speed: number, waveAmp: number): { bob: number; pitch: number; roll: number };
+  racePace(playerDist: number, oppDist: number, baseTop: number, rubber: number): number;
   source: "wasm" | "typescript";
 }
 
@@ -202,6 +208,55 @@ export const fallbackPhysics: PhysicsEngine = {
     const speed = state.speed + clamp(desired - state.speed, -6 * dt, 6 * dt);
     return { x: state.x + Math.sin(heading) * speed * dt, z: state.z + Math.cos(heading) * speed * dt, heading, speed };
   },
+  // --- Phase 8: exact TS mirrors of the Harborfall Core decision exports --
+  trafficDecision(speed, cruise, distStop, lightState, queueGap) {
+    let target = cruise;
+    let braking = false;
+    if (lightState >= 1 && distStop < 16) {
+      target = Math.min(target, clamp((distStop - 1.1) * 0.6, 0, cruise));
+      if (distStop < 9) braking = true;
+    }
+    if (queueGap < 8.5) {
+      target = Math.min(target, clamp((queueGap - 2.4) * 1.15, 0, cruise));
+      if (queueGap < 5) braking = true;
+    }
+    if (target < speed - 0.5) braking = true;
+    return { target, braking };
+  },
+  stepPedestrianV2(state, targetX, targetZ, threatX, threatZ, flee, walkSpeed, others, sepRadius, deltaTime) {
+    const base = fallbackPhysics.stepPedestrian(state, targetX, targetZ, threatX, threatZ, flee, walkSpeed, deltaTime);
+    const f = fallbackPhysics.separationForce(base.x, base.z, others, sepRadius);
+    const dt = clamp(deltaTime, 0, 0.1);
+    return { ...base, x: base.x + f.x * dt * 0.85, z: base.z + f.z * dt * 0.85 };
+  },
+  losSampled(ox, oz, tx, tz, blockers) {
+    const n = 12;
+    let clear = 0;
+    for (let i = 1; i < n; i++) {
+      const f = i / n;
+      const px = ox + (tx - ox) * f, pz = oz + (tz - oz) * f;
+      let blocked = false;
+      for (let b = 0; b < 4; b++) {
+        const bl = blockers[b];
+        if (!bl || bl.hw <= 0) continue;
+        if (Math.abs(px - bl.x) < bl.hw && Math.abs(pz - bl.z) < bl.hd) { blocked = true; break; }
+      }
+      if (!blocked) clear++;
+    }
+    return clear / (n - 1);
+  },
+  boatBuoyancy(phase, speed, waveAmp) {
+    const plane = clamp(Math.abs(speed) / 14.5, 0, 1);
+    const calm = 1 - plane * 0.62;
+    return {
+      bob: Math.sin(phase) * waveAmp * calm,
+      pitch: Math.sin(phase * 0.8 + 1.3) * 0.021 * calm - plane * 0.012,
+      roll: Math.sin(phase * 0.63 + 0.4) * 0.03 * calm,
+    };
+  },
+  racePace(playerDist, oppDist, baseTop, rubber) {
+    return baseTop + clamp((playerDist - oppDist) * 0.014, -rubber, rubber);
+  },
 };
 
 interface WasmModule {
@@ -288,9 +343,52 @@ export async function loadPhysicsEngine(): Promise<PhysicsEngine> {
         },
       };
     } catch { b5 = null; }
+    // Phase 8 Harborfall Core exports: own try/catch (older .wasm lacks
+    // them → exact TS mirrors take over, same pattern as Phase 4/6)
+    let core: Pick<PhysicsEngine, "trafficDecision" | "stepPedestrianV2" | "losSampled" | "boatBuoyancy" | "racePace"> | null = null;
+    try {
+      const traffic = module.cwrap("traffic_decision", null, Array(7).fill("number"));
+      const stepPed2 = module.cwrap("step_pedestrian_v2", null, Array(20).fill("number"));
+      const los = module.cwrap("los_sampled", "number", Array(21).fill("number"));
+      const buoy = module.cwrap("boat_buoyancy", null, Array(5).fill("number"));
+      const pace = module.cwrap("race_pace", "number", Array(4).fill("number"));
+      const h = module.HEAPF64;
+      const out3 = module._malloc(3 * Float64Array.BYTES_PER_ELEMENT);
+      if (!out3) throw new Error("Could not allocate WASM physics buffers.");
+      core = {
+        trafficDecision(speed, cruise, distStop, lightState, queueGap) {
+          traffic(speed, cruise, distStop, lightState, queueGap, out2);
+          const i = out2 / Float64Array.BYTES_PER_ELEMENT;
+          return { target: h[i], braking: h[i + 1] > 0.5 };
+        },
+        stepPedestrianV2(state, tx, tz, thx, thz, flee, walkSpeed, others, sepRadius, deltaTime) {
+          const o = [others[0] ?? { x: state.x, z: state.z }, others[1] ?? { x: state.x, z: state.z }, others[2] ?? { x: state.x, z: state.z }];
+          stepPed2(state.x, state.z, state.heading, state.speed, tx, tz, thx, thz, flee ? 1 : 0, walkSpeed,
+            o[0].x, o[0].z, o[1].x, o[1].z, o[2].x, o[2].z, sepRadius, deltaTime, out4);
+          return read4();
+        },
+        losSampled(ox, oz, tx, tz, blockers) {
+          const b = [0, 1, 2, 3].map((i) => blockers[i] ?? { x: 0, z: 0, hw: 0, hd: 0 });
+          return los(ox, oz, tx, tz,
+            b[0].x, b[0].z, b[0].hw, b[0].hd, b[1].x, b[1].z, b[1].hw, b[1].hd,
+            b[2].x, b[2].z, b[2].hw, b[2].hd, b[3].x, b[3].z, b[3].hw, b[3].hd, 12) as number;
+        },
+        boatBuoyancy(phase, speed, waveAmp) {
+          buoy(phase, speed, waveAmp, out3);
+          const i = out3 / Float64Array.BYTES_PER_ELEMENT;
+          return { bob: h[i], pitch: h[i + 1], roll: h[i + 2] };
+        },
+        racePace(playerDist, oppDist, baseTop, rubber) { return pace(playerDist, oppDist, baseTop, rubber) as number; },
+      };
+    } catch { core = null; }
     const fb = fallbackPhysics;
     return {
       source: "wasm",
+      trafficDecision: core?.trafficDecision ?? fb.trafficDecision,
+      stepPedestrianV2: core?.stepPedestrianV2 ?? fb.stepPedestrianV2,
+      losSampled: core?.losSampled ?? fb.losSampled,
+      boatBuoyancy: core?.boatBuoyancy ?? fb.boatBuoyancy,
+      racePace: core?.racePace ?? fb.racePace,
       distanceSquared(ax, az, bx, bz) { return distance(ax, az, bx, bz) as number; },
       stepVehicle(state, throttle, steering, handbrake, deltaTime) {
         step(state.x, state.z, state.heading, state.speed, throttle, steering, handbrake ? 1 : 0, deltaTime, out4);

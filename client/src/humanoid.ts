@@ -7,7 +7,7 @@
 // vignettes and the club queue all share it. Geometries are module-level
 // singletons; materials are colour-cached, so 20+ rigs stay cheap.
 import * as THREE from "three";
-import { fabricTexture, skinTexture, hairTexture, faceTexture } from "./textures";
+import { fabricTexture, skinTexture, hairTexture, faceTexture, hairCardTexture } from "./textures";
 import { G } from "./game/store";
 
 /** Phase 6 (B4): cloth weave bump reads stronger on Medium/High tiers. */
@@ -40,8 +40,11 @@ export interface HumanoidRig {
   head: THREE.Group;
   lThigh: THREE.Group; rThigh: THREE.Group;
   lShin: THREE.Group; rShin: THREE.Group;
+  lFoot: THREE.Group; rFoot: THREE.Group; // Phase 8: ankle pivots (heel-toe roll)
   lArm: THREE.Group; rArm: THREE.Group;
   lFore: THREE.Group; rFore: THREE.Group;
+  lids: THREE.Mesh[]; // Phase 8: blink lids (empty for sunglasses rigs)
+  blinkSeed: number;
   topMats: THREE.MeshStandardMaterial[];
   setTop: (color: string) => void;
 }
@@ -60,6 +63,13 @@ const GEO = {
   upperArm: new THREE.CylinderGeometry(0.054, 0.041, 0.38, 10),
   foreArm: new THREE.CylinderGeometry(0.041, 0.031, 0.34, 10),
   hand: new THREE.SphereGeometry(0.046, 8, 6),
+  // Phase 8: finger-block shaping — a finger slab + opposed thumb turns
+  // the plain mitt into something that reads as a hand at distance
+  fingers: new THREE.BoxGeometry(0.055, 0.075, 0.028),
+  thumb: new THREE.BoxGeometry(0.02, 0.055, 0.024),
+  lid: new THREE.BoxGeometry(0.056, 0.036, 0.012),
+  hairCard: new THREE.PlaneGeometry(0.25, 0.15),
+  hairCardSide: new THREE.PlaneGeometry(0.11, 0.21),
   thigh: new THREE.CylinderGeometry(0.07, 0.05, 0.46, 10),
   thighShort: new THREE.CylinderGeometry(0.072, 0.058, 0.24, 10),
   shin: new THREE.CylinderGeometry(0.049, 0.034, 0.44, 10),
@@ -114,10 +124,23 @@ function hairMatFn(c: string): THREE.MeshStandardMaterial {
 const darkMat = (c: string) => plainMat("dark", c, 0.5);
 const faceMats = new Map<string, THREE.MeshStandardMaterial>();
 function faceMat(variant: "m" | "f" | "beard"): THREE.MeshStandardMaterial {
-  let m = faceMats.get(variant);
+  // Phase 8: faces paint at 1024² on Medium/High, 512² on Low
+  const px = G.settings.quality === "low" ? 512 : 1024;
+  const key = `${variant}:${px}`;
+  let m = faceMats.get(key);
   if (!m) {
-    m = new THREE.MeshStandardMaterial({ map: faceTexture(variant), transparent: true, roughness: 0.55, envMapIntensity: 0.45, depthWrite: false });
-    faceMats.set(variant, m);
+    m = new THREE.MeshStandardMaterial({ map: faceTexture(variant, px), transparent: true, roughness: 0.55, envMapIntensity: 0.45, depthWrite: false });
+    faceMats.set(key, m);
+  }
+  return m;
+}
+// Phase 8: alpha hair-card material, colour-cached like the hair mats
+const hairCardMats = new Map<string, THREE.MeshStandardMaterial>();
+function hairCardMat(c: string): THREE.MeshStandardMaterial {
+  let m = hairCardMats.get(c);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({ color: c, map: hairCardTexture(), transparent: true, alphaTest: 0.32, roughness: 0.92, side: THREE.DoubleSide });
+    hairCardMats.set(c, m);
   }
   return m;
 }
@@ -176,13 +199,17 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
     }
     const shin = new THREE.Group(); shin.position.set(0, -0.46, 0);
     shin.add(mesh(GEO.shin, shorts ? skin : bottom, 0, -0.22, 0));
-    shin.add(mesh(GEO.shoe, shoe, 0, -0.45, 0.04));
-    const toe = mesh(GEO.toe, shoe, 0, -0.465, 0.155); toe.scale.set(1, 0.55, 1.15);
-    shin.add(toe);
-    shin.add(mesh(GEO.sole, darkMat("#24211e"), 0, -0.49, 0.05));
+    // Phase 8: the shoe now hangs off an ANKLE PIVOT so the stride can
+    // roll heel-toe instead of the whole shin+shoe swinging as one plank
+    const foot = new THREE.Group(); foot.position.set(0, -0.44, 0);
+    foot.add(mesh(GEO.shoe, shoe, 0, -0.01, 0.04));
+    const toe = mesh(GEO.toe, shoe, 0, -0.025, 0.155); toe.scale.set(1, 0.55, 1.15);
+    foot.add(toe);
+    foot.add(mesh(GEO.sole, darkMat("#24211e"), 0, -0.05, 0.05));
+    shin.add(foot);
     thigh.add(shin);
     body.add(thigh);
-    return { thigh, shin };
+    return { thigh, shin, foot };
   }
   const lLeg = leg(-1), rLeg = leg(1);
 
@@ -231,9 +258,14 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
     const fore = new THREE.Group(); fore.position.set(0, -0.37, 0);
     const foreMat = side === 1 && o.tattooSleeve ? tattooMat : longSleeve ? sleeveMat : skin;
     fore.add(mesh(GEO.foreArm, foreMat, 0, -0.16, 0));
-    const hand = mesh(GEO.hand, skin, 0, -0.38, 0);
-    hand.scale.set(0.82, 1.3, 0.5);
+    // Phase 8 hand: palm + finger slab + opposed thumb (finger-block)
+    const hand = mesh(GEO.hand, skin, 0, -0.37, 0);
+    hand.scale.set(0.82, 1.15, 0.52);
     fore.add(hand);
+    fore.add(mesh(GEO.fingers, skin, 0, -0.455, 0.004, false));
+    const thumb = mesh(GEO.thumb, skin, side * -0.038, -0.40, 0.018, false);
+    thumb.rotation.z = side * 0.5;
+    fore.add(thumb);
     armG.add(fore);
     torso.add(armG);
     return { armG, fore };
@@ -246,13 +278,35 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
   const skull = mesh(GEO.head, skin, 0, 0.155, 0);
   skull.scale.set(0.92, 1.08, 0.97);
   head.add(skull);
+  const lids: THREE.Mesh[] = [];
   if (!o.sunglasses) {
     const face = new THREE.Mesh(GEO.face, faceMat(o.beard ? "beard" : female ? "f" : "m"));
     face.position.set(0, 0.155, 0);
     face.scale.set(0.92, 1.08, 0.97);
     head.add(face);
+    // Phase 8 blink lids: skin slivers parked above the painted eyes;
+    // animateHumanoid dips them for ~0.12 s every 2.5–5 s (per-rig seed)
+    for (const sx of [-0.053, 0.053]) {
+      const lid = mesh(GEO.lid, skin, sx, 0.196, 0.144, false);
+      lid.scale.y = 0.12;
+      head.add(lid);
+      lids.push(lid);
+    }
   }
   const hairStyle = o.hairStyle ?? (female ? "bun" : "cap");
+  // Phase 8 hair cards: layered alpha strand planes over the scalp cap —
+  // a fringe card at the hairline + side cards for volume (not on bald)
+  const addHairCards = (sides: boolean) => {
+    const cm = hairCardMat(o.hair);
+    const fringe = new THREE.Mesh(GEO.hairCard, cm);
+    fringe.position.set(0, 0.265, 0.128); fringe.rotation.x = -0.42;
+    head.add(fringe);
+    if (sides) for (const sx of [-1, 1]) {
+      const card = new THREE.Mesh(GEO.hairCardSide, cm);
+      card.position.set(sx * 0.148, 0.16, 0.01); card.rotation.y = sx * 0.45; card.rotation.z = sx * 0.06;
+      head.add(card);
+    }
+  };
   if (!o.cap) {
     if (hairStyle === "flat") {
       const ft = mesh(GEO.flatTop, hair, 0, 0.315, 0); ft.scale.set(1, 1, 1);
@@ -262,21 +316,25 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
       head.add(mesh(GEO.hairLong, hair, 0, 0.165, -0.018));
       head.add(mesh(GEO.hairBack, hair, 0, 0.03, -0.135));
       head.add(mesh(GEO.bun, hair, 0, 0.33, -0.11));
+      addHairCards(true);
     } else if (hairStyle === "ponytail") {
       head.add(mesh(GEO.hairCap, hair, 0, 0.175, -0.012));
       head.add(mesh(GEO.hairBack, hair, 0, 0.05, -0.135));
       const tail = mesh(GEO.ponytail, hair, 0, 0.08, -0.18);
       tail.rotation.x = 0.25;
       head.add(tail);
+      addHairCards(true);
     } else if (hairStyle === "crop") {
       // short crop (B4): a thin close cap of hair, no back panel
       const cp = mesh(GEO.hairCap, hair, 0, 0.178, -0.008);
       cp.scale.set(0.99, 0.82, 0.99);
       head.add(cp);
+      addHairCards(false);
     } else if (hairStyle === "bald") {
       // bald (B4): bare skull with a slight sheen — nothing to add
     } else {
       head.add(mesh(GEO.hairCap, hair, 0, 0.175, -0.012));
+      addHairCards(true);
     }
   } else {
     const capMat = fabricMat(o.cap);
@@ -296,36 +354,65 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
   return {
     group, body, torso, head,
     lThigh: lLeg.thigh, rThigh: rLeg.thigh, lShin: lLeg.shin, rShin: rLeg.shin,
+    lFoot: lLeg.foot, rFoot: rLeg.foot,
     lArm: lArm.armG, rArm: rArm.armG, lFore: lArm.fore, rFore: rArm.fore,
+    lids, blinkSeed: Math.random() * 10,
     topMats,
     setTop: (color: string) => topMat.color.set(color),
   };
 }
 
-/** Walk/run/idle animation. phase advances with stride; intensity 0..1. */
+/** Walk/run/idle animation. phase advances with stride; intensity 0..1.
+ * Phase 8 (realism pass 4 — "human, not robot"): heel-toe foot roll on
+ * ankle pivots, torso COUNTER-rotation against the stride, shoulder sway
+ * in phase with the arms, limbs that never lock perfectly straight (rest
+ * bends at elbow/knee), breathing that never fully stops, and blinking.
+ * Callers advance `phase` at ≈ speed × 2.9 rad/s so stride length matches
+ * ground speed and the feet plant instead of skating. */
 export function animateHumanoid(rig: HumanoidRig, phase: number, intensity: number, time: number) {
   const i = THREE.MathUtils.clamp(intensity, 0, 1);
   const s = Math.sin(phase), c = Math.cos(phase);
   rig.lThigh.rotation.x = -s * 0.62 * i;
   rig.rThigh.rotation.x = s * 0.62 * i;
-  rig.lShin.rotation.x = Math.max(0, -c) * 0.85 * i + 0.04;
-  rig.rShin.rotation.x = Math.max(0, c) * 0.85 * i + 0.04;
-  // arms swing counter-phase to the same-side leg
+  // knees: swing bend + a permanent slight rest bend (never locked)
+  rig.lShin.rotation.x = Math.max(0, -c) * 0.85 * i + 0.06;
+  rig.rShin.rotation.x = Math.max(0, c) * 0.85 * i + 0.06;
+  // ---- heel-toe roll: the foot dorsiflexes through toe-off, lands
+  // heel-first, and counter-rotates against the shin so the sole stays
+  // near-flat while the foot is planted (the anti-skating cue) ----
+  rig.lFoot.rotation.x = (Math.sin(phase - 0.7) * 0.34 * i) - rig.lShin.rotation.x * 0.38 * i + 0.02;
+  rig.rFoot.rotation.x = (Math.sin(phase + Math.PI - 0.7) * 0.34 * i) - rig.rShin.rotation.x * 0.38 * i + 0.02;
+  // arms swing counter-phase to the same-side leg, elbows carried bent
   rig.lArm.rotation.x = s * 0.55 * i;
   rig.rArm.rotation.x = -s * 0.55 * i;
-  rig.lFore.rotation.x = -(0.18 + Math.max(0, -s) * 0.4) * Math.max(i, 0.15);
-  rig.rFore.rotation.x = -(0.18 + Math.max(0, s) * 0.4) * Math.max(i, 0.15);
-  // idle life: arm sway + breathing when not walking
-  rig.lArm.rotation.z = 0.07 + Math.sin(time * 1.7) * 0.022 * (1 - i);
-  rig.rArm.rotation.z = -0.07 - Math.cos(time * 1.6) * 0.022 * (1 - i);
-  // torso: forward lean grows with speed, gentle sway, breathing at idle
+  rig.lFore.rotation.x = -(0.24 + Math.max(0, -s) * 0.42) * Math.max(i, 0.3);
+  rig.rFore.rotation.x = -(0.24 + Math.max(0, s) * 0.42) * Math.max(i, 0.3);
+  // shoulder sway: arms hang from a shoulder line that rolls with stride
+  rig.lArm.rotation.z = 0.09 + s * 0.05 * i + Math.sin(time * 1.7) * 0.022 * (1 - i);
+  rig.rArm.rotation.z = -0.09 + s * 0.05 * i - Math.cos(time * 1.6) * 0.022 * (1 - i);
+  // torso: forward lean grows with speed; COUNTER-rotation (shoulders
+  // turn against the pelvis/stride) + gentle lateral sway
   rig.torso.rotation.x = 0.04 * i + 0.075 * i * i;
+  rig.torso.rotation.y = -s * 0.085 * i;
   rig.torso.rotation.z = s * 0.028 * i;
-  rig.torso.scale.y = 1 + Math.sin(time * 1.8) * 0.014 * (1 - i);
+  // breathing: ~0.25 Hz chest swell — full at idle, shallower under way
+  const breath = Math.sin(time * 1.55);
+  rig.torso.scale.y = 1 + breath * (0.014 * (1 - i) + 0.006 * i);
+  rig.torso.scale.x = 1 + breath * 0.010 * (1 - i * 0.5);
+  rig.torso.scale.z = 1 + breath * 0.012 * (1 - i * 0.5);
   rig.body.position.y = Math.abs(c) * 0.05 * i;
-  // idle weight shift + subtle head bob while walking
+  // idle weight shift + subtle head bob while walking; the head
+  // counter-turns half the torso's twist so the gaze stays steady
   rig.body.position.x = Math.sin(time * 0.5) * 0.018 * (1 - i);
   rig.head.position.y = 1.56 + Math.abs(s) * 0.012 * i;
-  rig.head.rotation.y = Math.sin(time * 0.45) * 0.06 * (1 - i);
+  rig.head.rotation.y = Math.sin(time * 0.45) * 0.06 * (1 - i) + s * 0.045 * i;
   rig.head.rotation.x = 0.05 * i;
+  // ---- blink: 0.12 s lid dip every 2.5–5 s (per-rig seed) ----
+  if (rig.lids.length) {
+    const period = 2.5 + (rig.blinkSeed % 2.5);
+    const ph = (time + rig.blinkSeed) % period;
+    const dip = ph < 0.12 ? Math.sin((ph / 0.12) * Math.PI) : 0;
+    const sy = 0.12 + dip * 0.88;
+    for (const lid of rig.lids) lid.scale.y = sy;
+  }
 }

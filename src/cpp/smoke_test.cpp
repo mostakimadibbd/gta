@@ -24,6 +24,27 @@ double swept_aabb(double x0, double z0, double x1, double z1, double radius,
 void separation_force(double x, double z,
                       double ax, double az, double bx, double bz,
                       double cx, double cz, double radius, double* output);
+void step_pedestrian(double x, double z, double heading, double speed,
+                     double target_x, double target_z, double threat_x,
+                     double threat_z, double flee, double walk_speed,
+                     double delta_time, double* output);
+// Phase 8 Harborfall Core decision functions
+void traffic_decision(double speed, double cruise, double dist_stop,
+                      double light_state, double queue_gap, double* output);
+void step_pedestrian_v2(double x, double z, double heading, double speed,
+                        double target_x, double target_z, double threat_x,
+                        double threat_z, double flee, double walk_speed,
+                        double n1x, double n1z, double n2x, double n2z,
+                        double n3x, double n3z, double sep_radius,
+                        double delta_time, double* output);
+double los_sampled(double ox, double oz, double tx, double tz,
+                   double b1x, double b1z, double b1w, double b1d,
+                   double b2x, double b2z, double b2w, double b2d,
+                   double b3x, double b3z, double b3w, double b3d,
+                   double b4x, double b4z, double b4w, double b4d,
+                   double samples);
+void boat_buoyancy(double phase, double speed, double wave_amp, double* output);
+double race_pace(double player_dist, double opp_dist, double base_top, double rubber);
 }
 
 namespace {
@@ -113,6 +134,59 @@ int main() {
     separation_force(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, out);
     check("separation_force nonzero repulsion",
           std::sqrt(out[0] * out[0] + out[1] * out[1]) > 0.0);
+  }
+
+  // ---- Phase 8 Harborfall Core decision functions ----------------------
+  // traffic_decision: green + no queue → cruise; red at the line → stop
+  {
+    double out[2] = {0, 0};
+    traffic_decision(8.0, 8.5, 1e9, 0.0, 1e9, out);
+    check("traffic_decision green cruises", std::fabs(out[0] - 8.5) < 0.001 && out[1] == 0.0);
+    traffic_decision(8.0, 8.5, 1.2, 2.0, 1e9, out);
+    check("traffic_decision red at line stops", out[0] < 0.1 && out[1] == 1.0);
+    traffic_decision(8.0, 8.5, 1e9, 0.0, 2.0, out);
+    check("traffic_decision tight queue stops", out[0] < 0.1 && out[1] == 1.0);
+  }
+
+  // step_pedestrian_v2: matches v1 with far neighbours; a close neighbour
+  // pushes the result sideways (separation folded in)
+  {
+    double v1[4] = {0, 0, 0, 0}, v2[4] = {0, 0, 0, 0}, v2n[4] = {0, 0, 0, 0};
+    step_pedestrian(0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 1.6, 1.0 / 60.0, v1);
+    step_pedestrian_v2(0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 1.6,
+                       90.0, 90.0, 95.0, 95.0, -90.0, -90.0, 0.95, 1.0 / 60.0, v2);
+    step_pedestrian_v2(0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 1.6,
+                       0.4, 0.3, 90.0, 90.0, 95.0, 95.0, 0.95, 1.0 / 60.0, v2n);
+    check("step_pedestrian_v2 matches v1 without neighbours",
+          std::fabs(v1[0] - v2[0]) < 1e-9 && std::fabs(v1[1] - v2[1]) < 1e-9);
+    check("step_pedestrian_v2 separation pushes off a close neighbour",
+          std::fabs(v2n[0] - v2[0]) + std::fabs(v2n[1] - v2[1]) > 0.001);
+  }
+
+  // los_sampled: open segment = 1; a wall across the middle blocks most
+  {
+    const double open = los_sampled(0.0, 0.0, 10.0, 0.0,
+                                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12.0);
+    const double walled = los_sampled(0.0, 0.0, 10.0, 0.0,
+                                      5.0, 0.0, 1.5, 3.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12.0);
+    check("los_sampled open segment clear", open == 1.0);
+    check("los_sampled wall blocks most samples", walled < 0.85 && walled > 0.3);
+  }
+
+  // boat_buoyancy: bob is bounded by the wave amp and calms with speed
+  {
+    double slow[3] = {0, 0, 0}, fast[3] = {0, 0, 0};
+    boat_buoyancy(1.1, 0.0, 0.14, slow);
+    boat_buoyancy(1.1, 14.5, 0.14, fast);
+    check("boat_buoyancy bob within amp", std::fabs(slow[0]) <= 0.14 && is_finite(slow[1]) && is_finite(slow[2]));
+    check("boat_buoyancy calms at speed", std::fabs(fast[0]) < std::fabs(slow[0]));
+  }
+
+  // race_pace: behind → faster than base, ahead → slower, capped at rubber
+  {
+    check("race_pace behind speeds up", race_pace(100.0, 60.0, 20.0, 2.2) > 20.0);
+    check("race_pace ahead eases off", race_pace(60.0, 100.0, 20.0, 2.2) < 20.0);
+    check("race_pace capped at rubber band", std::fabs(race_pace(500.0, 0.0, 20.0, 2.2) - 22.2) < 1e-9);
   }
 
   if (failures == 0) {

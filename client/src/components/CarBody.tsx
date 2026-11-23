@@ -13,7 +13,7 @@ import { glowTexture, tyreTexture, shatteredTexture, carDirtTexture } from "../t
 import { G } from "../game/store";
 import { gates, tier } from "../game/quality";
 
-export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat";
+export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow";
 
 const GLASS = new THREE.MeshStandardMaterial({ color: "#141f28", metalness: 0.5, roughness: 0.08, envMapIntensity: 1.3 });
 const CHROME = new THREE.MeshStandardMaterial({ color: "#d7dce2", metalness: 0.95, roughness: 0.16, envMapIntensity: 1.4 });
@@ -156,6 +156,7 @@ const CABIN_POS: Record<string, { y: number; z: number; w: number }> = {
   pickup: { y: 1.18, z: 0.85, w: 1.6 }, van: { y: 1.0, z: 1.15, w: 1.65 },
   supercar: { y: 0.6, z: -0.25, w: 1.5 },
   taxi: { y: 0.98, z: -0.05, w: 1.5 }, bus: { y: 1.62, z: 1.4, w: 2.0 },
+  gt: { y: 0.95, z: -0.35, w: 1.5 }, tow: { y: 1.18, z: 0.85, w: 1.6 },
 };
 /** Dirt/scratch shell (Visual V3): opacity follows live damage. */
 const SHELL: Record<string, [number, number, number, number]> = {
@@ -163,6 +164,8 @@ const SHELL: Record<string, [number, number, number, number]> = {
   muscle: [2.1, 0.67, 4.45, 0.62], suv: [2.15, 0.93, 4.25, 0.78], classic: [2.0, 0.61, 4.55, 0.6],
   pickup: [2.15, 0.77, 4.15, 0.68], van: [2.15, 1.17, 4.25, 0.92], supercar: [2.25, 0.47, 4.35, 0.44],
   taxi: [2.05, 0.63, 3.75, 0.6], bus: [2.5, 1.9, 7.2, 1.5],
+  // Phase 8 exotics + wrecker (radius contract 1.6 for wedge/hyper/gt)
+  wedge: [2.3, 0.5, 4.5, 0.42], hyper: [2.25, 0.5, 4.4, 0.42], gt: [2.05, 0.55, 4.6, 0.55], tow: [2.15, 0.77, 4.15, 0.68],
 };
 function DirtShell({ kind, liveDamage }: { kind: string; liveDamage?: () => number }) {
   const mat = useMemo(() => new THREE.MeshStandardMaterial({ map: carDirtTexture(), transparent: true, opacity: 0, roughness: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), []);
@@ -312,6 +315,113 @@ function CarFx({ kind, carIndex, brakeRef, beams, spotLights }: {
   );
 }
 
+/** Phase 8 exotic — VANTARA S (kind "wedge"): an ORIGINAL Harborfall
+ * wedge supercar. Sharp raked nose, wide rear haunches, and scissor
+ * doors on front-bottom pivots. DOOR RULE (documented): the doors lift
+ * when the player is on foot within ~3.4u (showroom/approach theatre)
+ * and during the enter-car slide for the player's own car; they stay
+ * shut in traffic and while driving. No real marque's shape, name or
+ * badge is used anywhere — the wedge is drawn from Harborfall's own
+ * design language (Port Sable teal-era concept cars). */
+export function WedgeBody({ color, carIndex, steerRef, liveDamage, brakeRef, beams, spotLights }: {
+  color: string; carIndex?: number; steerRef?: MutableRefObject<number>;
+  liveDamage?: () => number; brakeRef?: MutableRefObject<boolean>; beams?: boolean; spotLights?: boolean;
+}) {
+  const paint = useMemo(() => paintMaterial(color, 0.35, 0.22), [color]);
+  const root = useRef<THREE.Group>(null);
+  const doorL = useRef<THREE.Group>(null);
+  const doorR = useRef<THREE.Group>(null);
+  const open = useRef(0);
+  const tmp = useMemo(() => new THREE.Vector3(), []);
+  useFrame((_, delta) => {
+    let want = 0;
+    if (carIndex !== undefined && G.driving && G.activeCarId === carIndex) want = G.enterAnimT > 0 ? 1 : 0;
+    else if (!G.driving && root.current) {
+      root.current.getWorldPosition(tmp);
+      want = (tmp.x - G.playerPos.x) ** 2 + (tmp.z - G.playerPos.z) ** 2 < 3.4 ** 2 ? 1 : 0;
+    }
+    open.current += (want - open.current) * Math.min(1, delta * 5);
+    if (doorL.current) doorL.current.rotation.z = open.current * 1.12;
+    if (doorR.current) doorR.current.rotation.z = -open.current * 1.12;
+  });
+  const doorPanel = (side: -1 | 1) => (
+    <group ref={side < 0 ? doorL : doorR} position={[side * 1.1, 0.52, 0.55]}>
+      <RB args={[0.07, 0.46, 1.3]} radius={0.03} mat={paint} pos={[0, 0.16, -0.5]} />
+      <mesh position={[side * 0.045, 0.3, -0.42]}><boxGeometry args={[0.02, 0.2, 0.7]} /><primitive object={GLASS} attach="material" /></mesh>
+    </group>
+  );
+  return (
+    <group ref={root}>
+      {/* raked wedge nose: two stacked, forward-pitched slabs */}
+      <RB args={[2.14, 0.34, 4.5]} radius={0.1} mat={paint} pos={[0, 0.42, 0]} />
+      <RB args={[1.98, 0.2, 1.7]} radius={0.07} mat={paint} pos={[0, 0.5, 1.5]} rot={[0.22, 0, 0]} />
+      {/* wide rear haunches */}
+      <RB args={[2.34, 0.4, 1.5]} radius={0.12} mat={paint} pos={[0, 0.5, -1.5]} />
+      {/* glass canopy, teardrop-leaning */}
+      <mesh position={[0, 0.72, -0.15]} scale={[1.35, 0.58, 1.85]} castShadow><sphereGeometry args={[0.55, 16, 12]} /><primitive object={GLASS} attach="material" /></mesh>
+      <mesh position={[0, 0.3, 0]}><boxGeometry args={[2.3, 0.15, 3.6]} /><primitive object={BUMPER} attach="material" /></mesh>
+      {/* fixed rear wing on twin pylons + full-width light bar */}
+      <RB args={[2.2, 0.06, 0.4]} radius={0.03} mat={BUMPER} pos={[0, 0.92, -2.08]} />
+      <mesh position={[-0.75, 0.74, -2.05]}><boxGeometry args={[0.08, 0.3, 0.08]} /><primitive object={BUMPER} attach="material" /></mesh>
+      <mesh position={[0.75, 0.74, -2.05]}><boxGeometry args={[0.08, 0.3, 0.08]} /><primitive object={BUMPER} attach="material" /></mesh>
+      {doorPanel(-1)}{doorPanel(1)}
+      <LightsBumpers w={2.2} len={4.5} y={0.46} />
+      <Wheel x={-1.12} z={1.5} r={0.37} w={0.3} steerRef={steerRef} carIndex={carIndex} />
+      <Wheel x={1.12} z={1.5} r={0.37} w={0.3} steerRef={steerRef} carIndex={carIndex} />
+      <Wheel x={-1.17} z={-1.5} r={0.42} w={0.42} />
+      <Wheel x={1.17} z={-1.5} r={0.42} w={0.42} />
+      <ArchesSkirts w={2.25} len={4.5} r={0.4} />
+      <DirtShell kind="wedge" liveDamage={liveDamage} />
+      {(beams || spotLights || brakeRef) ? <CarFx kind="wedge" carIndex={carIndex} brakeRef={brakeRef} beams={beams} spotLights={spotLights} /> : null}
+    </group>
+  );
+}
+
+/** Phase 8 exotic — KESTREL ONE (kind "hyper"): an ORIGINAL Harborfall
+ * hypercar. Smooth teardrop canopy, flush surfaces, and an ACTIVE rear
+ * wing that rises + tilts with road speed (player fleet; parked and
+ * showpiece cars keep it stowed). */
+export function HyperBody({ color, carIndex, steerRef, liveDamage, brakeRef, beams, spotLights }: {
+  color: string; carIndex?: number; steerRef?: MutableRefObject<number>;
+  liveDamage?: () => number; brakeRef?: MutableRefObject<boolean>; beams?: boolean; spotLights?: boolean;
+}) {
+  const paint = useMemo(() => paintMaterial(color, 0.4, 0.18), [color]);
+  const wing = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (!wing.current) return;
+    const spd = carIndex !== undefined ? Math.abs(G.cars[carIndex]?.state.speed ?? 0) : 0;
+    const f = THREE.MathUtils.clamp(spd / 22, 0, 1);
+    wing.current.position.y = 0.82 + f * 0.17;
+    wing.current.rotation.x = -0.06 - f * 0.16;
+  });
+  return (
+    <group>
+      <RB args={[2.2, 0.36, 4.4]} radius={0.16} mat={paint} pos={[0, 0.42, 0]} />
+      <RB args={[2.0, 0.18, 1.5]} radius={0.09} mat={paint} pos={[0, 0.47, 1.55]} rot={[0.13, 0, 0]} />
+      {/* teardrop canopy: one long scaled sphere, nose-tapered */}
+      <mesh position={[0, 0.66, -0.3]} scale={[1.3, 0.6, 2.1]} castShadow><sphereGeometry args={[0.56, 18, 12]} /><primitive object={GLASS} attach="material" /></mesh>
+      <mesh position={[0, 0.3, 0]}><boxGeometry args={[2.24, 0.15, 3.5]} /><primitive object={BUMPER} attach="material" /></mesh>
+      {/* engine-cover spine fin */}
+      <mesh position={[0, 0.78, -1.35]}><boxGeometry args={[0.07, 0.22, 1.15]} /><primitive object={paint} attach="material" /></mesh>
+      {/* active rear wing */}
+      <group ref={wing} position={[0, 0.82, -2.02]}>
+        <RB args={[2.15, 0.05, 0.42]} radius={0.02} mat={BUMPER} pos={[0, 0, 0]} />
+        <mesh position={[-0.7, -0.13, 0]}><boxGeometry args={[0.07, 0.26, 0.07]} /><primitive object={BUMPER} attach="material" /></mesh>
+        <mesh position={[0.7, -0.13, 0]}><boxGeometry args={[0.07, 0.26, 0.07]} /><primitive object={BUMPER} attach="material" /></mesh>
+      </group>
+      <LightsBumpers w={2.2} len={4.4} y={0.47} />
+      <Mirrors w={2.2} y={0.8} z={0.5} />
+      <Wheel x={-1.1} z={1.48} r={0.38} w={0.3} steerRef={steerRef} carIndex={carIndex} />
+      <Wheel x={1.1} z={1.48} r={0.38} w={0.3} steerRef={steerRef} carIndex={carIndex} />
+      <Wheel x={-1.12} z={-1.48} r={0.43} w={0.44} />
+      <Wheel x={1.12} z={-1.48} r={0.43} w={0.44} />
+      <ArchesSkirts w={2.22} len={4.4} r={0.4} />
+      <DirtShell kind="hyper" liveDamage={liveDamage} />
+      {(beams || spotLights || brakeRef) ? <CarFx kind="hyper" carIndex={carIndex} brakeRef={brakeRef} beams={beams} spotLights={spotLights} /> : null}
+    </group>
+  );
+}
+
 export default function CarBody({ kind, color, police, steerRef, liveDamage, brokenWindow, interior, carIndex, brakeRef, beams, spotLights }: {
   kind: CarKind; color: string; police?: boolean;
   steerRef?: MutableRefObject<number>; liveDamage?: () => number;
@@ -323,6 +433,8 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
   if (kind === "motorcycle") return <MotorcycleBody color={color} />;
   if (kind === "bicycle") return <BicycleBody color={color} />;
   if (kind === "boat") return <BoatBody color={color} />;
+  if (kind === "wedge") return <WedgeBody color={color} carIndex={carIndex} steerRef={steerRef} liveDamage={liveDamage} brakeRef={brakeRef} beams={beams} spotLights={spotLights} />;
+  if (kind === "hyper") return <HyperBody color={color} carIndex={carIndex} steerRef={steerRef} liveDamage={liveDamage} brakeRef={brakeRef} beams={beams} spotLights={spotLights} />;
   const classic = kind === "classic";
   const glassMat = brokenWindow ? GLASS_BROKEN : interior ? GLASS_CLEAR : GLASS;
   let body: ReactNode = null;
@@ -435,6 +547,40 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
         <LightsBumpers w={2.45} len={7.0} y={0.72} />
         <Mirrors w={2.45} y={2.1} z={3.2} />
       </>); wheels = wheelSet(2.45, 7.0, 0.5, 0.32); break;
+    case "gt":
+      // Phase 8: MARLOWE GT — original luxury grand tourer: LONG bonnet,
+      // cabin set well back, fastback tail, chrome brightwork.
+      body = (<>
+        <RB args={[2.0, 0.52, 4.6]} radius={0.12} mat={paint} pos={[0, 0.56, 0]} />
+        <RB args={[1.9, 0.16, 2.1]} radius={0.07} mat={paint} pos={[0, 0.78, 0.95]} rot={[0.05, 0, 0]} />{/* the long bonnet */}
+        <mesh position={[0, 0.86, 1.35]}><boxGeometry args={[0.1, 0.05, 1.6]} /><primitive object={CHROME} attach="material" /></mesh>
+        <RB args={[1.62, 0.46, 1.6]} radius={0.17} mat={glassMat} pos={[0, 0.98, -0.75]} />
+        <RB args={[1.85, 0.14, 0.9]} radius={0.06} mat={paint} pos={[0, 0.72, -1.95]} rot={[-0.1, 0, 0]} />{/* fastback deck */}
+        <mesh position={[0, 0.62, 0]}><boxGeometry args={[2.02, 0.07, 4.62]} /><primitive object={CHROME} attach="material" /></mesh>
+        <LightsBumpers w={2.0} len={4.6} y={0.6} />
+        <Mirrors w={2.0} y={1.05} z={0.05} />
+      </>); wheels = wheelSet(2.0, 4.6, 0.38, 0.27); break;
+    case "tow":
+      // Phase 8: SABLE WRECKER — pickup cab + flat hook bed: crane jib,
+      // winch drum and a dangling hook over the bed (the towed car itself
+      // is positioned by the Phase 8 tether in Phase8.tsx / Vehicle.tsx).
+      body = (<>
+        <RB args={[2.1, 0.72, 4.1]} radius={0.09} mat={paint} pos={[0, 0.68, 0]} />
+        <RB args={[1.85, 0.55, 1.35]} radius={0.11} mat={glassMat} pos={[0, 1.28, 0.85]} />
+        {/* flat steel bed behind the cab */}
+        <mesh position={[0, 0.78, -1.25]}><boxGeometry args={[1.95, 0.12, 1.6]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <mesh position={[-0.93, 0.95, -1.25]}><boxGeometry args={[0.08, 0.4, 1.6]} /><primitive object={BUMPER} attach="material" /></mesh>
+        <mesh position={[0.93, 0.95, -1.25]}><boxGeometry args={[0.08, 0.4, 1.6]} /><primitive object={BUMPER} attach="material" /></mesh>
+        {/* crane jib + winch + hook */}
+        <mesh position={[0, 1.62, -0.62]} rotation={[0.5, 0, 0]} castShadow><boxGeometry args={[0.14, 0.14, 1.5]} /><primitive object={CHROME} attach="material" /></mesh>
+        <mesh position={[0, 1.28, -0.5]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.13, 0.13, 0.5, 10]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <mesh position={[0, 1.28, -1.32]}><boxGeometry args={[0.03, 0.55, 0.03]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <mesh position={[0, 0.98, -1.32]}><boxGeometry args={[0.12, 0.16, 0.06]} /><primitive object={CHROME} attach="material" /></mesh>
+        {/* amber beacon */}
+        <RB args={[0.5, 0.12, 0.24]} radius={0.04} mat={HEAD} pos={[0, 1.62, 0.85]} />
+        <LightsBumpers w={2.1} len={4.1} y={0.7} />
+        <Mirrors w={2.1} y={1.3} z={1.45} />
+      </>); wheels = wheelSet(2.1, 4.1, 0.42, 0.3); break;
     default: // sedan
       body = (<>
         <RB args={[2.0, 0.58, 3.7]} radius={0.1} mat={paint} pos={[0, 0.6, 0]} />

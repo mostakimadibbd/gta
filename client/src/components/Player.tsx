@@ -8,8 +8,16 @@ import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
 import { buildHumanoid, animateHumanoid } from "../humanoid";
 import { fallbackPhysics } from "../physics/GamePhysics";
 import type { CharacterPreset } from "../game/characters";
+import { CLOTH } from "../game/phase8";
+import { padKeys, padMove } from "../game/gamepad";
+import { touchMove } from "../game/touch";
 
 type AnimationState = "Idle" | "Walk" | "Run" | "Driving";
+
+// Phase 8 smoothness audit: movement scratch vectors — the frame loop
+// used to allocate two Vector3 per frame; these are reused instead
+const _dirV = new THREE.Vector3();
+const _rightV = new THREE.Vector3();
 
 interface PlayerProps {
   positionRef: MutableRefObject<THREE.Vector3>;
@@ -18,10 +26,11 @@ interface PlayerProps {
   paused: boolean;
   preset: CharacterPreset;
   variant: number;
+  clothingKey: number; // Phase 8: bumped when the Thread & Tide override changes
   showcase: boolean; // character-select turntable (runs while "paused")
 }
 
-export default function Player({ positionRef, rotationRef, driving, paused, preset, variant, showcase }: PlayerProps) {
+export default function Player({ positionRef, rotationRef, driving, paused, preset, variant, clothingKey, showcase }: PlayerProps) {
   const root = useRef<THREE.Group>(null);
   const keys = useRef(new Set<string>());
   const jumpRequested = useRef(false);
@@ -33,9 +42,26 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
   const { camera } = useThree();
 
   // Character preset drives the rig (Phase 4); outfit variants recolour the
-  // top via setTop without a rebuild.
-  const rig = useMemo(() => buildHumanoid({ ...preset.options, top: preset.variants[0] }), [preset]);
-  useEffect(() => { rig.setTop(preset.variants[variant] ?? preset.variants[0]); }, [rig, preset, variant]);
+  // top via setTop without a rebuild. Phase 8: a Thread & Tide purchase is
+  // an OVERRIDE LAYER — while worn it supplies top style + top/bottom
+  // colours and wins over the preset/variant (Character Select clears it).
+  // merged keyboard ∪ gamepad key view, built once (no per-frame literal)
+  const pressedView = useMemo(() => ({ has: (k: string) => keys.current.has(k) || padKeys.has(k) }), []);
+  const rig = useMemo(() => {
+    const c = CLOTH.current;
+    if (c) {
+      return buildHumanoid({
+        ...preset.options, top: c.top, topStyle: c.topStyle,
+        bottom: c.bottom ?? preset.options.bottom, bottomStyle: c.bottomStyle ?? preset.options.bottomStyle,
+      });
+    }
+    return buildHumanoid({ ...preset.options, top: preset.variants[0] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset, clothingKey]);
+  useEffect(() => {
+    if (CLOTH.current) rig.setTop(CLOTH.current.top);
+    else rig.setTop(preset.variants[variant] ?? preset.variants[0]);
+  }, [rig, preset, variant, clothingKey]);
 
   const phase = useRef(0);
   const intensity = useRef(0);
@@ -103,9 +129,12 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     if (!root.current || (paused && !showcase)) return;
     const dt = Math.min(delta, 0.05);
     const tNow = performance.now() / 1000;
-    const pressed = keys.current;
+    // Phase 8: one merged view of keyboard ∪ gamepad keys (analog
+    // stick/touch vectors are consulted separately below)
+    const pressed = pressedView;
     let moving = false;
     let running = false;
+    let analogMagFrame = 0; // set by the movement branch; drives stride rate
 
     const activeVehicle = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
     const onMoto = !!activeVehicle && activeVehicle.kind === "motorcycle";
@@ -133,7 +162,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       // ---- Phase 7 sitting: parked on a bench / restaurant chair —
       // any movement key stands you back up (E toggles via the prompts) --
       if (G.sitting) {
-        if (pressed.has("w") || pressed.has("a") || pressed.has("s") || pressed.has("d")) { G.sitting = false; G.sitSpot = null; }
+        if (pressed.has("w") || pressed.has("a") || pressed.has("s") || pressed.has("d") || padMove.mag > 0.3 || touchMove.mag > 0.3) { G.sitting = false; G.sitSpot = null; }
         else {
           if (G.sitSpot) {
             positionRef.current.x = G.sitSpot.x; positionRef.current.z = G.sitSpot.z;
@@ -145,12 +174,21 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
 
       const forwardInput = showcase ? 0 : Number(pressed.has("w")) - Number(pressed.has("s"));
       const sideInput = showcase ? 0 : Number(pressed.has("d")) - Number(pressed.has("a"));
-      const direction = new THREE.Vector3();
+      // Phase 8 ANALOG movement (gamepad stick, then touch joystick —
+      // only when the digital keys are idle): magnitude blends walk→run
+      // and >0.92 latches sprint in the movement branch below
+      const analog = !showcase && forwardInput === 0 && sideInput === 0
+        ? (padMove.mag > 0.02 ? padMove : touchMove.mag > 0.02 ? touchMove : null)
+        : null;
+      analogMagFrame = analog?.mag ?? 0;
+      const direction = _dirV; // scratch (Phase 8 allocation audit)
       camera.getWorldDirection(direction);
       direction.y = 0;
       direction.normalize();
-      const right = new THREE.Vector3(-direction.z, 0, direction.x);
-      const movement = direction.multiplyScalar(forwardInput).addScaledVector(right, sideInput);
+      const right = _rightV.set(-direction.z, 0, direction.x);
+      const movement = analog
+        ? direction.multiplyScalar(-analog.y).addScaledVector(right, analog.x)
+        : direction.multiplyScalar(forwardInput).addScaledVector(right, sideInput);
 
       // collision: interiors clamp to the room; open water is free (to a
       // sane offshore limit); the bridge deck is a corridor; everywhere
@@ -210,11 +248,12 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         moving = true;
       } else if (movement.lengthSq() > 0) {
         moving = true;
-        movement.normalize();
-        // stamina gates the sprint (A7): an empty tank means no sprint
-        running = pressed.has("shift") && !swimmingNow && !G.crouched && G.stamina > 2 && !G.exhausted;
+        if (!analog) movement.normalize();
+        // stamina gates the sprint (A7): an empty tank means no sprint.
+        // Phase 8: an analog stick pushed past 0.92 latches sprint too.
+        running = (pressed.has("shift") || (analog !== null && analog.mag > 0.92)) && !swimmingNow && !G.crouched && G.stamina > 2 && !G.exhausted;
         const limp = G.health < 25 && !swimmingNow; // A7: hurt = slow + hunched (pose below)
-        const speed = (swimmingNow ? 2.4 : running ? 8 : 4.2) * (G.crouched && !swimmingNow ? 0.45 : 1) * (limp ? 0.6 : 1);
+        const speed = (swimmingNow ? 2.4 : running ? 8 : 4.2) * (analog ? analog.mag : 1) * (G.crouched && !swimmingNow ? 0.45 : 1) * (limp ? 0.6 : 1);
         // vault trigger: moving into a low spot's edge with Space held
         if (jumpRequested.current && grounded.current && !swimmingNow && !G.interior) {
           for (const s of VAULT_SPOTS) {
@@ -334,7 +373,9 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       setAnimationLabel(nextAnimation);
     }
     // articulated walk/run cycle: thighs + knees + elbows, bob, idle life
-    if (moving) phase.current += dt * (running ? 11.5 : 8.4);
+    // Phase 8 stride matching: phase rate ∝ ground speed (≈ speed × 2.9)
+    // so the feet plant instead of skating at any pace
+    if (moving) phase.current += dt * (running ? 23.2 : 12.2) * (analogMagFrame > 0 ? analogMagFrame : 1);
     const target = driving ? 0 : moving ? (running ? 1 : 0.72) : 0;
     intensity.current += (target - intensity.current) * Math.min(1, dt * 10);
     animateHumanoid(rig, phase.current, intensity.current, tNow);
@@ -406,7 +447,16 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         rig.lArm.rotation.z = 0; rig.rArm.rotation.z = 0; // reset jump spread
         // punch swing (Combat sets G.punchT on click / J)
         const pt = tNow - G.punchT;
-        if (pt >= 0 && pt < 0.3) {
+        if (G.weaponSel === "bat" && pt >= 0 && pt < 0.5) {
+          // Phase 8 bat swing: two-handed overhead raise, then the chop —
+          // a longer, heavier arc than the fist (0.5 s window)
+          const s = Math.sin((pt / 0.5) * Math.PI);
+          const raise = Math.sin(Math.min(1, pt / 0.22) * Math.PI * 0.5);
+          rig.rArm.rotation.x = -2.75 * raise + 0.9 * Math.max(0, (pt - 0.22) / 0.28);
+          rig.lArm.rotation.x = -2.45 * raise + 0.8 * Math.max(0, (pt - 0.22) / 0.28);
+          rig.rFore.rotation.x = -0.35 * s; rig.lFore.rotation.x = -0.3 * s;
+          rig.torso.rotation.y = -0.35 * s;
+        } else if (pt >= 0 && pt < 0.3) {
           const s = Math.sin((pt / 0.3) * Math.PI);
           rig.rArm.rotation.x = -2.2 * s;
           rig.rFore.rotation.x = -0.3 * s;

@@ -2,7 +2,7 @@
 // frame by the 3D systems; the HUD polls it at 8 Hz and copies to React state.
 import * as THREE from "three";
 import { sfx } from "./audio";
-import { CAR_SPAWNS, PIER_SPAWN, MANSION } from "../world";
+import { CAR_SPAWNS, PIER_SPAWN, MANSION, districtAt } from "../world";
 import type { CarSpawn } from "../world";
 import type { VehicleState } from "../physics/GamePhysics";
 
@@ -11,7 +11,7 @@ export interface NpcCar extends VehicleState {
   side: "main" | "coral" | "north"; steerVis: number; pitch: number; damage: number;
   svc?: "ambulance" | "fire"; // Phase 7: emergency-service traffic variants
   // ---- Phase 6: per-car kind + traffic-light / rush-hour / bus state ----
-  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
+  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
   rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
   busRoute?: boolean; wp?: number; stopT?: number;
 }
@@ -21,6 +21,11 @@ export interface Ped {
   // ---- Phase 6 NPC life: destinations, sit/phone/shelter modes ----
   destX?: number; destZ?: number; mode?: "walk" | "sit" | "phone" | "shelter";
   waitUntil?: number; hasDog?: boolean; flinchUntil?: number;
+  // ---- Phase 8 NPC memory: this ped saw you offend / was robbed by you /
+  // was helped by you. Witness memory lasts ~2 game-hours; a robbery is
+  // remembered for the rest of the game-day (ECO day serial). ----
+  memWitnessUntil?: number; memRobbedDay?: number; memHelpedUntil?: number;
+  recogCd?: number; // next G.timeS this ped may bark a recognition line
 }
 export interface Cop extends VehicleState { active: boolean; lightPhase: number; pitch: number; roll: number; }
 export type WeatherKind = "Clear" | "Cloudy" | "Rain" | "Storm" | "Fog";
@@ -36,7 +41,7 @@ export interface PlayerCar {
   pitch: number; roll: number; steerVis: number; storedAway: boolean;
   flatTyre?: boolean; tuneLvl?: number; brakeLvl?: number; pitchVel?: number; rollVel?: number;
 }
-export type WeaponKind = "pistol" | "smg" | "shotgun";
+export type WeaponKind = "pistol" | "smg" | "shotgun" | "bat";
 export interface MissionResult { ok: boolean; title: string; reward: number; items: number; timeLeft: number; reason: string; at: number; }
 export interface PendingCrime { kind: CrimeKind; due: number; }
 export const nowS = () => (typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000);
@@ -99,10 +104,14 @@ export const G = {
   // ---- Phase 6: stamina / skills / weapon inventory / misc state ----
   stamina: 100, // 0..100; sprint/swim/cycling drain it (A7)
   exhausted: false, // latched at 0 until stamina recovers past 20
-  skills: { driving: 0, shooting: 0, stamina: 0 }, // 0..100, persisted
+  skills: { driving: 0, shooting: 0, stamina: 0, strength: 0 }, // 0..100, persisted (strength: Phase 8 gym)
   skillShootAcc: 0, // shots fired toward the next Shooting point
-  weaponOwned: { pistol: false, smg: false, shotgun: false } as Record<WeaponKind, boolean>,
-  weaponAmmo: { pistol: 0, smg: 0, shotgun: 0 } as Record<WeaponKind, number>,
+  weaponOwned: { pistol: false, smg: false, shotgun: false, bat: false } as Record<WeaponKind, boolean>,
+  weaponAmmo: { pistol: 0, smg: 0, shotgun: 0, bat: 0 } as Record<WeaponKind, number>,
+  // ---- Phase 8: per-district reputation (NPC memory). 0 = stranger;
+  // crimes witnessed in a district raise it; it decays on the daily tick.
+  // High rep: witnesses report faster and locals start recognising you. ----
+  zoneRep: {} as Record<string, number>,
   eatingUntil: 0, // hand-to-mouth pose window (vendor food)
   playerSprinting: false, // set by Player each frame (stamina drain input)
   bikePedalling: false, // set by Vehicle each frame (stamina drain input)
@@ -164,14 +173,17 @@ export function persistSkills() { try { localStorage.setItem("harborfall-skills"
 /** Keep the legacy `armed`/`ammo` HUD mirrors in step with the weapon inventory. */
 export function syncWeaponMirrors() {
   G.armed = G.weaponOwned.pistol || G.weaponOwned.smg || G.weaponOwned.shotgun;
-  G.ammo = G.weaponSel === "fist" ? 0 : G.weaponAmmo[G.weaponSel];
+  G.ammo = G.weaponSel === "fist" || G.weaponSel === "bat" ? 0 : G.weaponAmmo[G.weaponSel];
 }
+/** Phase 8: persist the per-district reputation map. */
+export function persistZoneRep() { try { localStorage.setItem("harborfall-rep", JSON.stringify(G.zoneRep)); } catch { /* ignore */ } }
 export const stashTotal = () => G.inventory.reduce((a, i) => a + i.value, 0);
 try {
   const skills = localStorage.getItem("harborfall-skills"); if (skills) G.skills = { ...G.skills, ...(JSON.parse(skills) as Partial<typeof G.skills>) };
   const stash = localStorage.getItem("harborfall-stash"); if (stash) G.inventory = JSON.parse(stash) as StashItem[];
   const stored = localStorage.getItem("harborfall-stored-cars"); if (stored) G.storedCars = (JSON.parse(stored) as StoredCar[]).slice(0, 6);
   const st = localStorage.getItem("harborfall-settings"); if (st) G.settings = { ...G.settings, ...(JSON.parse(st) as Partial<typeof G.settings>) };
+  const rep = localStorage.getItem("harborfall-rep"); if (rep) G.zoneRep = JSON.parse(rep) as Record<string, number>;
 } catch { /* storage unavailable */ }
 
 try {
@@ -209,13 +221,39 @@ function applyCrime(kind: CrimeKind) {
  * the victim, so it applies immediately. No witness = no report.
  */
 export function addCrime(kind: CrimeKind) {
+  // Phase 8 memory: EVERY ped within earshot (30u) remembers seeing this,
+  // and the district's reputation ticks up — whether or not the crime is
+  // one of the instantly-known kinds. Robbery victims are flagged by the
+  // pickpocket code itself (Interactions) since it knows the victim index.
+  const px0 = G.followPos.x, pz0 = G.followPos.z;
+  const zone = districtAt(px0, pz0);
+  let anyWitness = false;
+  for (const p of G.peds) {
+    if (!p.active) continue;
+    if ((p.x - px0) ** 2 + (p.z - pz0) ** 2 < 30 ** 2) { p.memWitnessUntil = G.timeS + 300; anyWitness = true; }
+  }
+  if (anyWitness) {
+    G.zoneRep[zone] = Math.min(100, (G.zoneRep[zone] ?? 0) + (kind === "assault" || kind === "robbery" ? 14 : 8));
+    persistZoneRep();
+  }
   if (kind === "ped" || kind === "shoot" || kind === "robbery") { applyCrime(kind); return; } // victim/gunfire/alarm: known at once
   const px = G.followPos.x, pz = G.followPos.z;
-  let wi = -1; let wd = 26 ** 2;
-  G.peds.forEach((p, i) => { const d = (p.x - px) ** 2 + (p.z - pz) ** 2; if (d < wd) { wd = d; wi = i; } });
-  if (wi >= 0) {
-    G.pendingCrimes.push({ kind, due: nowS() + 1.5 });
-    G.reportingPed = wi; G.witnessUntil = nowS() + 1.5;
+  let wi = -1; let wd = 26 ** 2; let wiHelped = -1;
+  G.peds.forEach((p, i) => {
+    const d = (p.x - px) ** 2 + (p.z - pz) ** 2;
+    if (d >= 26 ** 2) return;
+    // Phase 8: a ped you HELPED recently hesitates — they are only used
+    // as the reporting witness if nobody else saw it, and they take 2.5 s
+    if ((p.memHelpedUntil ?? 0) > G.timeS) { if (wiHelped < 0) wiHelped = i; return; }
+    if (d < wd) { wd = d; wi = i; }
+  });
+  if (wi >= 0 || wiHelped >= 0) {
+    // Phase 8: in a district where you're KNOWN (rep ≥ 40), witnesses
+    // don't hesitate — the report lands in 0.8 s instead of 1.5 s.
+    const delay = wi < 0 ? 2.5 : (G.zoneRep[zone] ?? 0) >= 40 ? 0.8 : 1.5;
+    const who = wi >= 0 ? wi : wiHelped;
+    G.pendingCrimes.push({ kind, due: nowS() + delay });
+    G.reportingPed = who; G.witnessUntil = nowS() + delay;
     return;
   }
   applyCrime(kind);

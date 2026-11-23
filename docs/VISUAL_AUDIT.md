@@ -321,3 +321,87 @@ can't hold ~27–42 fps.
 - **Bundle**: index 2,011.22 kB / gzip 1,322.48 kB (Phase 6:
   1,944.76 / 1,303.49) — +66 kB raw / +19 kB gzip for the whole round;
   no new dependencies, no new textures (signs/posters are canvas).
+
+## Phase 8 addendum — realism pass 4, exotics, tow/gym contracts, smoothness (2026-11-23)
+
+- **Character realism pass 4 ("human, not robot")**: the walk cycle is
+  now stride-matched (phase advances at ≈ speed × 2.9 rad/s in both the
+  player rig and the ped loop, stride ≈ 1.08u per π) with heel-toe foot
+  roll on new ankle pivots, counter-phase arm swing with a carried
+  elbow bend, torso counter-rotation, shoulder sway and head counter-
+  turn. Limbs never lock straight (rest bends: knee 0.06, elbow 0.24).
+  Hands are palm + finger slab + thumb instead of boxes. Faces render
+  at 1024² on Medium/High (512² Low) with brow ridge, nose shadow,
+  two-tone iris + catchlight, upper-lid line, two-tone lips and a
+  stubble pass; hair for crop/ponytail/bun/default styles adds layered
+  alpha-textured cards over the scalp cap. Skin carries a warm
+  subsurface-look tint + pore speckle; torso fabric paints fold streaks
+  into colour AND bump. Breathing (~0.25 Hz chest scale) now runs on
+  the player and all near peds, and near rigs blink (lid slivers,
+  2.5–5 s period). **Honest line, unchanged: these are still procedural
+  rigs — realistic-styled, not scanned humans.** Every stiffness cue
+  named in the brief is addressed in code; none is claimed photoreal.
+- **Exotic cars (all original designs; no real brand names, logos or
+  copied shapes)**: `wedge` Vantara S, `hyper` Kestrel One, `gt`
+  Marlowe GT — collision radius contract **r = 1.6** for all three
+  (same as supercar); `tow` Sable Wrecker r = 1.6. **Scissor-door
+  rule**: the Vantara's doors rotate up only while the car is parked
+  with the player on foot within 3.4u, or during the player's
+  enter/exit animation — never in traffic, never while driving (the
+  traffic wedge keeps its doors shut). The Kestrel's rear wing rises
+  with speed (0 at rest → +0.17u and −0.16 rad at 22 u/s). Top-end
+  speeds sit above the physics core's 24 u/s clamp via the same
+  post-step push the motorcycle uses: wedge ≈ 27.5, hyper ≈ 30 u/s.
+- **Tow tether contract**: the towed car is NOT a physics body — it
+  hangs 2.3u behind the wrecker's hook point plus a swing offset
+  (spring toward the wrecker heading at 3.1/s, damped), writes its
+  state directly each frame, and is skipped by traffic/player
+  collision while hooked (documented lightweight, like race rivals).
+  Hook capture: hook point within 3.6u of the target + wrecker speed
+  < 0.8 held for 0.7s. Delivery: wrecker inside Lina's garage zone
+  (centre (−25, 100.6), r 7.5) while hooked → flat $150.
+- **Gym placement choice**: Sable Fitness is an OUTDOOR corner at
+  Lantern Park — bench press at (70, −64.5), treadmill at (75.5, −64.5),
+  both non-blocking props on a rubber mat — chosen over a pocket
+  interior (no interior streaming cost, sits in the world). Sessions
+  are prompt-driven; the props never enter `STATIC_BLOCKERS`.
+- **Fishing spots**: pier stand (2, 112.5) casting to (2, 122);
+  Sable Island dock stand (−64, 154.5) casting to (−64, 146). Splash
+  ring + bobber are Phase8-owned visuals at the cast point; the leaning
+  rod + bucket props are non-blocking.
+- **Clothing override rule**: a Thread & Tide purchase (counter at
+  (18, 30.5), Market Row) overrides the current preset's top style and
+  top/bottom colours until the player changes character OR variant in
+  Character Select, which clears it. The override is persisted
+  (`harborfall-clothing`) and applied at rig build.
+- **NPC memory**: recognition runs inside the existing ped loop
+  (13u radius, per-ped cooldown 50–90 s) — no new per-frame system, no
+  new draw calls. Zone reputation is a persisted Record keyed by the
+  existing district names; decay ×0.55 runs on the day-rollover
+  watcher Phase 8 already owns.
+- **Smoothness (targets, NOT measured here)**: dynamic resolution
+  walks a ladder 2 → 1.75 → 1.5 → 1.25 → 1.1 toward the tier cap
+  (High 2 / Medium 1.5 / Low 1.25) on rolling 1 s FPS windows (< 47
+  down, > 57 for 5 s up, ≥ 2.5 s between steps, applied via
+  `gl.setPixelRatio`, no canvas remount); sustained < 40 FPS for 8 s
+  in gameplay drops ONE quality tier with a toast, never below Low,
+  and any manual tier pick (pause Graphics / phone Settings) disables
+  auto-drop for the session. On Medium, DPR ≤ 1.25 also steps the sun
+  shadow map to 1024. Texture anisotropy is 8 on High / 4 otherwise
+  (applied at texture creation). HUD React snapshot is throttled to
+  5 Hz (200 ms). Hot-loop audit: Player's frame loop lost 3 per-frame
+  allocations (2 Vector3 + the merged-key view literal, hoisted to
+  scratch/memo); Vehicle's `{...car.state}` spread (1/frame while
+  driving) is REQUIRED by the physics step's immutable-state contract
+  and was left; Phase7's hail/destination filters run on event
+  cadence, not per frame. Frustum culling verified: city-wide
+  instanced sets are intentionally `frustumCulled = false` (one draw
+  spanning all districts — culling would pop the whole set); regular
+  meshes keep default culling with geometry-derived bounds. **Targets:
+  60 fps on desktop High, 50–60 on mid phones at Medium after
+  adaptation. These are targets — this environment cannot run the
+  game, so no frame rate was measured; the user play-tests live.**
+- **Bundle**: index 2,062.32 kB / gzip 1,338.22 kB (Phase 7:
+  2,011.28 / 1,322.49) — +51 kB raw / +16 kB gzip for the entire
+  Phase 8 round (8 sweep items + realism pass + 3 exotics + joystick
+  + smoothness + language wiring); no new dependencies.

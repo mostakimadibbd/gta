@@ -153,16 +153,17 @@ materials, filmic light — inside the web stack instead.
 - ✅ **Phase 2** — weather, police LOS/search + roadblocks + witnesses, damage & fuel, smartphone, NPC life, overlook + bay bridge, visual realism overhaul, character realism rebuild, poster loading screen, theme-song upgrade (this release)
 - ✅ **Phase 3** — visual round 2 (rounded sculpted cars, post-processing grade, facade/ground/prop detail, skyline ring) + rideable motorcycle, two enterable interiors (garage + club), swimming, first-person camera, combat lite (punch + pistol), buyable villa with garage save (this release)
 - ✅ **Phase 4** — UI realism overhaul (dark glass), garage car selection, character select (6 presets), C++ physics v2 + vehicle collisions, drivable Bay Bridge + Coral Shores (second city), theft system (pickpocket/robberies/break-ins/pawn), gyro steering, PDF deltas (crouch, photo mode, shake/FOV settings), Visual Upgrade V1–V7 (audit doc, normal maps, weathering, vehicle interiors, water/palm motion, debrief screen + weapon selector, far-ped tick skip) (this release)
-- 🟡 **Phase 4.5** — traffic obeys lights ✅ and rush hour ✅ landed in Phase 6; races + taxi jobs ✅ landed in Phase 7; still open: gamepad, tow jobs
+- ✅ **Phase 4.5** — traffic obeys lights ✅ and rush hour ✅ landed in Phase 6; races + taxi jobs ✅ landed in Phase 7; gamepad + tow jobs ✅ landed in Phase 8 — closed
 - ✅ **Phase 5 (shipped as the realistic-visuals + story/UI round)** — quality tiers, equirect env + water shader + SSAO, CC0 PBR route, clearcoat cars + headlight beams, character material/animation pass, deepened story + 2 side arcs + Ch.5 choice, cinematic subtitles, UI redesign. Still open from the original Phase 5 list: more interiors, customisation, NPC memory, businesses, 6-star design review
 - ✅ **Phase 6 — "Proper Game" (this release)** — Northgate district + causeway + Sable Island; traffic obeys lights + queues + rush hour + reckless driver; bus (route + stops) / taxi / bicycle / speedboat; NPC destinations, phone-peds, dog walker, vendor, rain shelter, night club drift; police spike strips, surrender, heli searchlight, disguise-lite; SMG + shotgun, 4-slot Q, recoil, muzzle light, cover; stamina, skills + phone Stats, vault, limp, food/hospital heals; vehicle mods (B1); random world events (B2); shop hours (B3); character realism pass 3 (B4); C++ physics v3 source + TS mirror + smoke test (B5, WASM binary not rebuilt — no emcc); full game-flow pipeline (splash → staged loading → spawn sweep → streaming → area cards → respawn screens). Detailed 500-list mapping in §15.
 - ✅ **Phase 7 — "The 500 Sweep, Round 1" (this release)** — jobs system (taxi fares with hailing peds, tips + star ratings; Lina's delivery chain) in a phone Jobs app; 3 street races with AI rivals, checkpoint framework, positions, prizes + optional $100 bet; interiors round (Harbour Patrol HQ + desk surrender, Sable Clinic, Marina Table restaurant); buyable businesses (Wraps stall / Car Wash / Club Solace share) with a single daily income tick (06:00 rollover — sleeping triggers the same tick) + Coral Shores Apartment (second home, garage-save #2, sleep); THE HARBOUR HEIST two-stage chain (prep stealth bonus → strongroom drill → escape); mission checkpoints + retry-from-checkpoint (R), chapter replay at 40% (Story app), mission stats; phone News (Harbour Wire, generated from player actions) + SableSocial apps; GPS route polyline on the big map; world sweep — causeway toll booth, 3 speed cameras, destructible crates/barrels/fences (respawn next day), bench/chair sitting, vendor cooler drink, wind gusts (palms/boats/HUD), fish; emergency vehicles (parked + traffic ambulance/fire + rushing-ambulance event); player idle variations + swim dive entry. Detailed per-topic account in §15.
-- ⬜ **Phase 8 candidates** — multiplayer co-op missions, gamepad, tow jobs, NPC memory, 6-star review, clothing shops
+- ✅ **Phase 8 — "The 500 Sweep, Round 2" + realism/cars/joystick/smoothness/language escalations (this release)** — fishing (pier + island dock, charge/cast/bite/reel loop, 5 fish by place/time, sell at Harbour Wraps, best catch persisted); Sable Fitness outdoor gym at Lantern Park (bench + treadmill rhythm sessions, Strength skill added as the 4th skill); NPC memory & recognition (per-zone reputation + per-ped witness/robbed/helped memory, recognition barks, victims avoid you for a day, witnesses point you out to cops); SableBank Invest (3 fictional local stocks, hourly random walk + documented event nudges, $100 lots, portfolio P/L); baseball bat (5th Q slot, Lantern Park pickup + Sable Arms, knockback swing); Thread & Tide clothing shop (counter + rack on Market Row, outfit override layer with a documented select-screen rule); tow jobs (Sable Wrecker at Lina's, reverse-to-hook, tether-with-swing towing, $150/delivery); gamepad support (standard mapping, analog sticks, toast + Help table); CHARACTER REALISM PASS 4 (heel-toe stride-matched walk cycle, finger-block hands, 1024² faces on Med/High, alpha hair cards, subsurface-look skin, breathing + blink); EXOTIC CARS (original Vantara S wedge with scissor doors, Kestrel One hypercar with active wing, Marlowe GT — dealership + traffic, no real brands); MOBILE JOYSTICK rebuilt (floating origin, true analog with deadzone + expo curve, gyro yields to a deflected stick); GRAPHICS SMOOTHNESS (dynamic resolution ladder, continuous adaptive tier with manual-override respect, HUD snapshot at 5 Hz, hot-loop allocation audit, Show FPS option); LANGUAGE REBALANCE (Harborfall Core C++ gains traffic decisions / ped steering v2 / LOS sampling / boat buoyancy / race pacing with smoke tests + TS mirrors; Python server gains /v1/leaderboards + /v1/economy/snapshot with optional client sync; C# Harborfall.WorldTools desktop tooling ships as source — no dotnet SDK in the build environment, not compile-verified). Detailed per-topic account in §15.
+- ⬜ **Phase 9 candidates** — multiplayer co-op missions, 6-star review
 
-**Status tally (recounted Phase 7):** the §15 ledger below is the per-topic account of the user's 500-feature list — **89 topic lines: ✅ 57 · 🟡 6 · ⬜ 26**, and every ⬜ carries its specific reason (engine-blocked or not-yet-built — never silently skipped). Blueprint sections §§1–13 above remain the design roadmap.
+**Status tally (recounted Phase 8):** the §15 ledger below is the per-topic account of the user's 500-feature list — **93 topic lines: ✅ 67 · 🟡 6 · ⬜ 20**, and every ⬜ carries its specific reason (engine-blocked or not-yet-built — never silently skipped). Blueprint sections §§1–13 above remain the design roadmap.
 *QA note (PDF §QA): each release is accepted against build-pass + in-game smoke checks of the new systems; a formal written QA checklist pass is tracked as a Phase 5 item.*
 
-## 15. The 500-feature list — mapped (Phase 7, "The 500 Sweep, Round 1")
+## 15. The 500-feature list — mapped (Phase 8, "The 500 Sweep, Round 2")
 
 The user's expansion brief listed ~500 desired features in 12
 categories. This is the honest ledger, rewritten topic-by-topic in
@@ -171,7 +172,9 @@ equivalent is named) · ⬜ not in — with the specific reason (engine
 limit of the browser build, or not yet built). Nothing is marked done
 that isn't playable, and nothing is silently skipped.
 
-**Tally: 89 topic lines — ✅ 57 · 🟡 6 · ⬜ 26.**
+**Tally: 93 topic lines — ✅ 67 · 🟡 6 · ⬜ 20.**
+
+**Languages note (Phase 8):** the authorship of game logic was rebalanced toward the compiled/service languages as far as the platform allows — the **Harborfall Core (C++)** now owns traffic decisions, pedestrian steering+separation, wanted LOS sampling, boat buoyancy and race pacing (with g++ smoke tests and exact TypeScript mirrors; the WASM binary itself is rebuilt only where emcc exists); the **Python** FastAPI service adds leaderboards + economy snapshots; **C#** covers desktop world/save tooling (`tools/`). TypeScript remains the browser presentation shell + glue — browsers execute JS/WASM natively, which is a platform constraint, not a preference (see README "Languages").
 
 ### 1. Open World & Map
 - ✅ Three connected landmasses: Port Sable (6 districts), Coral Shores, Northgate, plus Sable Island
@@ -187,18 +190,19 @@ that isn't playable, and nothing is silently skipped.
 
 ### 2. Player & Character
 - ✅ 6 character presets × 3 outfit variants (character select)
-- ✅ Crouch/stealth + cover, vaulting, limp, stamina + 3 skills with perks
+- ✅ Crouch/stealth + cover, vaulting, limp, stamina + 4 skills with perks (Strength added Phase 8 via the gym)
 - ✅ Swimming — plus dive entry (Phase 7: Space at a deep-water edge arcs you in head-first)
 - ✅ Sitting (Phase 7: benches city-wide + restaurant chairs; E or any movement key stands)
 - ✅ Idle life (Phase 7: after 6 s idle — weight shift, look-around, periodic phone check)
 - ✅ Eating/drinking poses (vendor wrap, cooler drink, restaurant meal — hand-to-mouth)
 - ✅ First-person camera + photo mode
-- 🟡 Faces/hair — equivalent: 512² painted face textures, 3 builds, 6 skin tones, jacket torsos; realistic-STYLED rigs, not photoreal (browser rig limit, stated since Phase 2)
-- ⬜ Clothing shops / haircuts / tattoos as player purchases — not built; presets + variants cover appearance choice
+- 🟡 Faces/hair — equivalent: Phase 8 realism pass 4 — 1024² painted faces on Medium/High (brow ridge, two-tone iris + catchlight, lid lines, stubble density), layered alpha hair cards over the scalp cap, subsurface-look skin, heel-toe stride-matched gait, breathing + blink; still procedural rigs, realistic-STYLED, not scanned/photoreal (browser rig limit, stated since Phase 2)
+- ✅ Clothing shop (Phase 8): Thread & Tide on Market Row — 6 outfit pieces ($40–$200) applied as an override layer on the current preset (top style + top/bottom colours); Character Select character/variant changes clear the override (the documented change-out rule). Haircuts/tattoos remain ⬜ — not built
 - ⬜ Full ragdoll player physics — engine-blocked: no ragdoll solver in the TS/C++ physics mirror
 
 ### 3. Vehicles & Transportation
 - ✅ 14 car classes + motorcycle + bicycle + bus + taxi + speedboat, damage/fuel, garages, mods, break-ins
+- ✅ Exotic cars (Phase 8, all ORIGINAL designs — no real brands): Vantara S wedge supercar (scissor doors, Sable Motors $25,000, 1 rare traffic), Kestrel One hypercar (active rear wing, $40,000, mansion showpiece), Marlowe GT luxury tourer (dealership + traffic); plus the Sable Wrecker tow truck (see §10)
 - ✅ The taxi is a working job vehicle (Phase 7 fare system)
 - ✅ Emergency vehicles (Phase 7): ambulance + fire truck — parked units at the clinic/fire point, one traffic variant each on slow loops, lights-off in normal service
 - ✅ Two garage-save homes: villa drive + Coral apartment parking (Phase 7)
@@ -219,7 +223,7 @@ that isn't playable, and nothing is silently skipped.
 - ✅ Witness/report pipeline (crimes are seen, reported, then wanted rises)
 - ✅ SableSocial (Phase 7): ambient NPC posts react to time, weather and district — and to the player's public crimes
 - 🟡 Conversations — equivalent: contextual barks + subtitle lines; no branching dialogue trees with ambient NPCs
-- ⬜ NPC memory of the player across days — not built: witnesses remember within an episode only
+- ✅ NPC memory & recognition (Phase 8): per-zone reputation (persisted, decays ×0.55 daily) + per-ped memory — crime witnesses remember for 5 game-minutes and recognise you (subtitle barks, zone-named), pickpocket victims avoid you for the rest of the game-day, helped peds greet you; a remembering witness near a cop points you out (extends the reporting marker + last-known). Witnesses who were helped stay quiet unless alone, and hot-zone witnesses report faster
 - ⬜ Named-NPC daily schedules — not built: peds are ambient archetypes, not persistent individuals
 
 ### 6. Police & Wanted
@@ -233,7 +237,7 @@ that isn't playable, and nothing is silently skipped.
 ### 7. Combat & Weapons
 - ✅ Fists, pistol, SMG (auto), shotgun (5-pellet) — per-weapon ammo, Q selector, recoil, muzzle light, crouch cover
 - ✅ Hit reactions (flinch/fall) and full crime/witness integration
-- ⬜ Melee weapons (bat/knife class) — not built
+- ✅ Melee weapon (Phase 8): baseball bat — 5th Q-cycle slot, Lantern Park pickup + $150 at Sable Arms/Coral Pawn, no ammo; wider/slower swing with knockback + longer ped-down (longer still at Strength 50+), wooden thock sfx, same assault crime class as fists
 - ⬜ Thrown weapons — not built
 - ⬜ Weapon mods/attachments — not built (vehicle mods exist)
 - ⬜ Free-aim aiming mode — by design: shots are facing-based hitscan; no aim-mode camera in the browser build
@@ -254,7 +258,7 @@ that isn't playable, and nothing is silently skipped.
 - ✅ Second property (Phase 7): Coral Shores Apartment $5,000 — respawn-point choice, sleep point, garage-save point #2
 - ✅ Sleeping (Phase 7): E at the villa terrace or your apartment → fade to morning, full heal, businesses settle
 - 🟡 Shop hours — equivalent: shops close 23:00–07:00; the food vendor and garage keep harbour hours
-- ⬜ Stock market — not built
+- ✅ Stock market, lightweight (Phase 8): SableBank Invest — 3 fictional local stocks (Sable Shipping, Coral Resorts, Northgate Motors), hourly random-walk prices, buy/sell in $100 lots, portfolio value + P/L in the Bank app; prices are nudged by the player's own actions (harbour heist → shipping −8%, race wins → motors +6%, business buys → coral +3%), each nudge announced by a SableBank message. Persisted
 - ⬜ Business employees/management sim — not built: income is automatic once owned
 
 ### 10. Activities
@@ -263,8 +267,9 @@ that isn't playable, and nothing is silently skipped.
 - ✅ Street races (Phase 7): Docks Sprint, Bay Run (over the bridge), Northgate Loop — 3 AI rivals on the route, checkpoint sequence, live position, $600/$250/$100 prizes, optional $100 bet (win = $200 back), best times persisted
 - ✅ Collectible tokens, photo mode, swimming, island trips
 - ✅ Random world events — now 5 (Phase 7 adds the rushing ambulance to the clinic: lights flashing, Dispatch bark, live map marker)
-- ⬜ Fishing mini-game — not built: fish are ambient world life (Phase 7); no rod/catch loop
-- ⬜ Gym workouts — not built: stamina grows by use instead
+- ✅ Fishing (Phase 8): pier + Sable Island dock spots — hold/release cast with a sweet zone, bite window, hold-to-reel marker mini (line snaps if you over-reel); 5 fish (Harbour Sprat, Sable Mackerel, day Coral Trout, night Night Eel, rare Golden Koi) with sizes by spot/time of day; sell the creel at Harbour Wraps; best catch + totals in Stats, persisted
+- ✅ Gym (Phase 8): Sable Fitness OUTDOOR corner at Lantern Park (chosen over a pocket interior — cheaper, in the world) — bench press (Strength) + treadmill (Stamina) rhythm sessions: tap E in the moving zone ×8, $10, once per game-day per station, faster skill gains than ambient use; 50+ Strength makes fists/bat drop peds longer
+- ✅ Tow jobs (Phase 8): Jobs app tow shift — Sable Wrecker at Lina's; a stranded car is marked, reverse the hook in and hold still to hitch, tow on a swinging tether (wrecker accel cut while hooked), deliver into Lina's garage zone for $150; stats tracked
 
 ### 11. Smartphone / Interface
 - ✅ Core apps: Contacts, Messages, SableBank, Music, Maps, Garage, Stash, Stats, Camera, Settings
@@ -274,6 +279,8 @@ that isn't playable, and nothing is silently skipped.
 - ✅ Social app (Phase 7): SableSocial — ambient posts + reactions to public crimes (see §5)
 - ✅ GPS route (Phase 7): the big map draws a dashed route polyline (Manhattan routing on the road grid; bridge/causeway spines cross-district) to the active mission or job target
 - ✅ Game flow: staged loading, splash, spawn sweep, area cards, respawn mini-screens, door fades, no-select solid HUD, wind line in the weather chip tooltip + phone home
+- ✅ Gamepad + touch input (Phase 8): standard-mapping gamepad (analog move/steer, right-stick camera, triggers, full button map in Help, connect toast, last-input-wins with keyboard/touch); rebuilt floating analog touch joystick (appears at the thumb, deadzone + expo curve, sprint latch, gyro yields while deflected)
+- ✅ Smoothness (Phase 8): dynamic resolution ladder (DPR 1.1–2 by tier cap), continuous adaptive tier drop with manual-override respect, HUD snapshot at 5 Hz, "Show FPS" option in phone Settings + pause Graphics
 - ⬜ In-phone internet/browser — not built: News + Social are the honest boundary; no fake web pages
 - ⬜ Camera gallery persistence — not built: photo mode captures the live frame; no saved gallery album
 

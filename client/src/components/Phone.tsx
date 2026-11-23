@@ -14,6 +14,34 @@ import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal } from "../game/economy";
 import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
 import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
+import { STOCKS, INV, buyLot, sellLot, portfolioValue, portfolioPL, LOT } from "../game/invest";
+import { manualTier, showFps, setShowFps } from "../game/perf";
+import { fetchBoard, type BoardEntry } from "../game/leaderboard";
+
+/** Phase 8: harbour leaderboards from the Python service — renders
+ * nothing until the fetch settles; an offline game shows the hint. */
+function LeaderboardRows() {
+  const [board, setBoard] = useState<{ race: BoardEntry[]; jobs: BoardEntry[] } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let on = true;
+    void fetchBoard().then((b) => { if (on) { setBoard(b); setLoaded(true); } });
+    return () => { on = false; };
+  }, []);
+  if (!loaded) return null;
+  if (!board) return <p className="phone-tip">Leaderboards live on the multiplayer server — offline, your best times stay on this phone.</p>;
+  return (
+    <>
+      <h3 className="phone-subhead">Harbour leaderboards (server)</h3>
+      {board.race.slice(0, 3).map((e, i) => (
+        <div key={`r${i}`} className="bank-row"><span>Fastest lap · {e.name}</span><b>{e.value.toFixed(1)}s</b></div>
+      ))}
+      {board.jobs.slice(0, 3).map((e, i) => (
+        <div key={`j${i}`} className="bank-row"><span>Top earner · {e.name}</span><b>${Math.round(e.value).toLocaleString()}</b></div>
+      ))}
+    </>
+  );
+}
 
 interface Props {
   open: boolean;
@@ -132,6 +160,22 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>{APARTMENT.name}</span><b>{ECO.ownsApartment ? "Owned 🔑" : `$${APARTMENT.price.toLocaleString()}`}</b></div>
             <div className="bank-row"><span><b>Daily income (paid each morning)</b></span><b>${dailyIncomeTotal().toLocaleString()}</b></div>
             <p className="phone-tip">Income lands with a SableBank message every game-morning — or when you sleep at home. Solano's ledger can't touch this account. Probably.</p>
+            <h3 className="phone-subhead">Invest — SableBank Markets</h3>
+            <div className="bank-row"><span>Portfolio value</span><b>${portfolioValue().toFixed(0)} {portfolioPL() !== 0 && <small>({portfolioPL() >= 0 ? "+" : "−"}${Math.abs(portfolioPL()).toFixed(0)})</small>}</b></div>
+            {STOCKS.map((s) => {
+              const held = INV.shares[s.id] ?? 0;
+              return (
+                <div key={s.id} className="bank-row">
+                  <span>{s.name}<small style={{ display: "block" }}>{held > 0 ? `${held.toFixed(1)} shares · $${(held * INV.prices[s.id]).toFixed(0)}` : s.blurb}</small></span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <b>${INV.prices[s.id].toFixed(2)}</b>
+                    <button type="button" className="phone-toggle" onClick={() => { if (buyLot(s.id)) setTick((v) => v + 1); }}>Buy ${LOT}</button>
+                    <button type="button" className="phone-toggle" disabled={held <= 0} onClick={() => { if (sellLot(s.id)) setTick((v) => v + 1); }}>Sell</button>
+                  </span>
+                </div>
+              );
+            })}
+            <p className="phone-tip">Prices drift every game-hour — and react to the harbour: heists sink shipping, race wins lift motors, your business buys lift resorts.</p>
           </div>
         )}
         {app === "jobs" && (
@@ -149,10 +193,17 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             {RACES.map((r) => (
               <div key={r.id} className="bank-row"><span>{r.name}</span><b>{jobStats.bestTimes[r.id] ? `best ${fmtTime(jobStats.bestTimes[r.id])}` : "no time yet"}</b></div>
             ))}
+            <h3 className="phone-subhead">Tow work — Lina's Wrecker</h3>
+            <div className="bank-row"><span>Tow status</span><b>{J.towPhase === "idle" ? "Off shift" : J.towPhase === "pickup" ? (J.towHooked ? "Hooked — deliver to Lina's" : "Stranded car marked — reverse the hook in") : "Delivering"}</b></div>
+            <button type="button" className="phone-row" onClick={() => { J.wantTow = true; onClose(); }}>
+              <span><b>Start tow shift</b><small>Take the Sable Wrecker at Lina's yard · $150 per delivery</small></span><span>›</span>
+            </button>
+            <div className="bank-row"><span>Tow deliveries</span><b>{jobStats.towDeliveries} · ${jobStats.towEarned.toLocaleString()}</b></div>
             <h3 className="phone-subhead">Earnings</h3>
             <div className="bank-row"><span>Taxi fares</span><b>{jobStats.taxiFares} · ${jobStats.taxiEarned.toLocaleString()} · best tip ${jobStats.taxiBestTip}</b></div>
             <div className="bank-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
+            <LeaderboardRows />
           </div>
         )}
         {app === "story" && (
@@ -204,6 +255,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
               ["Driving", G.skills.driving, "50+: handbrake slides 10% less — tidier drifts"],
               ["Shooting", G.skills.shooting, "50+: weapon spread tightens 15%"],
               ["Stamina", G.skills.stamina, "50+: stamina pool effectively +25%"],
+              ["Strength", G.skills.strength, "50+: fists and the bat put people down longer"],
             ] as const).map(([label, val, perk]) => (
               <div key={label} className="phone-stat">
                 <div className="phone-stat-head"><span>{label}</span><b>{Math.floor(val)}/100</b></div>
@@ -215,11 +267,14 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="phone-row"><span>Lifetime earned</span><b>${G.lifetimeEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Fines &amp; fees paid</span><b>${G.finesPaid.toLocaleString()}</b></div>
             <div className="phone-row"><span>Cars in garages</span><b>{G.storedCars.length}</b></div>
-            <div className="phone-row"><span>Weapons owned</span><b>{Object.values(G.weaponOwned).filter(Boolean).length}/3</b></div>
+            <div className="phone-row"><span>Weapons owned</span><b>{Object.values(G.weaponOwned).filter(Boolean).length}/4</b></div>
             <h3 className="phone-subhead">Honest work</h3>
             <div className="phone-row"><span>Taxi</span><b>{jobStats.taxiFares} fares · ${jobStats.taxiEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
+            <div className="phone-row"><span>Tow</span><b>{jobStats.towDeliveries} drops · ${jobStats.towEarned.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Fishing</span><b>{jobStats.fishCaught} caught · ${jobStats.fishEarned.toLocaleString()}{jobStats.bestFish ? ` · best ${jobStats.bestFish.name} ${jobStats.bestFish.cm}cm` : ""}</b></div>
+            <div className="phone-row"><span>Portfolio</span><b>${portfolioValue().toFixed(0)} ({portfolioPL() >= 0 ? "+" : "−"}${Math.abs(portfolioPL()).toFixed(0)})</b></div>
             <div className="phone-row"><span>Business income</span><b>${dailyIncomeTotal().toLocaleString()}/day</b></div>
             <h3 className="phone-subhead">Mission record</h3>
             {[...STORY_MISSIONS, ...SIDE_MISSIONS].filter((mDef) => (M.stats[mDef.id]?.attempts ?? 0) > 0).map((mDef) => (
@@ -282,13 +337,15 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
               <button type="button" className="phone-toggle" onClick={() => setSetting({ postFx: !G.settings.postFx })}>{G.settings.postFx ? "On" : "Off"}</button></div>
             <div className="bank-row"><span>Shadows</span>
               <button type="button" className="phone-toggle" onClick={() => setSetting({ shadows: !G.settings.shadows })}>{G.settings.shadows ? "On" : "Off"}</button></div>
+            <div className="bank-row"><span>Show FPS</span>
+              <button type="button" className="phone-toggle" onClick={() => { setShowFps(!showFps()); setTick((v) => v + 1); }}>{showFps() ? "On" : "Off"}</button></div>
             <div className="bank-row"><span>Field of view · {G.settings.fov}°</span>
               <input type="range" min={50} max={75} step={1} value={G.settings.fov} onChange={(e) => setSetting({ fov: Number(e.target.value) })} /></div>
             <h3 className="phone-subhead">Graphics quality</h3>
             <div className="bank-row"><span>Quality tier</span>
               <span className="phone-seg">
                 {(["low", "medium", "high"] as const).map((t) => (
-                  <button key={t} type="button" className={`phone-seg-btn ${G.settings.quality === t ? "active" : ""}`} onClick={() => setSetting({ quality: t })}>{t}</button>
+                  <button key={t} type="button" className={`phone-seg-btn ${G.settings.quality === t ? "active" : ""}`} onClick={() => { manualTier(t); setTick((v) => v + 1); }}>{t}</button>
                 ))}
               </span></div>
             <h3 className="phone-subhead">Subtitles</h3>

@@ -10,6 +10,7 @@
 //   High   — Medium + SSAO, stronger bloom, CC0 at native (768–1024),
 //            softer shadow radius, full water shader.
 import { G, persistSettings } from "./store";
+import { setTextureAnisotropy } from "../textures";
 
 export type QualityTier = "low" | "medium" | "high";
 export const TIERS: QualityTier[] = ["low", "medium", "high"];
@@ -39,10 +40,12 @@ export function initQuality() {
       persistSettings();
     }
   } catch { /* storage unavailable — keep default */ }
+  setTextureAnisotropy(G.settings.quality === "high" ? 8 : 4);
 }
 
 export function setTier(t: QualityTier) {
   G.settings.quality = t;
+  setTextureAnisotropy(t === "high" ? 8 : 4); // Phase 8: anisotropy by tier
   persistSettings();
 }
 

@@ -9,6 +9,9 @@ import { GARAGE_ZONES, REGISTERS, PAWN_SHOP, INTERIORS, DEALERSHIP, DEALER_CARS,
 import { sfx } from "../game/audio";
 import { giveCash, giveItem, rollLootItem, sellStash } from "../game/theft";
 import { pushPhoneMsg } from "../game/phone";
+import { ECO } from "../game/economy";
+import { F, creelValue } from "../game/phase8";
+import { jobStats, persistJobStats } from "../game/jobs";
 
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 /** In-game clock hour (matches the phone): dayTime 0 = 06:00. */
@@ -18,6 +21,7 @@ export const shopsClosed = () => { const h = gameHour(); return h >= 23 || h < 7
 
 interface GunItem { label: string; price: number; apply: () => void; }
 const GUN_ITEMS: GunItem[] = [
+  { label: "Baseball bat", price: 150, apply: () => { G.weaponOwned.bat = true; G.weaponSel = "bat"; } },
   { label: "SMG", price: 650, apply: () => { G.weaponOwned.smg = true; G.weaponAmmo.smg = Math.min(240, G.weaponAmmo.smg + 60); G.weaponSel = "smg"; } },
   { label: "Shotgun", price: 450, apply: () => { G.weaponOwned.shotgun = true; G.weaponAmmo.shotgun = Math.min(240, G.weaponAmmo.shotgun + 12); G.weaponSel = "shotgun"; } },
   { label: "Pistol ammo ×24", price: 60, apply: () => { G.weaponAmmo.pistol = Math.min(240, G.weaponAmmo.pistol + 24); } },
@@ -174,6 +178,10 @@ export default function Interactions() {
             G.peds.forEach((p, i) => { if (i !== pickIdx && p.active && t >= p.downUntil && (p.x - px) ** 2 + (p.z - pz) ** 2 < wr * wr) witnessed = true; });
             for (const c of G.cops) if (c.active && (c.x - px) ** 2 + (c.z - pz) ** 2 < (wr + 6) ** 2) witnessed = true;
             const success = Math.random() < 0.75 + (G.crouched ? 0.15 : 0);
+            // Phase 8 memory: the victim KNOWS it was you (felt the hand
+            // or saw your face) — they remember for the rest of the
+            // game-day and give you a wide berth (GameSystems ped loop).
+            victim.memRobbedDay = ECO.daySerial;
             if (success && !witnessed) {
               if (Math.random() < 0.55) giveCash(8 + Math.floor(Math.random() * 53), "Pickpocketed:");
               else giveItem(rollLootItem());
@@ -224,8 +232,21 @@ export default function Interactions() {
           prompt = `E — Sable Arms: ${gi.label} $${gi.price} (tap E browse · hold E buy)`;
         } else if (atVendor) {
           // street food — the vendor keeps harbour hours: always open (B3)
+          // Phase 8: the Wraps stall buys the day's catch off you first
+          if (F.creel.length > 0) {
+            const val = creelValue();
+            prompt = `E — Sell your catch to Harbour Wraps ($${val} · ${F.creel.length} fish)`;
+            act = () => {
+              const n = F.creel.length;
+              F.creel = [];
+              G.cash += val; G.lifetimeEarned += val;
+              jobStats.fishEarned += val; persistJobStats();
+              sfx.register();
+              toast(`🐟 Sold ${n} fish to Harbour Wraps — +$${val}. Tomorrow's special, sorted.`);
+            };
+          }
           // Phase 7: full belly but tired legs → the $5 cooler drink
-          if (G.health >= 99.5 && G.stamina < 99 && G.cash >= 5) {
+          else if (G.health >= 99.5 && G.stamina < 99 && G.cash >= 5) {
             prompt = "E — Harbour cooler drink ($5) — refills stamina";
             act = () => {
               G.cash -= 5; G.stamina = 100;
@@ -264,6 +285,11 @@ export default function Interactions() {
             if (G.cash < 5) { toast("No coins for the hat."); return; }
             G.cash -= 5;
             if (G.eventNow) G.eventNow.tipped = true;
+            // Phase 8 memory: the little crowd remembers a kindness —
+            // helped peds greet you (and never report a face they like
+            // quite as fast: they are skipped as the reporting witness
+            // while the memory lasts — see store addCrime witness pick)
+            for (const p of G.peds) if (p.active && (p.x - px) ** 2 + (p.z - pz) ** 2 < 7 ** 2) p.memHelpedUntil = t + 300;
             bark("Performer", "Bless you! Port Sable's got soul, friend.");
             sfx.cash();
           };

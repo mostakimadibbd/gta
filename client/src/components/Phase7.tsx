@@ -18,6 +18,9 @@ import {
 } from "../game/jobs";
 import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, setHomePref, persistEco } from "../game/economy";
 import { pushNews, rollSocialPost, socialCrimePost } from "../game/feed";
+import { nudgeStock } from "../game/invest";
+import { postRaceResult } from "../game/leaderboard";
+import { fallbackPhysics } from "../physics/GamePhysics";
 import {
   TOLL, SPEED_CAMERAS, SPEED_LIMIT_U, DESTRUCTIBLES,
   APARTMENT_DOOR, MANSION, groundYAt, districtAt, props,
@@ -251,8 +254,11 @@ export default function Phase7Systems() {
             const dx = target[0] - o.x, dz = target[1] - o.z;
             const d = Math.hypot(dx, dz);
             oProg = o.cp * 1000 - d;
-            const rubber = oProg > playerProg ? 0.93 : oProg < playerProg - 300 ? 1.06 : 1;
-            o.speed = Math.min(o.speed + dt * 6, 15.2 * o.skill * rubber);
+            // pacing from the Harborfall Core (race_pace): the old
+            // 0.93/1.06 step bands become a continuous rubber-band —
+            // top speed shifts by up to ±1.0 u/s with the progress gap
+            const topSpeed = fallbackPhysics.racePace(playerProg, oProg, 15.2 * o.skill, 1.0);
+            o.speed = Math.min(o.speed + dt * 6, topSpeed);
             if (d > 0.1) {
               const want = Math.atan2(dx, dz);
               let dh = want - o.heading;
@@ -289,6 +295,9 @@ export default function Phase7Systems() {
           const bt = jobStats.bestTimes[def.id];
           if (!bt || playerTime < bt) jobStats.bestTimes[def.id] = Math.round(playerTime * 10) / 10;
           persistJobStats();
+          // Phase 8 investing nudge: a race WIN lifts Northgate Motors
+          if (place === 1) nudgeStock("motors", 0.06, "a local street-race win has the whole town talking cars.");
+          postRaceResult(); // Phase 8: optional Python-service leaderboard sync (no-op offline)
           pushPhoneMsg("Race Marshal", `${def.name}: you finished ${place === 1 ? "1st 🏆" : place === 2 ? "2nd" : place === 3 ? "3rd" : `${place}th`} in ${fmtTime(playerTime)} — payout $${payout}.`);
           pushNews(`Harbour Wire: ${def.name} settled`, `An unsanctioned street race through ${districtAt(def.start[0], def.start[1])} ended with a ${fmtTime(playerTime)} winning run. The patrol arrived, as ever, fashionably late.`);
           toast(`🏁 ${def.name}: ${place === 1 ? "1st" : place === 2 ? "2nd" : place === 3 ? "3rd" : `${place}th`} — ${fmtTime(playerTime)} — +$${payout}`);
@@ -466,6 +475,9 @@ export default function Phase7Systems() {
               label: b.name,
               run: () => {
                 G.cash -= b.price; ECO.owned.push(b.id); persistEco();
+                // Phase 8 investing nudge: local business changing hands
+                // lifts Coral Resorts a touch (documented in invest.ts)
+                nudgeStock("coral", 0.03, "a familiar local just bought into Port Sable business.");
                 pushPhoneMsg("SableBank", `🏢 -$${b.price.toLocaleString()} — you bought the ${b.name}. It pays $${b.income} into your account every game-morning.`);
                 pushNews(`Harbour Wire: ${b.name} changes hands`, `A familiar local face has bought the ${b.name}. Staff were told nothing changes except the signature on the cheques.`);
                 toast(`🏢 You own the ${b.name}! +$${b.income} every morning.`);

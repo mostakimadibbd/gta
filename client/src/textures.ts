@@ -19,11 +19,17 @@ function canvas(size: number, h = size): [HTMLCanvasElement, CanvasRenderingCont
   return [c, c.getContext("2d")!];
 }
 
+// Phase 8 smoothness audit: texture anisotropy follows the quality
+// tier — 8 on High, 4 otherwise (set by game/quality at boot + on tier
+// change; applies to textures created after the change)
+let ANISO = 4;
+export function setTextureAnisotropy(n: number) { ANISO = n; }
+
 function finish(c: HTMLCanvasElement, rx = 1, ry = 1): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(rx, ry);
-  t.anisotropy = 4;
+  t.anisotropy = ANISO;
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
@@ -226,6 +232,17 @@ export function fabricTexture(): THREE.CanvasTexture {
   for (let i = 0; i < 128; i += 3) { g.fillRect(0, i, 128, 1); g.fillRect(i, 0, 1, 128); }
   g.fillStyle = "rgba(255,255,255,0.10)";
   for (let i = 1; i < 128; i += 3) { g.fillRect(0, i, 128, 1); }
+  // Phase 8 (realism pass 4): painted cloth FOLDS — soft vertical drape
+  // shadows + a hem crease; the same canvas is the bump map, so folds get
+  // real raking-light relief on torsos instead of flat weave everywhere.
+  for (let i = 0; i < 5; i++) {
+    const x = 14 + rnd() * 100;
+    const grad = g.createLinearGradient(x - 7, 0, x + 7, 0);
+    grad.addColorStop(0, "rgba(60,55,50,0)"); grad.addColorStop(0.5, "rgba(60,55,50,0.13)"); grad.addColorStop(1, "rgba(60,55,50,0)");
+    g.fillStyle = grad; g.fillRect(x - 7, 6, 14, 116);
+    g.fillStyle = "rgba(255,255,255,0.07)"; g.fillRect(x + 6, 6, 2, 116);
+  }
+  g.fillStyle = "rgba(60,55,50,0.12)"; g.fillRect(0, 108, 128, 3);
   _fabric = finish(c, 2, 2);
   return _fabric;
 }
@@ -291,6 +308,17 @@ export function skinTexture(): THREE.CanvasTexture {
   const rnd = mulberry32(707);
   const [c, g] = canvas(128);
   grain(g, 128, 128, [242, 240, 238], 5, rnd);
+  // Phase 8 (realism pass 4): warm subsurface-look tint — soft blotches
+  // that read as blood-warmth variation (cheeks/ears) once the material
+  // colour multiplies through, plus faint pore speckle for roughness life.
+  for (let i = 0; i < 7; i++) {
+    const x = rnd() * 128, y = rnd() * 128, r = 14 + rnd() * 26;
+    const warm = g.createRadialGradient(x, y, 2, x, y, r);
+    warm.addColorStop(0, "rgba(255,166,130,0.10)"); warm.addColorStop(1, "rgba(255,166,130,0)");
+    g.fillStyle = warm; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  g.fillStyle = "rgba(120,80,60,0.05)";
+  for (let i = 0; i < 260; i++) g.fillRect(rnd() * 128, rnd() * 128, 1, 1);
   _skin = finish(c, 1, 1);
   return _skin;
 }
@@ -299,13 +327,18 @@ export function skinTexture(): THREE.CanvasTexture {
 // curved plane on the front of the head — reads far better at gameplay
 // distance than geometry eyes, and costs one shared texture per variant.
 const faceCache = new Map<string, THREE.CanvasTexture>();
-export function faceTexture(variant: "m" | "f" | "beard"): THREE.CanvasTexture {
-  const hit = faceCache.get(variant);
+export function faceTexture(variant: "m" | "f" | "beard", px = 512): THREE.CanvasTexture {
+  const key = `${variant}:${px}`;
+  const hit = faceCache.get(key);
   if (hit) return hit;
-  // Phase 6 (B4): painted at 512² (drawn in 128-space via scale) with
-  // proper facial shading — eye sockets, cheek hollows, jaw shadow.
-  const [c, g] = canvas(512, 512);
-  g.scale(4, 4);
+  // Phase 6 (B4): painted faces with proper facial shading — eye sockets,
+  // cheek hollows, jaw shadow. Phase 8 (realism pass 4): Medium/High tiers
+  // paint at 1024² (drawn in 128-space via scale, so the extra resolution
+  // is pure crispness) and gain a brow ridge, nose side-shadows, two-tone
+  // lips, iris detail with a limbal ring + catchlight, an upper-lid line
+  // on every variant, and light stubble on the plain male face.
+  const [c, g] = canvas(px, px);
+  g.scale(px / 128, px / 128);
   g.clearRect(0, 0, 128, 128);
   // soft shading: cheek/jaw shadows + nose bridge shading
   const sh = g.createRadialGradient(64, 74, 12, 64, 74, 62);
@@ -329,23 +362,60 @@ export function faceTexture(variant: "m" | "f" | "beard"): THREE.CanvasTexture {
   g.beginPath(); g.moveTo(81, 80); g.quadraticCurveTo(78, 87, 74, 90); g.stroke();
   g.fillStyle = "rgba(120,70,40,0.16)";
   g.beginPath(); g.ellipse(64, 58, 5, 12, 0, 0, Math.PI * 2); g.fill(); // nose shading
+  // brow ridge: a soft shadow shelf above each brow + a highlight on the
+  // ridge itself — the single strongest "painted skull" cue at distance
+  for (const cx of [41, 87]) {
+    g.fillStyle = "rgba(110,60,35,0.16)";
+    g.beginPath(); g.ellipse(cx, 33, 13, 4.5, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "rgba(255,235,210,0.10)";
+    g.beginPath(); g.ellipse(cx, 30.5, 12, 3, 0, 0, Math.PI * 2); g.fill();
+  }
   // brows
   g.fillStyle = "rgba(30,20,14,0.85)";
   g.fillRect(30, 36, 22, 4); g.fillRect(76, 36, 22, 4);
-  // eyes: white + iris + pupil + glint
+  // eyes: white + two-tone iris + limbal ring + pupil + catchlight, and
+  // an upper-lid line on EVERY variant (pass 4)
   for (const cx of [41, 87]) {
     g.fillStyle = "#f4efe8"; g.beginPath(); g.ellipse(cx, 48, 10, 5.5, 0, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "#3a2a1c"; g.beginPath(); g.arc(cx, 48, 4.4, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "#0d0a08"; g.beginPath(); g.arc(cx, 48, 2.2, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "#ffffff"; g.beginPath(); g.arc(cx - 1.4, 46.4, 1.2, 0, Math.PI * 2); g.fill();
-    if (variant === "f") { g.strokeStyle = "rgba(20,12,8,0.9)"; g.lineWidth = 1.6; g.beginPath(); g.moveTo(cx - 10, 47); g.quadraticCurveTo(cx, 41, cx + 10, 47); g.stroke(); }
+    g.fillStyle = "#5a4030"; g.beginPath(); g.arc(cx, 48, 4.6, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#2c1c10"; g.beginPath(); g.arc(cx, 48, 3.4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#0d0a08"; g.beginPath(); g.arc(cx, 48, 2.1, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = "rgba(12,8,5,0.85)"; g.lineWidth = 0.9;
+    g.beginPath(); g.arc(cx, 48, 4.6, 0, Math.PI * 2); g.stroke(); // limbal ring
+    g.fillStyle = "#ffffff"; g.beginPath(); g.arc(cx - 1.4, 46.4, 1.25, 0, Math.PI * 2); g.fill(); // catchlight
+    g.fillStyle = "rgba(255,255,255,0.75)"; g.beginPath(); g.arc(cx + 1.6, 49.8, 0.6, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = "rgba(20,12,8,0.9)"; g.lineWidth = variant === "f" ? 1.7 : 1.15;
+    g.beginPath(); g.moveTo(cx - 10, 47); g.quadraticCurveTo(cx, 41, cx + 10, 47); g.stroke(); // upper lid line
   }
-  // nostrils + mouth
+  // nose side-shadows: two soft strokes down the bridge + an under-nose shadow
+  g.strokeStyle = "rgba(110,60,35,0.20)"; g.lineWidth = 1.6;
+  g.beginPath(); g.moveTo(58.5, 56); g.quadraticCurveTo(57.5, 66, 58.5, 71); g.stroke();
+  g.beginPath(); g.moveTo(69.5, 56); g.quadraticCurveTo(70.5, 66, 69.5, 71); g.stroke();
+  g.fillStyle = "rgba(110,60,35,0.18)";
+  g.beginPath(); g.ellipse(64, 73.5, 6.5, 2.2, 0, 0, Math.PI * 2); g.fill();
+  // nostrils + mouth (two-tone lips: darker upper, lighter lower + sheen)
   g.fillStyle = "rgba(90,50,30,0.5)";
   g.beginPath(); g.arc(59, 74, 1.7, 0, Math.PI * 2); g.arc(69, 74, 1.7, 0, Math.PI * 2); g.fill();
-  if (variant === "f") { g.fillStyle = "rgba(168,74,84,0.9)"; g.beginPath(); g.ellipse(64, 88, 11, 4.2, 0, 0, Math.PI * 2); g.fill(); }
-  else { g.fillStyle = "rgba(120,66,50,0.75)"; g.beginPath(); g.ellipse(64, 88, 9, 3, 0, 0, Math.PI * 2); g.fill(); }
+  if (variant === "f") {
+    g.fillStyle = "rgba(146,56,66,0.92)"; g.beginPath(); g.ellipse(64, 86.6, 10.5, 2.6, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "rgba(186,92,100,0.92)"; g.beginPath(); g.ellipse(64, 90, 10, 2.9, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "rgba(255,220,215,0.35)"; g.beginPath(); g.ellipse(64, 90.6, 5.5, 1.1, 0, 0, Math.PI * 2); g.fill();
+  } else {
+    g.fillStyle = "rgba(104,54,42,0.8)"; g.beginPath(); g.ellipse(64, 86.8, 8.6, 2.2, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "rgba(138,80,62,0.8)"; g.beginPath(); g.ellipse(64, 89.6, 8.2, 2.3, 0, 0, Math.PI * 2); g.fill();
+  }
   g.fillStyle = "rgba(90,50,30,0.28)"; g.fillRect(52, 96, 24, 2); // mouth shadow line
+  if (variant === "m") {
+    // light stubble: sparse short strokes over jaw + upper lip (pass 4)
+    const rndS = mulberry32(1111);
+    g.strokeStyle = "rgba(30,22,16,0.4)"; g.lineWidth = 0.9;
+    for (let i = 0; i < 130; i++) {
+      const a = (rndS() - 0.5) * 1.9, r = 30 + rndS() * 15;
+      const x = 64 + Math.sin(a) * r, y = 82 + Math.cos(a) * r * 0.6 + rndS() * 5;
+      if (y < 86 || (Math.abs(x - 64) < 11 && y < 94)) continue;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + (rndS() - 0.5) * 1.4, y + 2.2); g.stroke();
+    }
+  }
   if (variant === "beard") {
     // jaw beard: dense short strokes around the lower face
     const rnd = mulberry32(909);
@@ -359,8 +429,37 @@ export function faceTexture(variant: "m" | "f" | "beard"): THREE.CanvasTexture {
   }
   const t = finish(c);
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  faceCache.set(variant, t);
+  faceCache.set(key, t);
   return t;
+}
+
+// ---- hair CARDS (Phase 8, realism pass 4): strand strokes on a
+// transparent canvas — layered alpha planes over the scalp cap so hair
+// gets fringe/side volume instead of reading as one solid block. The
+// material colour tints it; alphaTest keeps the edges cheap. ----
+let _hairCard: THREE.CanvasTexture | undefined;
+export function hairCardTexture(): THREE.CanvasTexture {
+  if (_hairCard) return _hairCard;
+  const rnd = mulberry32(1212);
+  const [c, g] = canvas(128, 128);
+  g.clearRect(0, 0, 128, 128);
+  for (let i = 0; i < 90; i++) {
+    const x = 6 + rnd() * 116;
+    const len = 60 + rnd() * 62;
+    const sway = (rnd() - 0.5) * 14;
+    g.strokeStyle = `rgba(235,230,224,${0.5 + rnd() * 0.5})`;
+    g.lineWidth = 1.4 + rnd() * 1.6;
+    g.beginPath(); g.moveTo(x, -4);
+    g.quadraticCurveTo(x + sway * 0.4, len * 0.55, x + sway, len);
+    g.stroke();
+  }
+  // darker root band at the top so the card seats into the cap
+  const grad = g.createLinearGradient(0, 0, 0, 26);
+  grad.addColorStop(0, "rgba(210,205,198,0.95)"); grad.addColorStop(1, "rgba(210,205,198,0)");
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 26);
+  _hairCard = finish(c);
+  _hairCard.wrapS = _hairCard.wrapT = THREE.ClampToEdgeWrapping;
+  return _hairCard;
 }
 
 // ---- hair: strand streaks, tinted by material colour ----

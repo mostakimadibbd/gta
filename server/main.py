@@ -233,6 +233,127 @@ async def handle_message(connection: WebSocket, raw_message: str) -> None:
         await send_json(connection, {"type": "error", "message": "Unknown message type."})
 
 
+# =====================================================================
+# Phase 8 services (Python growth): leaderboards + economy snapshots.
+# Same discipline as the WS layer — no framework magic, every input
+# validated and clamped, state in memory with a JSON file on disk.
+# Auth: the WS service is open-but-validated; these endpoints follow
+# suit, and additionally honour HARBORFALL_SERVICE_TOKEN when the host
+# sets it (header X-Service-Token required, else 401).
+# =====================================================================
+from fastapi import Header, HTTPException, Request
+
+DATA_DIR = os.getenv("HARBORFALL_DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
+BOARD_FILE = os.path.join(DATA_DIR, "leaderboards.json")
+ECON_FILE = os.path.join(DATA_DIR, "economy.json")
+BOARDS: dict[str, dict[str, Any]] = {}   # player -> {race_best, job_earned, updated}
+ECON: dict[str, dict[str, Any]] = {}     # player -> {latest, audit: [...]}
+
+
+def _load_json(path: str) -> dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_json(path: str, data: dict[str, Any]) -> None:
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except OSError as exc:  # persistence is best-effort; memory stays true
+        logger.warning("Could not persist %s: %s", path, exc)
+
+
+BOARDS.update(_load_json(BOARD_FILE))
+ECON.update(_load_json(ECON_FILE))
+
+
+def _check_token(x_service_token: str | None) -> None:
+    expected = os.getenv("HARBORFALL_SERVICE_TOKEN")
+    if expected and x_service_token != expected:
+        raise HTTPException(status_code=401, detail="service token required")
+
+
+def _clean_name(value: Any) -> str:
+    return str(value or "player")[:32].strip() or "player"
+
+
+def _clean_num(value: Any, lo: float, hi: float) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return max(lo, min(hi, float(value)))
+    return None
+
+
+@app.post("/v1/leaderboards")
+async def post_leaderboard(req: Request, x_service_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _check_token(x_service_token)
+    body = await req.json() if req.headers.get("content-type", "").startswith("application/json") else {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    player = _clean_name(body.get("player"))
+    entry = BOARDS.setdefault(player, {"race_best": None, "job_earned": 0})
+    race_best = _clean_num(body.get("race_best"), 5, 3600)
+    if race_best is not None and (entry["race_best"] is None or race_best < entry["race_best"]):
+        entry["race_best"] = race_best
+    job_earned = _clean_num(body.get("job_earned"), 0, 100_000_000)
+    if job_earned is not None:
+        entry["job_earned"] = max(entry["job_earned"], job_earned)
+    import time as _t
+    entry["updated"] = int(_t.time())
+    _save_json(BOARD_FILE, BOARDS)
+    return {"ok": True, "player": player, "entry": entry}
+
+
+@app.get("/v1/leaderboards")
+async def get_leaderboards() -> dict[str, Any]:
+    racers = sorted(
+        ({"name": n, "value": e["race_best"]} for n, e in BOARDS.items() if e.get("race_best")),
+        key=lambda r: r["value"],
+    )[:10]
+    earners = sorted(
+        ({"name": n, "value": e["job_earned"]} for n, e in BOARDS.items() if e.get("job_earned")),
+        key=lambda r: -r["value"],
+    )[:10]
+    return {"race": racers, "jobs": earners}
+
+
+@app.post("/v1/economy/snapshot")
+async def post_economy(req: Request, x_service_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _check_token(x_service_token)
+    body = await req.json() if req.headers.get("content-type", "").startswith("application/json") else {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    player = _clean_name(body.get("player"))
+    owned = body.get("owned")
+    owned = [str(x)[:24] for x in owned[:8]] if isinstance(owned, list) else []
+    import time as _t
+    snap = {
+        "ts": int(_t.time()),
+        "room": _clean_name(body.get("room")) if body.get("room") else "offline",
+        "owned": owned,
+        "apartment": bool(body.get("apartment")),
+        "day": int(_clean_num(body.get("day"), 0, 100000) or 0),
+        "daily_income": int(_clean_num(body.get("daily_income"), 0, 100000) or 0),
+    }
+    record = ECON.setdefault(player, {"latest": None, "audit": []})
+    record["latest"] = snap
+    record["audit"] = (record["audit"] + [snap])[-200:]  # audit trail, capped
+    _save_json(ECON_FILE, ECON)
+    return {"ok": True, "player": player, "snapshot": snap}
+
+
+@app.get("/v1/economy/snapshot")
+async def get_economy(player: str = "player") -> dict[str, Any]:
+    record = ECON.get(_clean_name(player))
+    if record is None:
+        return {"player": player, "latest": None, "audit": []}
+    return {"player": player, "latest": record["latest"], "audit": record["audit"][-20:]}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(connection: WebSocket) -> None:
     await connection.accept()

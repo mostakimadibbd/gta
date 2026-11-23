@@ -9,6 +9,9 @@ import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
 import { gyroSteer } from "../game/gyro";
 import { completeBreakIn, carAlarms } from "../game/theft";
+import { J } from "../game/jobs";
+import { padKeys, padAxes } from "../game/gamepad";
+import { touchSteer } from "../game/touch";
 
 interface Props {
   playerPositionRef: MutableRefObject<THREE.Vector3>;
@@ -141,7 +144,9 @@ export default function Vehicle(p: Props) {
     const dt = Math.min(delta, 0.05);
     if (G.driving && !paused && !G.dialogueActive && G.activeCarId >= 0 && G.enterAnimT <= 0) {
       const car = G.cars[G.activeCarId];
-      const k = keys.current;
+      // Phase 8: keyboard ∪ gamepad (padKeys) — one merged view; the
+      // analog stick / triggers ride padAxes alongside (see steering)
+      const k = { has: (key: string) => keys.current.has(key) || padKeys.has(key) };
       const isBike = car.kind === "bicycle";
       const isBoat = car.kind === "boat";
       // ---- Phase 2: damage + fuel shape the driving (arcade-forgiving) ----
@@ -149,12 +154,21 @@ export default function Vehicle(p: Props) {
       const empty = !isBike && !isBoat && car.fuel <= 0;
       if (wrecked && !warnedRef.current.wrecked) { warnedRef.current.wrecked = true; toast("WRECKED — this car is done. Get out (E) and find another ride."); }
       if (empty && !warnedRef.current.empty) { warnedRef.current.empty = true; toast("Out of fuel! Coast to a stop and find another car — fuel stations refill runners."); }
-      const power = wrecked || empty ? 0 : car.damage > 60 ? 0.55 : car.damage > 35 ? 0.82 : 1;
-      const throttle = (Number(k.has("w")) - Number(k.has("s"))) * power;
+      let power = wrecked || empty ? 0 : car.damage > 60 ? 0.55 : car.damage > 35 ? 0.82 : 1;
+      // Phase 8: towing a hooked car halves the wrecker's pull
+      if (car.kind === "tow" && J.towHooked) power *= 0.55;
+      let throttle = (Number(k.has("w")) - Number(k.has("s"))) * power;
+      // Phase 8 gamepad: analog triggers feed throttle when keys are idle
+      if (throttle === 0 && Math.abs(padAxes.throttle) > 0.05) throttle = padAxes.throttle * power;
       brakeRef.current = k.has("s") || k.has(" ");
-      // gyro tilt steering feeds the same path; touch/key steer overrides
+      // steering priority (last-input-wins): keys → gamepad stick →
+      // touch stick → gyro. Gyro only steers while BOTH sticks sit
+      // inside their deadzones — a deflected stick always wins.
       const keySteer = Number(k.has("a")) - Number(k.has("d"));
-      const steering = keySteer !== 0 ? keySteer : gyroSteer();
+      const steering = keySteer !== 0 ? keySteer
+        : Math.abs(padAxes.steer) > 0.02 ? padAxes.steer
+        : Math.abs(touchSteer) > 0.02 ? touchSteer
+        : gyroSteer();
       steerRef.current = steering;
       const prevSpeed = car.state.speed;
       const prevHeading = car.state.heading;
@@ -215,6 +229,15 @@ export default function Vehicle(p: Props) {
         }
         // ---- Phase 6: bus is heavy — capped low, whatever the tune ----
         if (car.kind === "bus") next.speed = THREE.MathUtils.clamp(next.speed, -6, 13.5);
+        // ---- Phase 8 exotics: the Vantara S and Kestrel One live ABOVE
+        // the shared 24 u/s physics clamp — extra top-end push, same
+        // idiom as the motorcycle branch ----
+        if ((car.kind === "wedge" || car.kind === "hyper") && throttle > 0 && !wrecked && !empty) {
+          const cap = car.kind === "hyper" ? 30 : 27.5;
+          next.speed = Math.min(cap, next.speed + (car.kind === "hyper" ? 8.5 : 7.5) * dt * throttle);
+        }
+        // ---- Phase 8: a hooked tow load caps the wrecker hard ----
+        if (car.kind === "tow" && J.towHooked) next.speed = THREE.MathUtils.clamp(next.speed, -7, 11.5);
         // ---- Phase 6 (B1): Lina's mods — engine tune raises the top end,
         // brake upgrade bites harder; Driving skill ≥50 trims drift slide ----
         const tune = car.tuneLvl ?? 0;
@@ -361,12 +384,14 @@ export default function Vehicle(p: Props) {
     G.cars.forEach((c, i) => {
       const g = groups.current[i]; if (!g) return;
       if (c.kind === "boat") {
-        // buoyancy: gentle bob + pitch/roll swell on the waterline —
-        // Phase 7: the swell scales with the wind gust value
+        // buoyancy from the Harborfall Core (boat_buoyancy): bob +
+        // pitch/roll from the wave phase, calming as the boat planes;
+        // the swell still scales with the wind gust value (Phase 7)
         const swell = 0.7 + G.wind * 0.7;
-        g.position.set(c.state.x, -0.08 + Math.sin(tt * 1.25 + i * 1.7) * 0.07 * swell, c.state.z);
+        const b = physicsRef.current.boatBuoyancy(tt * 1.25 + i * 1.7, c.state.speed, 0.07 * swell);
+        g.position.set(c.state.x, -0.08 + b.bob, c.state.z);
         g.rotation.order = "YXZ";
-        g.rotation.set(Math.sin(tt * 0.9 + i) * 0.02 * swell + (c.state.speed > 6 ? -0.03 : 0), c.state.heading, Math.sin(tt * 1.1 + i * 2.3) * 0.025 * swell);
+        g.rotation.set(b.pitch * swell, c.state.heading, b.roll * swell);
         return;
       }
       g.position.set(c.state.x, groundYAt(c.state.x, c.state.z), c.state.z);

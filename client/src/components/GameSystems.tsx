@@ -4,10 +4,13 @@ import * as THREE from "three";
 import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, persistSkills, bark, toast } from "../game/store";
 import { M, currentTarget, endMission, persist, effectivePayout, recordBest } from "../game/missionState";
 import { gates, type QualityTier } from "../game/quality";
+import { perf } from "../game/perf";
 import { pushPhoneMsg } from "../game/phone";
 import { pushNews } from "../game/feed";
-import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, NORTH_ROAD_X, NORTH_ROAD_Z, BUS_STOPS, REGISTERS, PAWN_SHOP, DEALERSHIP, VENDOR, districtAt, isBlocked, inNorth, onIsland, MANSION_DRIVE, groundYAt, CAR_MODELS, props as WORLD_PROPS } from "../world";
+import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, NORTH_ROAD_X, NORTH_ROAD_Z, BUS_STOPS, REGISTERS, PAWN_SHOP, DEALERSHIP, VENDOR, districtAt, isBlocked, inNorth, onIsland, MANSION_DRIVE, groundYAt, CAR_MODELS, buildings, props as WORLD_PROPS } from "../world";
 import { lightAllows } from "../game/lights";
+import { ECO } from "../game/economy";
+import { nudgeStock } from "../game/invest";
 import { glowTexture } from "../textures";
 import { fallbackPhysics, type PhysicsEngine } from "../physics/GamePhysics";
 import type { GameTheme } from "../themes";
@@ -15,7 +18,7 @@ import { sfx } from "../game/audio";
 import CarBody, { type CarKind } from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 
-const TRAFFIC_KINDS: CarKind[] = ["sedan", "suv", "muscle", "sedan", "supercar", "classic", "pickup", "hatch", "coupe", "suv", "muscle", "sedan"];
+const TRAFFIC_KINDS: CarKind[] = ["sedan", "suv", "muscle", "sedan", "supercar", "classic", "pickup", "hatch", "coupe", "suv", "muscle", "sedan", "gt", "sedan", "hatch", "wedge"]; // Phase 8: Marlowe GT in rotation; ONE Vantara wedge (rare)
 // Mood-board pedestrian variety: 10 outfit combos (male + female, tees,
 // tanks, hoodies, varsity, crop, shorts, caps, shades, tattoo sleeve…)
 const PED_OUTFITS = [
@@ -414,7 +417,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       }
       if (car.fleeing > 0) car.fleeing -= dt;
       // --- decide whether to stop: lights, queue, player, damage ---
+      // Phase 8: the DECISION now comes from the Harborfall Core
+      // (traffic_decision) fed with the stop-line distance + queue gap
+      // measured here; wantStop survives for the horn/blocked logic and
+      // the hard-stop cases (damage stop, player in the lane)
       let wantStop = false;
+      let stopDist = Number.POSITIVE_INFINITY; // distance to a red/amber line
+      let queueGap = Number.POSITIVE_INFINITY; // gap to the same-lane car ahead
       if (car.stopped > 0) { car.stopped -= dt; wantStop = true; }
       // signal obedience on the signalled Port Sable grid (reckless runs reds)
       if (car.side === "main" && !car.reckless && car.fleeing <= 0) {
@@ -423,9 +432,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         const fwd = car.axis === "x" ? car.x * car.dir : car.z * car.dir;
         for (const c of ROAD_COORDS) {
           const rel = c * car.dir - fwd; // distance to the stop line along travel
-          if (rel > 0.5 && rel < 7.5) {
+          if (rel > 0.5 && rel < 16) {
             const ix = car.axis === "x" ? c : (car.fixed ?? 0), iz = car.axis === "x" ? (car.fixed ?? 0) : c;
-            if (!lightAllows(ix, iz, car.axis, t)) { wantStop = true; break; }
+            if (!lightAllows(ix, iz, car.axis, t)) { wantStop = true; stopDist = Math.min(stopDist, rel); break; }
           }
         }
       }
@@ -435,7 +444,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         const odx = other.x - car.x, odz = other.z - car.z;
         const alongQ = car.axis === "x" ? odx * car.dir : odz * car.dir;
         const sideQ = car.axis === "x" ? Math.abs(odz) : Math.abs(odx);
-        if (alongQ > 1 && alongQ < 8.5 && sideQ < 2.6 && other.speed < car.speed + 0.5) { wantStop = true; break; }
+        if (alongQ > 1 && alongQ < 8.5 && sideQ < 2.6 && other.speed < car.speed + 0.5) { wantStop = true; queueGap = Math.min(queueGap, alongQ); }
       }
       // player ahead: brake; blocked >3 s in your lane → lean on the horn
       const dx = px - car.x, dz = pz - car.z;
@@ -450,9 +459,17 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         if (car.speed > 2 && honkCd.current <= 0 && Math.random() < 0.3) { sfx.horn(); honkCd.current = 2.5; }
       } else car.blockedT = 0;
       const cruise = car.kind === "taxi" ? 10 : car.fleeing > 0 ? 13 : 8.5;
-      const target = wantStop ? 0 : cruise;
-      car.speed += THREE.MathUtils.clamp(target - car.speed, (wantStop ? -16 : -8) * dt, 5 * dt);
-      if (car.speed < 0.02 && wantStop) car.speed = 0;
+      // Harborfall Core decision: graded approach to red lines and
+      // queues (light state 2 = red/amber stop line measured; queue
+      // gap measured). Hard stops stay hard: a stopped-flag car or the
+      // player's car in the lane overrides the graded target with 0.
+      const decision = (physicsRef.current ?? fallbackPhysics).trafficDecision(
+        car.speed, cruise, stopDist, stopDist === Number.POSITIVE_INFINITY ? 0 : 2, queueGap);
+      const hardStop = car.stopped > 0 || (aheadP && G.driving);
+      const target = hardStop ? 0 : decision.target;
+      const braking = hardStop || decision.braking;
+      car.speed += THREE.MathUtils.clamp(target - car.speed, (braking ? -16 : -8) * dt, 5 * dt);
+      if (car.speed < 0.02 && (braking || wantStop)) car.speed = 0;
       if (car.axis === "x") car.x += car.dir * car.speed * dt; else car.z += car.dir * car.speed * dt;
       // the reckless one weaves inside the lane (A2 colour)
       if (car.reckless && car.speed > 3) {
@@ -513,7 +530,34 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const threatD2 = (ped.x - px) ** 2 + (ped.z - pz) ** 2;
       // streaming: beyond 170u a ped holds position (mesh still poses cheaply)
       if (threatD2 > 170 ** 2) { ped.speed = 0; continue; }
-      const flee = (G.driving && pSpeed > 5 && threatD2 < 15 ** 2) || (G.wanted > 0 && threatD2 < 10 ** 2) || t < ped.fleeUntil;
+      // Phase 8 memory: a ped you pickpocketed TODAY gives you a wide
+      // berth — they back away whenever you close in, all game-day long
+      const robbedShy = ped.memRobbedDay === ECO.daySerial && threatD2 < 8 ** 2;
+      const flee = (G.driving && pSpeed > 5 && threatD2 < 15 ** 2) || (G.wanted > 0 && threatD2 < 10 ** 2) || t < ped.fleeUntil || robbedShy;
+      // ---- Phase 8 recognition: peds who SAW you offend (or live where
+      // your reputation is high) place your face when you get close.
+      // With the patrol nearby and heat on you, they POINT YOU OUT —
+      // the cop's last-known position updates, exactly as if the ped
+      // had phoned it in (same reporting marker, same pipeline). ----
+      if (threatD2 < 13 ** 2 && t > (ped.recogCd ?? 0) && t >= ped.downUntil && !G.driving) {
+        const helped = (ped.memHelpedUntil ?? 0) > t;
+        const knows = helped || (ped.memWitnessUntil ?? 0) > t || (G.zoneRep[ped.zone] ?? 0) >= 50;
+        if (knows) {
+          ped.recogCd = t + 50 + Math.random() * 40;
+          if (helped) {
+            bark("Local", "Hey — you're the kind one from the pier crowd. Port Sable remembers.");
+          } else if (G.wanted > 0) {
+            const copNear = G.cops.some((cp) => cp.active && (cp.x - ped.x) ** 2 + (cp.z - ped.z) ** 2 < 24 ** 2);
+            if (copNear) {
+              G.reportingPed = G.peds.indexOf(ped); G.witnessUntil = Math.max(G.witnessUntil, performance.now() / 1000 + 1.6);
+              lastKnown.current = { x: px, z: pz };
+              bark("Bystander", "Officer — THERE! That's him, right there!");
+            } else bark("Bystander", `Hey — that's the guy from ${ped.zone}! I seen you!`);
+          } else {
+            bark("Bystander", ped.zone === "The Docks" ? "Hey — that's the guy from the docks!" : `Don't I know you? Yeah — you're trouble in ${ped.zone}.`);
+          }
+        }
+      }
       // ---- Phase 6 destination brain (A4) ----
       if (ped.mode === undefined) { ped.mode = "walk"; ped.destX = ped.x; ped.destZ = ped.z; ped.waitUntil = 0; }
       if (flee) ped.mode = "walk";
@@ -552,10 +596,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         tz = flee ? (ped.axis === "z" ? ped.z + ped.dir * 14 : ped.z) : (ped.destZ ?? ped.z);
       }
       const walkBase = ped.mode === "shelter" ? 2.6 : raining ? 2.2 : 1.6; // rain = hurry
-      const next = phys.stepPedestrian(ped, tx, tz, px, pz, flee, walkBase, dt);
-      const arrived = ped.mode !== "phone" && Math.hypot(tx - ped.x, tz - ped.z) < arriveR;
-      if (!isBlocked(next.x, next.z, 0.4)) { ped.x = next.x; ped.z = next.z; }
-      // separation steering (C++ physics): peds keep personal space
+      // separation neighbours first (Phase 8): the Harborfall Core's
+      // step_pedestrian_v2 folds steering + separation into ONE step,
+      // replacing the old step-then-separate two-call pattern
       const near: { x: number; z: number }[] = [];
       for (const other of G.peds) {
         if (other === ped || !other.active) continue;
@@ -563,14 +606,14 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         if (d2 < 1.2 ** 2) near.push(other);
         if (near.length >= 3) break;
       }
-      if (near.length) {
-        const f = phys.separationForce(ped.x, ped.z, near, 0.95);
-        const sx = ped.x + f.x * dt * 0.85, sz = ped.z + f.z * dt * 0.85;
-        if (!isBlocked(sx, sz, 0.4)) { ped.x = sx; ped.z = sz; }
-      }
+      const next = phys.stepPedestrianV2(ped, tx, tz, px, pz, flee, walkBase, near, 0.95, dt);
+      const arrived = ped.mode !== "phone" && Math.hypot(tx - ped.x, tz - ped.z) < arriveR;
+      if (!isBlocked(next.x, next.z, 0.4)) { ped.x = next.x; ped.z = next.z; }
       ped.heading = ped.mode === "phone" || ped.mode === "sit" ? ped.heading : next.heading;
       ped.speed = (ped.mode === "phone" || ped.mode === "sit" || arrived) ? 0 : next.speed;
-      ped.swing += dt * (2 + ped.speed * 2.4);
+      // Phase 8 stride matching: phase rate ∝ actual speed (stride
+      // length ≈ 1.08u per π of phase) so feet plant instead of skating
+      ped.swing += dt * ped.speed * 2.9;
       if (ped.area === "coral") {
         if (ped.x < 31 || ped.x > 109 || ped.z < 200 || ped.z > 320) ped.dir = (ped.dir * -1) as 1 | -1;
       } else if (ped.area === "north") {
@@ -589,6 +632,17 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     // position, then sweep the area while the wanted cooldown ticks down.
     const want = G.wanted;
     const losClear = (x1: number, z1: number, x2: number, z2: number) => {
+      // Phase 8: first stage is the Harborfall Core's sampled LOS over
+      // the first four buildings near the sight line (the dominant
+      // blockers); a mostly-walled segment is blocked right here
+      const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+      const nearB: { x: number; z: number; hw: number; hd: number }[] = [];
+      for (const b of buildings) {
+        const d2 = (b.x - mx) ** 2 + (b.z - mz) ** 2;
+        if (d2 < 45 ** 2) { nearB.push({ x: b.x, z: b.z, hw: b.width / 2, hd: b.depth / 2 }); if (nearB.length >= 4) break; }
+      }
+      if (nearB.length && (physicsRef.current ?? fallbackPhysics).losSampled(x1, z1, x2, z2, nearB) <= 0.5) return false;
+      // backstop: props / static blockers via the point sampler
       for (const f of [0.3, 0.55, 0.8]) {
         if (isBlocked(x1 + (x2 - x1) * f, z1 + (z2 - z1) * f, 0.3)) return false;
       }
@@ -792,6 +846,10 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
             G.hold = { label: "Drilling the strongroom…", progress: Math.min(1, drillT.current / 6) };
             if (drillT.current >= 6) {
               drillT.current = 0; G.hold = null; M.step = 1; M.checkpointStep = 1; sfx.cash();
+              // Phase 8 investing nudge: the strongroom held Sable
+              // Shipping bonds — their stock dips on the news (documented
+              // in game/invest.ts)
+              nudgeStock("ship", -0.08, "the harbour strongroom job hit their bond vault.");
               cb.current.popup("Strongroom open — the dock fund is yours. RUN.");
               pushNews("Strongroom drilled at the East Yards", "Alarms sounded across the Yards as the Solano counting-house strongroom was drilled open. The patrol calls it 'professional work'.");
             }
@@ -1194,8 +1252,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     <group>
       <ambientLight ref={amb} intensity={theme.ambient} />
       <hemisphereLight ref={hemi} args={[theme.hemiSky, theme.hemiGround, 1.05]} />
-      <directionalLight key={quality} ref={sun} castShadow position={[40, 50, 30]} intensity={theme.sunIntensity}
-        shadow-mapSize-width={gates.shadowMapSize(quality)} shadow-mapSize-height={gates.shadowMapSize(quality)}
+      {/* Phase 8 smoothness: on Medium, when dynamic resolution has
+          stepped to ≤1.25 the shadow map steps down to 1024 with it
+          (the key change remounts the light so three reallocates) */}
+      <directionalLight key={`${quality}:${quality === "medium" && perf.dpr > 0 && perf.dpr <= 1.25 ? "s" : "n"}`} ref={sun} castShadow position={[40, 50, 30]} intensity={theme.sunIntensity}
+        shadow-mapSize-width={quality === "medium" && perf.dpr > 0 && perf.dpr <= 1.25 ? 1024 : gates.shadowMapSize(quality)} shadow-mapSize-height={quality === "medium" && perf.dpr > 0 && perf.dpr <= 1.25 ? 1024 : gates.shadowMapSize(quality)}
         shadow-radius={gates.shadowRadius(quality)}
         shadow-camera-left={-55} shadow-camera-right={55} shadow-camera-top={55} shadow-camera-bottom={-55} shadow-bias={-0.0002} shadow-normalBias={0.02} />
       {/* traffic — detailed bodies; Phase 6 mounts only at load stage ≥4

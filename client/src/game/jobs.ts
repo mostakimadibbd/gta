@@ -47,10 +47,15 @@ export interface JobStats {
   deliveries: number; deliveryEarned: number;
   racesRun: number; racesWon: number;
   bestTimes: Record<string, number>;
+  // ---- Phase 8: tow work + fishing records ----
+  towDeliveries: number; towEarned: number;
+  fishCaught: number; fishEarned: number;
+  bestFish: { name: string; cm: number } | null;
 }
 export const jobStats: JobStats = {
   taxiFares: 0, taxiEarned: 0, taxiBestTip: 0, deliveries: 0, deliveryEarned: 0,
   racesRun: 0, racesWon: 0, bestTimes: {},
+  towDeliveries: 0, towEarned: 0, fishCaught: 0, fishEarned: 0, bestFish: null,
 };
 try {
   const raw = localStorage.getItem("harborfall-jobstats");
@@ -92,6 +97,13 @@ export const J = {
   // races
   race: null as RaceState | null,
   bets: true,                     // $100 side bet, toggled in the Jobs app
+  // ---- Phase 8: tow shift (Lina's wrecker work) ----
+  wantTow: false,                 // set by the phone Jobs app
+  towPhase: "idle" as "idle" | "pickup" | "deliver",
+  towCarId: -1,                   // G.cars index of the broken-down target
+  towHooked: false,               // target is on the tether right now
+  towSwing: 0,                    // tether swing angle (world heading of the towed car)
+  towStillT: 0,                   // seconds spent stopped in hook range
 };
 
 /** The world point the job/race marker pillar + GPS route should show. */
@@ -105,10 +117,15 @@ export function jobTarget(): { x: number; z: number; label: string } | null {
   if (J.delPhase !== "idle" && J.delPoint) {
     return { x: J.delPoint.x, z: J.delPoint.z, label: J.delPhase === "pickup" ? `Collect parcel — ${J.delPoint.name}` : `Deliver to — ${J.delPoint.name}` };
   }
+  if (J.towPhase === "pickup" && J.towCarId >= 0) {
+    const c = G.cars[J.towCarId];
+    if (c) return { x: c.state.x, z: c.state.z, label: `Tow job — broken-down ${c.model}` };
+  }
+  if (J.towPhase === "deliver") return { x: -25, z: 100.6, label: "Tow job — deliver to Lina's yard" };
   return null;
 }
 
 export const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 /** True while any job/race owns the player's attention (missions win). */
-export const jobBusy = () => J.taxiPhase !== "idle" || J.delPhase !== "idle" || !!J.race;
+export const jobBusy = () => J.taxiPhase !== "idle" || J.delPhase !== "idle" || !!J.race || J.towPhase !== "idle";
 export const drivingKind = () => (G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].kind : null);

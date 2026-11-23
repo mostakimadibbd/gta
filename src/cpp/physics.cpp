@@ -1,6 +1,10 @@
-// Harborfall physics core (C++17) — compiled to WebAssembly for the web build
-// and mirrored exactly by the TypeScript fallback in
-// client/src/physics/GamePhysics.ts so the game runs with or without WASM.
+// HARBORFALL CORE (C++17) — the game's decision-logic core: vehicle and
+// pedestrian stepping, collision, traffic decisions, police line-of-sight
+// sampling, boat buoyancy and race pacing. Compiled to WebAssembly for
+// the web build and mirrored exactly by the TypeScript fallback in
+// client/src/physics/GamePhysics.ts so the game runs with or without
+// WASM. (The browser executes JS/WASM only — this core is where the
+// non-presentation logic lives; TypeScript is the shell/glue around it.)
 #include <algorithm>
 #include <cmath>
 
@@ -284,6 +288,110 @@ void step_pedestrian(double x, double z, double heading, double speed,
   x += std::sin(heading) * speed * dt;
   z += std::cos(heading) * speed * dt;
   output[0] = x; output[1] = z; output[2] = heading; output[3] = speed;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8 — Harborfall Core decision logic (TS mirrors in GamePhysics.ts).
+// These functions own DECISIONS the game used to inline in TypeScript:
+// traffic stop/go, ped steering+separation, wanted LOS sampling, boat
+// buoyancy and race-opponent pacing. Pure functions of their inputs.
+// ---------------------------------------------------------------------------
+
+// (a) Traffic intersection decision: given the car's speed, its cruise
+// speed, the distance to a red/amber stop line (huge = none), the light
+// state (0 green, 1 amber, 2 red) and the gap to the car ahead in the
+// same lane (huge = none), produce the target speed + a braking flag.
+//   out: [targetSpeed, braking(0/1)]
+void traffic_decision(double speed, double cruise, double dist_stop,
+                      double light_state, double queue_gap, double* output) {
+  double target = cruise;
+  double braking = 0.0;
+  if (light_state >= 1.0 && dist_stop < 16.0) {
+    // roll up to the line and stop ON it, not at it from 16u out
+    target = std::min(target, clamp((dist_stop - 1.1) * 0.6, 0.0, cruise));
+    if (dist_stop < 9.0) braking = 1.0;
+  }
+  if (queue_gap < 8.5) {
+    // graded queueing: ease off as the gap closes, full stop under 2.4u
+    target = std::min(target, clamp((queue_gap - 2.4) * 1.15, 0.0, cruise));
+    if (queue_gap < 5.0) braking = 1.0;
+  }
+  if (target < speed - 0.5) braking = 1.0;
+  output[0] = target; output[1] = braking;
+}
+
+// (b) Pedestrian step v2: step_pedestrian's destination steering PLUS
+// separation from up to three neighbours folded into the same step
+// (replaces the old two-call TS pattern; identical flee/arrive rules).
+//   in:  state, target, threat, flee, walk_speed, 3 neighbours, sep radius, dt
+//   out: [x, z, heading, speed]
+void step_pedestrian_v2(double x, double z, double heading, double speed,
+                        double target_x, double target_z, double threat_x,
+                        double threat_z, double flee, double walk_speed,
+                        double n1x, double n1z, double n2x, double n2z,
+                        double n3x, double n3z, double sep_radius,
+                        double delta_time, double* output) {
+  double base[4] = {0, 0, 0, 0};
+  step_pedestrian(x, z, heading, speed, target_x, target_z, threat_x,
+                  threat_z, flee, walk_speed, delta_time, base);
+  double sep[2] = {0, 0};
+  separation_force(base[0], base[1], n1x, n1z, n2x, n2z, n3x, n3z,
+                   sep_radius, sep);
+  const double dt = clamp(delta_time, 0.0, kMaxStep);
+  output[0] = base[0] + sep[0] * dt * 0.85;
+  output[1] = base[1] + sep[1] * dt * 0.85;
+  output[2] = base[2]; output[3] = base[3];
+}
+
+// (c) Wanted LOS sampling: walk N samples along the observer→target
+// segment and return the fraction NOT inside any of up to 4 AABB
+// blockers (1.0 = perfectly clear sight, 0 = fully walled off). The
+// caller decides the threshold (Harborfall police: > 0.5 = seen).
+double los_sampled(double ox, double oz, double tx, double tz,
+                   double b1x, double b1z, double b1w, double b1d,
+                   double b2x, double b2z, double b2w, double b2d,
+                   double b3x, double b3z, double b3w, double b3d,
+                   double b4x, double b4z, double b4w, double b4d,
+                   double samples) {
+  const int n = (int)clamp(samples, 4.0, 32.0);
+  const double bx[4] = {b1x, b2x, b3x, b4x};
+  const double bz[4] = {b1z, b2z, b3z, b4z};
+  const double bw[4] = {b1w, b2w, b3w, b4w};
+  const double bd[4] = {b1d, b2d, b3d, b4d};
+  int clear = 0;
+  for (int i = 1; i < n; ++i) {
+    const double f = (double)i / (double)n;
+    const double px = ox + (tx - ox) * f;
+    const double pz = oz + (tz - oz) * f;
+    bool blocked = false;
+    for (int b = 0; b < 4; ++b) {
+      if (bw[b] <= 0.0) continue;
+      if (std::fabs(px - bx[b]) < bw[b] && std::fabs(pz - bz[b]) < bd[b]) { blocked = true; break; }
+    }
+    if (!blocked) ++clear;
+  }
+  return (double)clear / (double)(n - 1);
+}
+
+// (d) Boat buoyancy: from the wave phase (advanced by the caller),
+// speed and wave amplitude, produce the hull's bob height, pitch, roll.
+// Motion calms as speed rises (planing), exactly like the harbour chop.
+//   out: [bobY, pitch, roll]
+void boat_buoyancy(double phase, double speed, double wave_amp, double* output) {
+  const double plane = clamp(std::fabs(speed) / 14.5, 0.0, 1.0);
+  const double calm = 1.0 - plane * 0.62;
+  output[0] = std::sin(phase) * wave_amp * calm;
+  output[1] = std::sin(phase * 0.8 + 1.3) * 0.021 * calm - plane * 0.012;
+  output[2] = std::sin(phase * 0.63 + 0.4) * 0.03 * calm;
+}
+
+// (e) Race opponent pacing (rubber-band): the opponent's target speed
+// from the progress gap to the player. Behind → up to +rubber faster;
+// ahead → up to −rubber slower, so a race stays a race without ever
+// teleporting or hard-capping the opponent.
+double race_pace(double player_dist, double opp_dist, double base_top, double rubber) {
+  const double gap = player_dist - opp_dist; // +ve: player ahead
+  return base_top + clamp(gap * 0.014, -rubber, rubber);
 }
 
 }  // extern "C"

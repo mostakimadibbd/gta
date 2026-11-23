@@ -1381,7 +1381,8 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
         <mesh position={[-6.8, 0.55, 0]}><boxGeometry args={[0.55, 1.05, 11]} /><meshStandardMaterial color="#2e6b34" flatShading /></mesh>
         <mesh position={[6.8, 0.55, 0]}><boxGeometry args={[0.55, 1.05, 11]} /><meshStandardMaterial color="#2e6b34" flatShading /></mesh>
         <group position={[4.2, 0, 4.4]} rotation={[0, Math.PI / 2, 0]}>
-          <CarBody kind="supercar" color="#d4af37" />
+          {/* Phase 8: the mansion showpiece is now the gold Kestrel One hypercar */}
+          <CarBody kind="hyper" color="#d4af37" />
         </group>
       </group>
       <PalmTree x={MANSION.x + 8.6} z={MANSION.z - 6} scale={1.05} lean={0.1} />

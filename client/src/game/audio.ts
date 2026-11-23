@@ -83,6 +83,14 @@ export const sfx = {
   alarm() { blip(1180, 0.14, "square", 0.06); blip(880, 0.14, "square", 0.06, 0.16); }, // car alarm chirp pair
   shout() { blip(300, 0.16, "sawtooth", 0.1, 0, 160); blip(420, 0.2, "sawtooth", 0.09, 0.14, -120); }, // startled ped shout
   register() { blip(1318, 0.09, "square", 0.07); blip(1760, 0.14, "square", 0.06, 0.08); noiseBurst(0.1, 0.06, 2400); }, // till drawer ding
+  // ---- Phase 8: bat + fishing ----
+  batSwing() { noiseBurst(0.16, 0.1, 700); blip(240, 0.14, "sine", 0.05, 0, 190); }, // wooden whoosh: low swept noise
+  batHit() { noiseBurst(0.14, 0.3, 420); blip(82, 0.2, "sine", 0.22, 0, -30); }, // deep wooden THOCK — heavier than the fist thud
+  castLine() { noiseBurst(0.2, 0.06, 2400); blip(900, 0.12, "sine", 0.05, 0, -350); }, // line whirring out
+  bite() { blip(1180, 0.07, "sine", 0.1); blip(1180, 0.07, "sine", 0.1, 0.13); }, // bobber dip — double plip
+  reel() { blip(500 + Math.random() * 120, 0.05, "square", 0.045); }, // ratchet click (called repeatedly while reeling)
+  catchFish() { [659, 784, 988].forEach((f, i) => blip(f, 0.14, "triangle", 0.1, i * 0.07)); }, // little landed-it jingle
+  snap() { noiseBurst(0.08, 0.2, 3000); blip(1400, 0.1, "square", 0.08, 0, -700); }, // line snapping
 };
 export function isMenuThemePlaying() { return themeTimer !== null; }
 // ---------------------------------------------------------------------------

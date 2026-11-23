@@ -87,6 +87,28 @@ corrupt harbour boss's debt ledger.
   fences, sitting on benches, wind gusts that move palms and boats,
   fish at the pier — and **emergency vehicles**: parked + traffic
   ambulance and fire truck, plus a rushing-ambulance world event.
+- **Phase 8 — "The 500 Sweep, Round 2"** — **fishing** at the pier and
+  the Sable Island dock (charge, cast, bite, reel — five fish by place
+  and time of day, sell the creel at Harbour Wraps); the **Sable
+  Fitness** outdoor gym at Lantern Park (bench press + treadmill
+  rhythm sessions, a new **Strength** skill); **NPC memory** — Port
+  Sable recognises repeat offenders, pickpocket victims avoid you for
+  a day, witnesses point you out to cops, and each district keeps a
+  reputation that decays overnight; **SableBank Invest** — three
+  fictional local stocks that drift hourly and react to your heists,
+  race wins and business buys; a **baseball bat** (fifth weapon slot);
+  the **Thread & Tide** clothing shop; **tow jobs** with a working
+  wrecker and swinging tether; full **gamepad support**; a fourth
+  **character realism pass** (stride-matched heel-toe gait, 1024²
+  faces, hair cards, blinking, breathing); three original **exotic
+  cars** — the Vantara S wedge (scissor doors), the Kestrel One
+  hypercar (active rear wing) and the Marlowe GT; a rebuilt
+  **floating analog touch joystick**; **graphics smoothness**
+  (dynamic resolution + adaptive quality that respects your manual
+  choice); and a **language rebalance** — the C++ Harborfall Core now
+  decides traffic, pedestrian steering, police line-of-sight, boat
+  buoyancy and race pacing, the Python server adds leaderboards and
+  economy snapshots, and C# desktop tooling lives in `tools/`.
 
 ## Personal themes
 
@@ -127,7 +149,12 @@ saved in `localStorage` and applies identically on web and desktop.
 | Space at a deep-water edge | Dive into the water |
 | E at your home | Sleep — morning, full heal, businesses pay out |
 | Hold E at a business | Buy it (Wraps stall · Car Wash · Club Solace share · Coral apartment) |
-| Q / Tab | Cycle weapon — fists · pistol · SMG · shotgun |
+| Q / Tab | Cycle weapon — fists · pistol · SMG · shotgun · bat |
+| E at the pier / island dock | Fish — hold E to charge, release to cast, tap E on the bite, hold E to reel (keep the marker in the green) |
+| E at Lantern Park gym stations | Workout session ($10, once a day each) — tap E in the moving zone ×8 |
+| E at Thread & Tide (Market Row) | Tap: browse outfits · hold: buy (worn until you change character/variant) |
+| Phone → Jobs → Tow shift | Tow stranded cars with the wrecker at Lina's — reverse the hook in, hold still to hitch, deliver to the yard ($150) |
+| Phone → SableBank → Invest | Buy/sell three local stocks in $100 lots |
 | Click / J (hold for SMG) | Punch / fire weapon |
 | Hold B (on foot, 1★, unarmed) | Surrender — $100 fine, no cell |
 | Space near a bench / hedge | Vault over it |
@@ -135,24 +162,40 @@ saved in `localStorage` and applies identically on web and desktop.
 | E at shop counters | Tap: browse · hold: buy (dealership, Sable Arms, pawn) |
 | Mouse drag / wheel | Orbit / zoom camera |
 
+### Gamepad
+Any standard-mapping controller works alongside keyboard/touch
+(last input wins): **left stick** move/steer (analog — push past the
+edge to sprint), **right stick** camera, **RT/LT** accelerate/brake,
+**A** interact, **B** exit car / back, **X** jump / handbrake,
+**Y** phone, **LB** weapon cycle, **RB** horn, **Start** pause.
+A toast confirms when a gamepad connects.
+
 ### Play on your phone
 Open the Vercel link in your phone browser — touch controls appear
-automatically on touch devices: a virtual joystick (push far to sprint) +
-JUMP and E buttons on foot; steering buttons + GAS/BRAKE pedals, DRIFT and
-EXIT while driving; a pause button top-right; drag the right side of the
+automatically on touch devices: a **floating analog joystick** that
+appears exactly where your left thumb lands (push gently to walk,
+far to run, past the edge to sprint; while driving it steers
+analog-style and the **gyro only steers while the stick is centred**) +
+JUMP and E buttons on foot; GAS/BRAKE pedals, DRIFT, HORN and EXIT
+while driving; a pause button top-right; drag the right side of the
 screen to orbit the camera. The side panel collapses behind the ☰ button.
 
-### Graphics quality (Phase 5)
+### Graphics quality (Phase 5, smoothness Phase 8)
 Three tiers — **Low / Medium / High** — auto-detected on first run
 (touch + small screen + low memory start lower) and self-tuning: a
 2.5-second FPS sample after you start playing steps the tier down once
-if the device struggles. Override any time in **Pause → Graphics** or
-**Phone → Settings**. Low = no post-processing, 1024px shadows,
-procedural textures only. Medium = film grade, real CC0 photo textures
-at 512px, shader water. High = + SSAO, stronger bloom, CC0 at full
-size, softer shadows. Dialogue is fully subtitled (cinematic
-letterbox + typewriter); subtitle size/background, ambient barks and
-the letterbox bars are adjustable in the same two places.
+if the device struggles. Phase 8 adds **dynamic resolution** (the
+render resolution walks a ladder toward your tier's cap to hold frame
+rate) and a **continuous adaptive tier** (sustained low FPS drops one
+tier with a toast) — picking a tier yourself turns the auto-drop off
+for the session. A **Show FPS** readout lives in the same two places.
+Override any time in **Pause → Graphics** or **Phone → Settings**.
+Low = no post-processing, 1024px shadows, procedural textures only.
+Medium = film grade, real CC0 photo textures at 512px, shader water.
+High = + SSAO, stronger bloom, CC0 at full size, softer shadows.
+Dialogue is fully subtitled (cinematic letterbox + typewriter);
+subtitle size/background, ambient barks and the letterbox bars are
+adjustable in the same two places.
 
 ## Architecture
 
@@ -162,13 +205,15 @@ the letterbox bars are adjustable in the same two places.
 │  TypeScript + React + Three.js (@react-three/fiber)          │
 │  rendering engine · game systems · HUD · themes · touch      │
 ├──────────────────────────────────────────────────────────────┤
-│ Physics engine: C++17 (src/cpp/physics.cpp) → WebAssembly    │
-│  vehicle step · AABB collision/resolve · pedestrian step     │
-│  …with an exact TypeScript mirror fallback (no WASM needed)  │
+│ Game-logic core: C++17 "Harborfall Core" (src/cpp/physics.cpp)│
+│  → WebAssembly: vehicle/pedestrian steps · collision ·       │
+│  traffic decisions · police LOS sampling · boat buoyancy ·   │
+│  race pacing …with exact TypeScript mirrors (no WASM needed) │
 ├──────────────────────────────────────────────────────────────┤
 │ Server engine: Python + FastAPI (server/main.py)             │
 │  WebSocket rooms (32/room) · state relay + speed/teleport    │
 │  sanity checks · wanted/mission event relay · /health        │
+│  /v1/leaderboards · /v1/economy/snapshot (JSON persistence)  │
 ├──────────────────────────────────────────────────────────────┤
 │ PC shell: Electron (desktop/main.cjs) + electron-builder     │
 │  Windows NSIS .exe · macOS universal .dmg                    │
@@ -176,6 +221,21 @@ the letterbox bars are adjustable in the same two places.
 ```
 See `docs/ENGINE.md` for why each language is used, and `docs/STORY.md`
 for the full story bible.
+
+## Languages — what runs where, honestly
+
+| Language | Runs | Owns |
+|---|---|---|
+| **C++17** | In the browser, as WebAssembly (with an exact TypeScript mirror when WASM is absent) | The **Harborfall Core**: vehicle + pedestrian stepping, collision, traffic stop/go decisions, police line-of-sight sampling, boat buoyancy, race-opponent pacing — the game's decision logic, verified by a g++ smoke test |
+| **Python** | Server host (Render/Railway/Fly/your machine) | The FastAPI service: multiplayer WebSocket rooms with anti-teleport checks, leaderboards and economy snapshots with JSON persistence |
+| **C# / .NET 8** | Developer's desktop only | `tools/Harborfall.WorldTools` — validates the world-data snapshot and inspects exported saves. The same role C# tooling plays in Unity/Unreal pipelines |
+| **TypeScript** | In the browser, natively | The presentation shell + glue: rendering (Three.js), HUD, phone, input, and the mirrors of the C++ core |
+
+**Why TypeScript exists at all:** browsers execute JavaScript and
+WebAssembly — nothing else. There is no way to ship a browser game
+whose presentation layer is C# or Python; that is a platform
+constraint, not a preference. What *can* move — decision logic — has
+moved into the C++ core; services live in Python; tooling lives in C#.
 
 ## Run locally
 

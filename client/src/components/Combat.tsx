@@ -22,6 +22,9 @@ const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   pistol: { cd: 0.26, range: 32, perp: 0.85, spreadRad: 0, carDmg: 8, pedDown: 5, pellets: 1, recoil: 0.05, sfxFire: () => sfx.shot() },
   smg: { cd: 0.095, range: 30, perp: 1.7, spreadRad: 0.055, carDmg: 4, pedDown: 4, pellets: 1, recoil: 0.03, sfxFire: () => sfx.smg() },
   shotgun: { cd: 0.85, range: 17, perp: 1.1, spreadRad: 0.17, carDmg: 5, pedDown: 6, pellets: 5, recoil: 0.17, sfxFire: () => sfx.blast() },
+  // Phase 8 bat: fire() routes to swingBat() before this spec is used —
+  // the entry exists so the Record stays complete (wider, slower, heavy)
+  bat: { cd: 0.55, range: 2.6, perp: 1.5, spreadRad: 0, carDmg: 9, pedDown: 6, pellets: 1, recoil: 0.04, sfxFire: () => sfx.batSwing() },
 };
 interface Pickup { x: number; z: number; kind: WeaponKind; ammo: number; label: string; }
 const PICKUPS: Pickup[] = [
@@ -29,13 +32,14 @@ const PICKUPS: Pickup[] = [
   { x: 57, z: 107.5, kind: "pistol", ammo: 24, label: "Pistol" },                        // the docks
   { x: GUN_STORE.x + 1, z: GUN_STORE.z + 3, kind: "smg", ammo: 60, label: "SMG" },       // Sable Arms, Northgate
   { x: -13, z: -33, kind: "shotgun", ammo: 12, label: "Shotgun" },                       // alley off Lantern St
+  { x: 74, z: -68, kind: "bat", ammo: 0, label: "Baseball bat" },                        // Phase 8: Lantern Park, by the outdoor gym
 ];
 const RESPAWN_S = 60;
 
 export default function Combat({ enabled }: { enabled: boolean }) {
   const enabledRef = useRef(enabled); enabledRef.current = enabled;
   const pickupRefs = useRef<Array<THREE.Group | null>>([]);
-  const pickupReadyAt = useRef<number[]>([0, 0, 0, 0]);
+  const pickupReadyAt = useRef<number[]>(PICKUPS.map(() => 0));
   const flashRef = useRef<THREE.Sprite>(null);
   const sparkRef = useRef<THREE.Sprite>(null);
   const tracerRef = useRef<THREE.Line>(null);
@@ -75,6 +79,42 @@ export default function Combat({ enabled }: { enabled: boolean }) {
       return hit;
     };
 
+    // ---- Phase 8: the baseball bat — 5th Q slot. Wider, slower arc
+    // than a fist, real knockback (the ped is SHOVED, with a fall), a
+    // heavier dent on cars, no ammo ever. Crime class is assault, but
+    // the swing is loud: witnesses react as if it were one class worse
+    // (the store's memory hook already weights assault heavily). ----
+    const swingBat = () => {
+      const t = performance.now() / 1000;
+      if (t < atkCd.current) return;
+      atkCd.current = t + 0.55;
+      G.punchT = t; // Player pose reads this — bat branch there
+      sfx.batSwing();
+      const { x: fx, z: fz } = facing();
+      const px = G.playerPos.x, pz = G.playerPos.z;
+      const strong = G.skills.strength >= 50;
+      const pi = knockPed(px, pz, fx, fz, 2.6, 1.5);
+      if (pi >= 0) {
+        const ped = G.peds[pi];
+        ped.downUntil = G.timeS + (strong ? 7 : 6); ped.fleeUntil = G.timeS + 12; ped.flinchUntil = G.timeS + 0.4;
+        // knockback: shove the ped along the swing, if the landing is free
+        const nx = ped.x + fx * 1.6, nz = ped.z + fz * 1.6;
+        ped.x = nx; ped.z = nz;
+        addCrime("assault");
+        sfx.batHit();
+        if (G.settings.shake) G.shakeAmp = Math.min(0.4, G.shakeAmp + 0.08);
+        return;
+      }
+      let bd = 2.8 ** 2; let bc = -1;
+      G.cars.forEach((c, i) => { const d = (c.state.x - px) ** 2 + (c.state.z - pz) ** 2; if (d < bd) { bd = d; bc = i; } });
+      if (bc >= 0) {
+        G.cars[bc].damage = Math.min(100, G.cars[bc].damage + 9);
+        G.shotFx = { t, mx: px + fx * 0.7, mz: pz + fz * 0.7, hx: G.cars[bc].state.x, hz: G.cars[bc].state.z, hit: true };
+        addCrime("hit");
+        sfx.batHit();
+      }
+    };
+
     const punch = () => {
       const t = performance.now() / 1000;
       if (t < atkCd.current) return;
@@ -86,7 +126,8 @@ export default function Combat({ enabled }: { enabled: boolean }) {
       const pi = knockPed(px, pz, fx, fz, 1.9, 0.85);
       if (pi >= 0) {
         const ped = G.peds[pi];
-        ped.downUntil = G.timeS + 4; ped.fleeUntil = G.timeS + 10; ped.flinchUntil = G.timeS + 0.35;
+        // Phase 8: Strength ≥ 50 (gym) — fists put peds down longer
+        ped.downUntil = G.timeS + (G.skills.strength >= 50 ? 5.5 : 4); ped.fleeUntil = G.timeS + 10; ped.flinchUntil = G.timeS + 0.35;
         addCrime("assault");
         sfx.thud();
         return;
@@ -106,6 +147,7 @@ export default function Combat({ enabled }: { enabled: boolean }) {
       const t = performance.now() / 1000;
       if (t < atkCd.current) return;
       const sel = G.weaponSel;
+      if (sel === "bat" && G.weaponOwned.bat) { swingBat(); return; }
       if (sel === "fist" || !G.weaponOwned[sel]) { punch(); return; }
       const spec = WEAPONS[sel];
       atkCd.current = t + spec.cd;
@@ -201,9 +243,11 @@ export default function Combat({ enabled }: { enabled: boolean }) {
         G.weaponSel = pk.kind;
         syncWeaponMirrors();
         sfx.pickup();
-        toast(had
-          ? `${pk.label} ammo +${pk.ammo} — Q cycles weapons`
-          : `${pk.label} acquired — click or J to fire, Q to cycle (+${pk.ammo} rounds)`);
+        toast(pk.kind === "bat"
+          ? "Baseball bat acquired — Q to the bat slot, click or J to swing. No ammo, all shoulder."
+          : had
+            ? `${pk.label} ammo +${pk.ammo} — Q cycles weapons`
+            : `${pk.label} acquired — click or J to fire, Q to cycle (+${pk.ammo} rounds)`);
       }
     });
     // shot FX: muzzle flash (60ms), tracer (80ms), impact sparks (120ms)
@@ -241,12 +285,21 @@ export default function Combat({ enabled }: { enabled: boolean }) {
     <group>
       {PICKUPS.map((pk, i) => (
         <group key={i} ref={(n) => { pickupRefs.current[i] = n; }} position={[pk.x, 0.75, pk.z]}>
+          {pk.kind === "bat" ? (
+            /* Phase 8: the bat pickup — a wooden bat, barrel-up */
+            <group rotation={[0.4, 0, 0.15]}>
+              <mesh position={[0, -0.18, 0]} castShadow><cylinderGeometry args={[0.028, 0.034, 0.3, 8]} /><meshStandardMaterial color="#8a5a30" roughness={0.7} /></mesh>
+              <mesh position={[0, 0.16, 0]} castShadow><cylinderGeometry args={[0.05, 0.032, 0.42, 8]} /><meshStandardMaterial color="#b98a4e" roughness={0.6} /></mesh>
+              <mesh position={[0, -0.34, 0]}><cylinderGeometry args={[0.045, 0.045, 0.03, 8]} /><meshStandardMaterial color="#5d3a1c" roughness={0.7} /></mesh>
+            </group>
+          ) : (<>
           {/* low-poly gun: grip + slide + barrel (longer for SMG/shotgun) */}
           <mesh position={[0, -0.05, 0.1]} rotation={[0.5, 0, 0]} castShadow><boxGeometry args={[0.07, 0.22, 0.09]} /><meshStandardMaterial color="#22262b" metalness={0.6} roughness={0.35} /></mesh>
           <mesh position={[0, 0.05, 0.02]} castShadow><boxGeometry args={[0.06, 0.08, pk.kind === "shotgun" ? 0.62 : pk.kind === "smg" ? 0.48 : 0.34]} /><meshStandardMaterial color="#3a4046" metalness={0.7} roughness={0.3} /></mesh>
           <mesh position={[0, 0.03, 0.22]}><boxGeometry args={[0.045, 0.05, 0.12]} /><meshStandardMaterial color="#14161a" metalness={0.6} roughness={0.4} /></mesh>
           {pk.kind === "smg" && <mesh position={[0, -0.12, 0.08]}><boxGeometry args={[0.05, 0.2, 0.08]} /><meshStandardMaterial color="#22262b" metalness={0.6} roughness={0.35} /></mesh>}
           {pk.kind === "shotgun" && <mesh position={[0, -0.04, 0.3]}><boxGeometry args={[0.07, 0.07, 0.24]} /><meshStandardMaterial color="#6d4c33" roughness={0.8} /></mesh>}
+          </>)}
           <sprite scale={[1.5, 1.5, 1]}><spriteMaterial map={glowTex} color="#ffd166" transparent opacity={0.4} depthWrite={false} blending={THREE.AdditiveBlending} /></sprite>
         </group>
       ))}
