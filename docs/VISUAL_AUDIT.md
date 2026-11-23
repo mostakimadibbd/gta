@@ -571,3 +571,104 @@ grip) even though no individual asset changed resolution.
   chromatic-aberration pass was already inside the postprocessing
   library. CSS unchanged at 51.24 kB; no new dependencies. Build:
   `tsc --noEmit && vite build` PASS; g++ smoke 36/36 PASS.
+
+## Phase 11 — ray-traced-style reflections (2026-11-23)
+
+The user asked for "ray tracing". What shipped is the honest
+browser version of it, labelled **Ray-traced-style** everywhere it
+appears in the UI — never "ray tracing".
+
+**Why not real ray tracing, in plain words:** hardware ray tracing
+needs RT cores and a native graphics API. A browser game runs in
+WebGL on whatever GPU the phone has — no RT cores, no ray queries,
+and the one experimental WebGPU path tracer in three.js does not
+run on iOS Safari at all and is not real-time on any phone. What
+AAA games actually build "the ray-traced look" from at real-time
+rates — and what this phase ships — is reflections: surfaces that
+mirror the world around them. Three layers, by tier:
+
+| Reflections | Low | Medium | High |
+|---|---|---|---|
+| Static probe (PMREM sky / RoomEnvironment) | ✓ (×0.8) | ✓ (×1.0) | ✓ (×1.15) |
+| Bay water | flat sheet | fresnel shader | **planar mirrored water** |
+| Screen-space reflections (SSR) | — | — | **✓, glossy surfaces only** |
+| Settings readout | Off | Standard | Ray-traced-style |
+
+- **SSR (High)** — the `SSR` component from the installed
+  `@react-three/postprocessing` 2.19.1 (its vendored
+  screen-space-reflections `SSREffect`; no new dependency). Wired
+  into the existing composer directly after Bloom so reflected
+  hits carry the neon glow. Conservative settings, chosen for a
+  city of wet streets rather than a product demo: G-buffer and
+  reflection targets at **half resolution** (`resolutionScale`
+  0.5), 20 ray steps + 5 refinement, ray distance 26u (a street
+  width), **maxRoughness 0.32** — rays are only traced for glossy
+  texels (puddles 0.05, glass ~0.1, wet asphalt ~0.15–0.45 in
+  rain, clearcoat paint ~0.3), so matte walls, concrete and skin
+  never shimmer; temporal resolve (blend 0.9) + bilateral blur
+  clean the noise, light jitter (0.3) breaks banding, and missed
+  rays fall back to the PMREM sky probe, degrading to the Phase 5
+  look instead of black. Version quirk, recorded so nobody
+  "fixes" it later: this library version's `.d.ts` advertises
+  newer prop names (`MAX_STEPS`, `rayStep`) that its vendored
+  runtime silently ignores — the working option names were
+  verified in the shipped `node_modules` source and are what
+  `SSR_OPTS` in App.tsx passes.
+- **Planar water (High)** — `components/PlanarWater.tsx`: a
+  mirrored camera renders the scene once per frame into a
+  half-resolution HalfFloat target (oblique near-plane clipping,
+  the three.js Reflector derivation) and the bay samples it with
+  a projective texture matrix, UV-perturbed by the same scrolling
+  normal layers as the Phase 5 shader — so the skyline, the Bay
+  Bridge and the sunset genuinely mirror in the water, shimmering
+  instead of mirror-still. Deliberate deviations from the stock
+  Reflector: the render is hoisted into `useFrame` so it happens
+  **once** per frame (the stock Reflector re-renders inside every
+  scene pass — the composer's main pass and the SSR G-buffer pass
+  would each have paid for a second mirrored render); it is
+  skipped when the bay is off-frustum; and it reuses the previous
+  frame's shadow maps. **What reflects: the full scene** — layer
+  restriction would need a forked scene graph, and the full
+  skyline is the point. Same plane (560×236 at y −0.02), same
+  shore fades, same fog blend, same sun glint as the shader it
+  replaces, so boats, buoyancy and swimming cannot tell the
+  difference. The water surface opts OUT of SSR via a roughness
+  sentinel (the SSR G-buffer reads `material.roughness`, absent
+  on ShaderMaterial; set to 2, far above the 0.32 gate) — the bay
+  already has a true planar reflection and doesn't need screen-
+  space rays traced across it.
+- **Probe tuning** — the PMREM probe was already the reflection
+  source everywhere; what was missing was per-tier strength. New
+  `gates.envRefl` (Low 0.8 / Medium 1.0 / High 1.15) now scales:
+  glass-tower facade (1.25 base, rebuilt with the tier), car
+  clearcoat + standard paint (at creation, reads the tier), the
+  shared car glass/chrome singletons (re-applied by App on every
+  tier change via `applyCarReflTier`), and the puddle term in the
+  World frame loop. Puddles on High additionally receive true SSR
+  on top of the probe (their 0.05 roughness is far under the
+  gate) — probe for body, SSR for the mirrored neon detail; no
+  code change was needed there beyond the tier scale, because
+  puddles were already standard materials with real roughness.
+
+**Perf contract.** SSR + planar are the two most expensive
+effects in the game, so both are High-only and both die with the
+tier: the adaptive governor's step-down unmounts SSR and swaps
+the planar water back to the shader in the same frame the tier
+changes, and Low unmounts the whole composer as before. SSR's
+targets follow the canvas, so the DPR ladder shrinks them too;
+the planar target is half the drawing buffer, so it follows the
+ladder as well. The player's own override — **Settings →
+Ray-traced reflections**, in both Pause → Graphics and Phone →
+Settings, persisted — disables SSR + planar independently of the
+tier, and the Reflections readout next to it (Off / Standard /
+Ray-traced-style) always shows the pipeline actually in use. If
+High stutters on a given phone, this toggle is the first lever.
+
+**Bundle**: index 2,146.65 kB / gzip 1,365.01 kB (Phase 10:
+2,137.92 / 1,361.79) — +8.73 kB raw / +3.22 kB gzip; the SSR
+machinery was already inside the postprocessing library the
+composer uses. CSS unchanged at 51.24 kB; no new dependencies.
+Build: `tsc --noEmit && vite build` PASS. Not live-playtested
+(this environment cannot run the game) — the smoke list is in
+the Phase 11 handoff: wet night street, glass towers at dusk,
+bay at golden hour, car paint close-up.

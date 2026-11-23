@@ -240,6 +240,22 @@ aberration, SMAA), real CC0 photo textures at 512px, shader water.
 High = + SSAO, stronger bloom, CC0 at full size, softer shadows.
 The composer renders at canvas size, so it follows the dynamic-
 resolution ladder; dropping to Low unmounts it entirely.
+
+**Reflections (Phase 11)** — the Settings readout (Pause → Graphics
+or Phone → Settings) always names the pipeline in use: **Off**
+(Low), **Standard** (Medium: PMREM sky probe + fresnel shader
+water), or **Ray-traced-style** (High). Ray-traced-style is the
+honest label for what a browser can do in real time — there is no
+hardware ray tracing in WebGL — so High builds the look from
+reflections instead: **screen-space reflections** traced only
+across glossy surfaces (wet streets, puddles, glass, clearcoat
+paint) at half resolution, and a **planar-reflection bay** whose
+mirrored camera reflects the real skyline, bridge and sunset into
+the water. Both are the most expensive effects in the game: both
+are High-only, both switch off automatically when the smoothness
+governor steps the tier down, and a **Ray-traced reflections**
+toggle in the same two settings screens disables them on their
+own if High stutters on your phone.
 Dialogue is fully subtitled (cinematic letterbox + typewriter);
 subtitle size/background, ambient barks and the letterbox bars are
 adjustable in the same two places.
@@ -336,12 +352,20 @@ Unsigned installers may trigger SmartScreen/Gatekeeper first-run prompts.
 - **Realistic-styled, not photoreal.** Phase 5 raised the ceiling —
   real CC0 photographed PBR maps on roads/sidewalks/brick/plaster
   (credits: `ASSETS_LICENSES.md`), clearcoat car paint, a custom
-  water shader, PMREM sky reflections, SSAO on High — but buildings,
+  water shader, PMREM sky reflections, SSAO on High, and Phase 11's
+  ray-traced-style reflections (SSR + planar water) on High — but buildings,
   cars and people are still code-built geometry, not scanned or
   modelled assets. Photoreal is not achievable in an instant-play
   browser build; glTF upgrades are a manual path (`SETUP_MANUAL.md`).
 - The embedded CC0 maps cost ~950 KB (gzip) of download so the game
   can ship with zero hosted files; the Low tier never decodes them.
+- **No hardware ray tracing.** Browsers expose no RT cores through
+  WebGL, and three.js's experimental WebGPU path tracer neither
+  runs on iOS Safari nor hits real-time rates on phones. Phase 11's
+  "Ray-traced-style" reflections (screen-space reflections +
+  planar mirrored water + a PMREM probe, High tier) are the
+  real-time reflection stack web games actually ship — labelled
+  as such in Settings, never as ray tracing.
 - Motion blur is not implemented (no cheap robust effect exists in
   the post library); a speed FOV kick carries the sensation instead.
 - Multiplayer is positional relay (no server-side game simulation);

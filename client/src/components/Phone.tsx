@@ -15,7 +15,7 @@ import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
 import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
 import { STOCKS, INV, buyLot, sellLot, portfolioValue, portfolioPL, LOT } from "../game/invest";
-import { manualTier, showFps, setShowFps } from "../game/perf";
+import { manualTier, showFps, setShowFps, reflectionMode, REFLECTION_LABEL } from "../game/perf";
 import { fetchBoard, type BoardEntry } from "../game/leaderboard";
 import { galleryList, galleryDelete } from "../game/phase9";
 
@@ -444,6 +444,10 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
                   <button key={t} type="button" className={`phone-seg-btn ${G.settings.quality === t ? "active" : ""}`} onClick={() => { manualTier(t); setTick((v) => v + 1); }}>{t}</button>
                 ))}
               </span></div>
+            <div className="bank-row"><span>Reflections</span><b>{REFLECTION_LABEL[reflectionMode()]}</b></div>
+            <div className="bank-row"><span>Ray-traced reflections (High tier)</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ reflFx: !G.settings.reflFx })}>{G.settings.reflFx ? "On" : "Off"}</button></div>
+            <p className="phone-tip">On High, reflections are ray-traced-style: screen-space reflections on wet streets, glass and paint, plus a mirrored bay. A browser has no hardware ray tracing — this is the real-time stack web games use instead.</p>
             <h3 className="phone-subhead">Subtitles</h3>
             <div className="bank-row"><span>Subtitle size</span>
               <span className="phone-seg">

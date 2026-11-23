@@ -17,6 +17,7 @@ import {
 import { cc0Texture } from "../cc0Textures";
 import { gates, type QualityTier } from "../game/quality";
 import CarBody from "./CarBody";
+import PlanarWater from "./PlanarWater";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 
 // ---------- local canvas textures ----------
@@ -450,7 +451,7 @@ function Phase7Frontages({ night }: { night: number }) {
   );
 }
 
-export default function World({ theme, night, quality, stage }: { theme: GameTheme; night: number; quality: QualityTier; /** Phase 6 staged loading: 0 ground/roads only, 1 Port Sable, 2 Coral, 3 Northgate+Island */ stage: number }) {
+export default function World({ theme, night, quality, stage, reflFx }: { theme: GameTheme; night: number; quality: QualityTier; /** Phase 6 staged loading: 0 ground/roads only, 1 Port Sable, 2 Coral, 3 Northgate+Island */ stage: number; /** Phase 11: player override for the High-tier reflection stack (App owns the state) */ reflFx: boolean }) {
   const water = useRef<THREE.MeshStandardMaterial>(null);
   const wheelSpin = useRef<THREE.Group>(null);
   const cabins = useRef<Array<THREE.Group | null>>([]);
@@ -722,7 +723,7 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
       let m = cache.get(key);
       if (!m) {
         if (kind === "glass") {
-          m = new THREE.MeshStandardMaterial({ color: "#39657f", map: facadeTexture(), normalMap: facadeNormal(), normalScale: new THREE.Vector2(0.4, 0.4), roughness: 0.1, metalness: 0.6, envMapIntensity: 1.25 });
+          m = new THREE.MeshStandardMaterial({ color: "#39657f", map: facadeTexture(), normalMap: facadeNormal(), normalScale: new THREE.Vector2(0.4, 0.4), roughness: 0.1, metalness: 0.6, envMapIntensity: 1.25 * gates.envRefl(quality) });
         } else if (kind === "plaster") {
           m = new THREE.MeshStandardMaterial({
             color: b.color, roughness: 0.94,
@@ -914,7 +915,11 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
     // rain puddles fade in with the weather (Phase 3); Phase 10: their
     // env reflection strengthens at night so they catch the streetlights
     puddleMat.opacity = G.rainAmt * 0.88;
-    puddleMat.envMapIntensity = 1.3 + night * 1.0 + G.rainAmt * 0.5;
+    // Phase 11: the whole term scales with the tier's probe strength;
+    // on High the puddles ADDITIONALLY pick up true SSR (roughness
+    // 0.05 is far under the SSR maxRoughness gate), so wet streets
+    // mirror the neon twice over — probe for body, SSR for detail.
+    puddleMat.envMapIntensity = (1.3 + night * 1.0 + G.rainAmt * 0.5) * gates.envRefl(quality);
     // sun disc + warm glow riding the day cycle (low amber disc at dusk)
     if (sunDiscRef.current) {
       const ang = G.dayTime * Math.PI * 2 - Math.PI / 2;
@@ -998,8 +1003,13 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
       <mesh position={[0, 0.0, 121]} receiveShadow><boxGeometry args={[290, 0.1, 14]} /><meshStandardMaterial map={sandTex} normalMap={sandNormal()} normalScale={new THREE.Vector2(0.5, 0.5)} roughness={1} /></mesh>
       {/* harbour + bay water — one sheet from Port Sable beach around Coral
           Shores. Phase 5: Medium/High get the custom shader (fresnel, sun
-          glint, rain ripples, shore fades); Low keeps the Phase 4 sheet. */}
-      {gates.waterShader(quality) ? (
+          glint, rain ripples, shore fades); Low keeps the Phase 4 sheet.
+          Phase 11: High + reflections on swaps the shader for the planar
+          mirrored water (components/PlanarWater) — same plane, same
+          heights, so boats/swimming are untouched by the swap. */}
+      {gates.planarWater(quality) && reflFx ? (
+        <PlanarWater theme={theme} night={night} />
+      ) : gates.waterShader(quality) ? (
         <mesh position={[0, -0.02, WATER_Z + 118]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[560, 236]} />
           <primitive object={waterShaderMat} attach="material" />

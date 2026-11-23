@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type RefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation, SSAO, ChromaticAberration } from "@react-three/postprocessing";
+import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation, SSAO, ChromaticAberration, SSR } from "@react-three/postprocessing";
 import * as THREE from "three";
 import Collectibles from "./components/Collectibles";
 import GameSystems, { type SysCallbacks } from "./components/GameSystems";
@@ -23,7 +23,8 @@ import { jobTarget } from "./game/jobs";
 import { currentMiniUi, clearClothingOverride, type MiniUi } from "./game/phase8";
 import { galleryAdd, clearLookOverride } from "./game/phase9";
 import { padCam } from "./game/gamepad";
-import { perf, DPR_LADDER, tierDprCap, autoDropTier, manualTier, showFps, setShowFps } from "./game/perf";
+import { perf, DPR_LADDER, tierDprCap, autoDropTier, manualTier, showFps, setShowFps, reflectionMode, REFLECTION_LABEL, setReflFx } from "./game/perf";
+import { applyCarReflTier } from "./components/CarBody";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
 import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints } from "./world";
 import { skyEnvTexture, setNormalsEnabled } from "./textures";
@@ -73,6 +74,42 @@ function EnvSetup({ theme, quality }: { theme: GameTheme; quality: QualityTier }
 // Phase 10: chromatic aberration offset (radial modulation keeps the
 // centre clean; ~0.45% of the half-frame at the corners)
 const CA_OFFSET = new THREE.Vector2(0.00045, 0.00045);
+
+// Phase 11: screen-space reflections (High tier only) — the `SSR`
+// component from @react-three/postprocessing@2.19.1, backed by its
+// vendored screen-space-reflections SSREffect. NOTE: that library's
+// .d.ts advertises newer prop names (MAX_STEPS, rayStep…) that the
+// vendored runtime silently ignores — the options that actually take
+// effect (verified in node_modules source) are the ones below:
+// resolutionScale renders the G-buffer + reflection targets at half
+// resolution; maxRoughness 0.32 keeps rays on glossy surfaces only
+// (wet asphalt ~0.15–0.45 when raining, puddles 0.05, glass ~0.1,
+// car paint ~0.3) so matte walls/floors never shimmer; distance 26
+// covers a street width; missed rays fall back to the PMREM sky
+// probe, so a miss degrades to the Phase 5 look instead of black.
+// The extra runtime-only keys ride in via a cast for that reason.
+const SSR_OPTS = {
+  intensity: 1,
+  distance: 26,
+  steps: 20,
+  refineSteps: 5,
+  maxRoughness: 0.32,
+  thickness: 4,
+  maxDepthDifference: 4,
+  blur: 0.5,
+  blurKernel: 1,
+  blurSharpness: 10,
+  jitter: 0.3,
+  jitterRoughness: 0.2,
+  blend: 0.9,
+  correction: 1,
+  ior: 1.45,
+  missedRays: true,
+  useNormalMap: true,
+  useRoughnessMap: true,
+  resolutionScale: 0.5,
+  velocityResolutionScale: 0.5,
+} as Record<string, unknown>;
 
 const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
 const tmpV = new THREE.Vector3();
@@ -424,10 +461,12 @@ export default function App() {
   const [garageZoneId, setGarageZoneId] = useState<string | null>(null);
   const [photoMode, setPhotoMode] = useState(false);
   const [postFx, setPostFx] = useState(G.settings.postFx);
+  // ---- Phase 11: reflection-stack override (polled like postFx) ----
+  const [reflFx, setReflFxState] = useState(G.settings.reflFx);
   // ---- Phase 5: quality tier (game/quality.ts owns detection + gates) ----
   const [quality, setQualityState] = useState<QualityTier>(() => { initQuality(); return G.settings.quality; });
   const qualityRef = useRef(quality);
-  useEffect(() => { qualityRef.current = quality; setNormalsEnabled(gates.normalMaps(quality)); }, [quality]);
+  useEffect(() => { qualityRef.current = quality; setNormalsEnabled(gates.normalMaps(quality)); applyCarReflTier(); }, [quality]);
   // ---- Phase 5: cinematic subtitles (typewriter) + ambient barks + choice
   const [subShown, setSubShown] = useState(0);
   const [barkUi, setBarkUi] = useState<{ who: string; text: string } | null>(null);
@@ -552,6 +591,7 @@ export default function App() {
   const respawnRef = useRef(respawn); respawnRef.current = respawn;
   const startMissionRef = useRef(startMission); startMissionRef.current = startMission;
   const postFxRef = useRef(G.settings.postFx);
+  const reflFxRef = useRef(G.settings.reflFx);
 
   // ---- Phase 4: character select open/close ----
   const savedPosRef = useRef<{ x: number; z: number } | null>(null);
@@ -778,6 +818,7 @@ export default function App() {
         if (def && !M.active) { M.replayId = rid; startMissionRef.current(def); showPopup(`Replaying: ${def.title} (40% payout)`); }
       }
       if (G.settings.postFx !== postFxRef.current) { postFxRef.current = G.settings.postFx; setPostFx(G.settings.postFx); }
+      if (G.settings.reflFx !== reflFxRef.current) { reflFxRef.current = G.settings.reflFx; setReflFxState(G.settings.reflFx); }
       // Phase 5: quality can change under us (FPS step-down, phone settings)
       if (G.settings.quality !== qualityRef.current) setQualityState(G.settings.quality);
       // Phase 5: ambient barks surface as small subtitles for ~4 s
@@ -994,7 +1035,7 @@ export default function App() {
         gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15, outputColorSpace: THREE.SRGBColorSpace }}>
         <Suspense fallback={null}>
           <EnvSetup theme={theme} quality={quality} />
-          <World theme={theme} night={nightBucket} quality={quality} stage={worldStage} />
+          <World theme={theme} night={nightBucket} quality={quality} stage={worldStage} reflFx={reflFx} />
           <Collectibles targetRef={followRef} paused={effectivePaused}
             onCollect={() => { tokenCountRef.current += 1; G.tokens = tokenCountRef.current; sfx.pickup(); showPopup("Harbour token +$25"); G.cash += 25; }} />
           <Vehicle playerPositionRef={playerPositionRef} vehiclePositionRef={vehiclePositionRef} vehicleStateRef={vehicleStateRef}
@@ -1023,6 +1064,13 @@ export default function App() {
             <EffectComposer multisampling={0}>
               <>
                 <Bloom intensity={gates.bloom(quality)} luminanceThreshold={0.6} luminanceSmoothing={0.25} mipmapBlur />
+                {/* Phase 11: screen-space reflections — High tier only,
+                    and only while the player's reflection override is
+                    on. Sits right after Bloom so reflected hits carry
+                    the neon glow; the grade/grain/vignette still run
+                    over the composited result. Dropping the tier (or
+                    toggling reflections off) unmounts it outright. */}
+                {gates.ssr(quality) && reflFx && <SSR {...SSR_OPTS} />}
                 <HueSaturation saturation={0.08} />
                 <BrightnessContrast contrast={0.06} brightness={0.01} />
                 <Noise opacity={0.035} />
@@ -1414,8 +1462,10 @@ export default function App() {
             </div>
             <div className="settings-list">
               <label><span>Show FPS</span><input type="checkbox" defaultChecked={showFps()} onChange={(e) => { setShowFps(e.target.checked); showPopup(`FPS readout ${e.target.checked ? "on" : "off"}`); }} /></label>
+              <label><span>Reflections</span><b>{REFLECTION_LABEL[reflectionMode()]}</b></label>
+              <label><span>Ray-traced reflections (High tier)</span><input type="checkbox" checked={reflFx} onChange={(e) => { setReflFx(e.target.checked); setReflFxState(e.target.checked); showPopup(`Ray-traced-style reflections ${e.target.checked ? "on" : "off"}`); }} /></label>
             </div>
-            <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + SSAO, stronger bloom, CC0 at full size. Resolution adapts automatically for smoothness; picking a tier here turns the auto tier-drop off for this session.</p>
+            <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + SSAO, stronger bloom, CC0 at full size — and ray-traced-style reflections (screen-space reflections + mirrored bay water; a browser has no hardware ray tracing, this is the real-time reflection stack every web game uses). Turn them off above if High stutters; the tier governor also drops them automatically when it steps the tier down. Resolution adapts automatically for smoothness; picking a tier here turns the auto tier-drop off for this session.</p>
             <h3 className="settings-head">Subtitles</h3>
             <div className="seg-row" role="group" aria-label="Subtitle size">
               {(["S", "M", "L"] as const).map((s) => (

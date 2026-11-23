@@ -229,12 +229,26 @@ function DentPanels({ kind, liveDent }: { kind: string; liveDent?: () => [number
 }
 
 /** Phase 5 Step 5 paint: Medium/High get MeshPhysicalMaterial clearcoat
- * (1.0 / 0.08) over the base coat; Low keeps the Phase 4 standard paint. */
+ * (1.0 / 0.08) over the base coat; Low keeps the Phase 4 standard paint.
+ * Phase 11: probe reflection strength scales with the tier at creation
+ * (gates.envRefl) — on High the clearcoat ALSO receives true SSR. */
 function paintMaterial(color: string, metalness = 0.25, roughness = 0.27): THREE.Material {
   if (gates.clearcoat(tier())) {
-    return new THREE.MeshPhysicalMaterial({ color, metalness, roughness: roughness + 0.03, clearcoat: 1.0, clearcoatRoughness: 0.08, envMapIntensity: 1.25 });
+    return new THREE.MeshPhysicalMaterial({ color, metalness, roughness: roughness + 0.03, clearcoat: 1.0, clearcoatRoughness: 0.08, envMapIntensity: 1.25 * gates.envRefl(tier()) });
   }
-  return new THREE.MeshStandardMaterial({ color, metalness, roughness, envMapIntensity: 1.2 });
+  return new THREE.MeshStandardMaterial({ color, metalness, roughness, envMapIntensity: 1.2 * gates.envRefl(tier()) });
+}
+
+/** Phase 11: the shared glass/chrome singletons are created once at
+ * module load, so App re-applies their probe strength whenever the
+ * tier changes (per-car paint is created per car and reads the tier
+ * at creation — see paintMaterial). */
+export function applyCarReflTier() {
+  const s = gates.envRefl(tier());
+  GLASS.envMapIntensity = 1.3 * s;
+  CHROME.envMapIntensity = 1.4 * s;
+  GLASS_CLEAR.envMapIntensity = 1.4 * s;
+  GLASS_BROKEN.envMapIntensity = 0.7 * s;
 }
 
 /** Rideable motorcycle — Sable Stinger: thin wheels, tube frame, tank, seat. */

@@ -9,7 +9,9 @@
 //            chromatic aberration), 2048 follow shadows,
 //            normal maps on, CC0 textures at 512, water shader, clearcoat.
 //   High   — Medium + SSAO, stronger bloom, CC0 at native (768–1024),
-//            softer shadow radius, full water shader.
+//            softer shadow radius, full water shader. Phase 11: + the
+//            ray-traced-STYLE reflection stack (screen-space reflections
+//            + planar-reflection water) when the player override allows.
 import { G, persistSettings } from "./store";
 import { setTextureAnisotropy } from "../textures";
 
@@ -83,4 +85,15 @@ export const gates = {
   waterShader: (t: QualityTier) => t !== "low",
   clearcoat: (t: QualityTier) => t !== "low",
   bloom: (t: QualityTier) => (t === "high" ? 0.75 : 0.55),
+  // ---- Phase 11 reflections: the two expensive dynamic techniques are
+  // High-only AND respect the player's reflFx override (game/perf.ts
+  // owns the mode label). SSR follows the DPR ladder automatically
+  // because the composer renders at canvas size; the planar water
+  // renders its mirrored scene at 0.5× the drawing buffer.
+  ssr: (t: QualityTier) => t === "high",
+  planarWater: (t: QualityTier) => t === "high",
+  /** Static-probe (PMREM) reflection strength scale per tier, applied
+   * at material creation: glass towers + car paint/glass read this so
+   * the probe reflections step with the tier like everything else. */
+  envRefl: (t: QualityTier) => (t === "high" ? 1.15 : t === "medium" ? 1.0 : 0.8),
 };

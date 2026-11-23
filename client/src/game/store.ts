@@ -148,6 +148,9 @@ export const G = {
   robbedUntil: {} as Record<string, number>, // register id → G.timeS when it can be robbed again
   settings: {
     shake: true, fov: 58, postFx: true, shadows: true,
+    // ---- Phase 11: player override for the High-tier dynamic reflection
+    // stack (SSR + planar water). Off = Standard reflections at any tier.
+    reflFx: true,
     // ---- Phase 5: quality tier + subtitles (game/quality.ts owns detection) ----
     quality: "medium" as "low" | "medium" | "high",
     subSize: "M" as "S" | "M" | "L", // subtitle text size

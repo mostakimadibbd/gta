@@ -39,6 +39,35 @@ export function autoDropTier(): boolean {
   return true;
 }
 
+/** Phase 11: the active reflection pipeline, as shown in Pause →
+ * Graphics and Phone → Settings. This is a readout of tier + the
+ * player's reflFx override, not a separate quality axis:
+ *   off        — Low tier, or the override is off (only the static
+ *                PMREM probe tints materials; no dynamic reflections)
+ *   standard   — Medium: PMREM sky probe + fresnel shader water
+ *   raytraced  — High + override on: screen-space reflections on
+ *                glossy surfaces + planar-reflection bay water.
+ * "Ray-traced-style" is the honest label: a browser has no hardware
+ * ray tracing; SSR + planar mirrors are what the look is built from. */
+export type ReflectionMode = "off" | "standard" | "raytraced";
+export function reflectionMode(): ReflectionMode {
+  if (!G.settings.reflFx) return "off";
+  const t = G.settings.quality;
+  return t === "high" ? "raytraced" : t === "medium" ? "standard" : "off";
+}
+export const REFLECTION_LABEL: Record<ReflectionMode, string> = {
+  off: "Off",
+  standard: "Standard",
+  raytraced: "Ray-traced-style",
+};
+/** Player override for the High-tier reflection stack. Persisted like
+ * every other setting; App polls G.settings.reflFx into React state
+ * (same pattern as postFx) so the composer + water swap live. */
+export function setReflFx(on: boolean) {
+  G.settings.reflFx = on;
+  persistSettings();
+}
+
 /** "Show FPS" lives in the persisted settings object. */
 export function setShowFps(on: boolean) {
   (G.settings as { showFps?: boolean }).showFps = on;
