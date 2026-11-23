@@ -394,4 +394,155 @@ double race_pace(double player_dist, double opp_dist, double base_top, double ru
   return base_top + clamp(gap * 0.014, -rubber, rubber);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 10 — realism + physics round (TS mirrors in GamePhysics.ts).
+// Surface grip, per-wheel suspension/body dynamics, ballistic debris
+// and swimmer buoyancy/drag join the core. Everything above is untouched.
+// ---------------------------------------------------------------------------
+
+// (a) Vehicle step v3: step_vehicle_v2 PLUS a surface-grip multiplier
+// (1.0 dry asphalt, 0.78 wet, 0.68 rain-heavy, 0.72 dirt, 0.55 sand —
+// the caller folds weather into the same number) and a WHEELSPIN output.
+//   grip curve × surface grip scales the turn rate AND the launch:
+//   demanded drive force beyond the contact patch's capacity becomes
+//   slip (out[7], 0..1) instead of motion — the caller turns slip into
+//   tyre smoke + sound. Under the handbrake a low-grip surface breaks
+//   the rear looser still, so wet slides run WIDER than dry ones.
+//   out: [x, z, heading, speed, pitch, roll, grip, slip]
+void step_vehicle_v3(double x, double z, double heading, double speed,
+                     double throttle, double steering, double handbrake,
+                     double surface_grip, double delta_time, double* output) {
+  const double dt = clamp(delta_time, 0.0, kMaxStep);
+  const double gas = clamp(throttle, -1.0, 1.0);
+  const double steer = clamp(steering, -1.0, 1.0);
+  const double sg = clamp(surface_grip, 0.3, 1.1);
+  const double prev_speed = speed;
+  // contact-patch capacity: the v2 speed-falloff curve × the surface
+  double grip = clamp(1.12 - std::abs(speed) / 34.0, 0.74, 1.05) * sg;
+  // wheelspin: forward drive force vs capacity (reverse is gentler)
+  double slip = 0.0;
+  if (gas > 0.05) {
+    const double demand = gas * kForwardAcceleration;
+    const double capacity = 15.5 * grip;
+    slip = clamp((demand - capacity) / 9.0, 0.0, 1.0);
+    if (std::abs(speed) > 9.0) slip *= 0.25; // rolling tyres bite again
+  }
+  // low-grip launches also just accelerate less (sand bogs down)
+  const double accel_scale = (0.5 + 0.5 * sg) * (1.0 - 0.45 * slip);
+  speed += gas * (gas >= 0.0 ? kForwardAcceleration : kReverseAcceleration) *
+           (gas >= 0.0 ? accel_scale : 1.0) * dt;
+  const double friction = handbrake > 0.5 ? kDriftFriction : kRollingFriction;
+  speed *= std::max(0.0, 1.0 - friction * dt);
+  if (gas == 0.0 && std::abs(speed) < 0.12) speed = 0.0;
+  speed = clamp(speed, -kMaxReverseSpeed, kMaxForwardSpeed);
+  const double accel = dt > 0.0001 ? (speed - prev_speed) / dt : 0.0;
+  double turn_grip = grip;
+  if (handbrake > 0.5) turn_grip *= 0.58 * (0.72 + 0.28 * sg); // wet slides wider
+  const double speed_factor = clamp(std::abs(speed) / 4.0, 0.18, 1.0);
+  heading += steer * 2.2 * speed_factor * turn_grip * dt * (speed < 0.0 ? -1.0 : 1.0);
+  heading = wrap_angle(heading);
+  x += std::sin(heading) * speed * dt;
+  z += std::cos(heading) * speed * dt;
+  const double pitch = clamp(-accel * 0.0028, -0.055, 0.06);
+  const double roll = clamp(steer * std::abs(speed) * 0.0042, -0.095, 0.095) *
+                      (handbrake > 0.5 ? 0.55 : 1.0) * (speed < 0.0 ? -1.0 : 1.0);
+  output[0] = x; output[1] = z; output[2] = heading; output[3] = speed;
+  output[4] = pitch; output[5] = roll; output[6] = grip; output[7] = slip;
+}
+
+// (b) Vehicle body: per-wheel suspension + spring/damper body motion.
+// The caller samples the ground height under each wheel (relative to
+// the body's ground reference, + = ground rises toward the wheel) in
+// CarBody creation order [0]=(-x,front) [1]=(+x,front) [2]=(-x,rear)
+// [3]=(+x,rear). Each wheel's compression target follows its corner of
+// ground; body pitch/roll/heave spring toward the terrain attitude
+// PLUS the weight-transfer targets (accel squat / brake dive / corner
+// lean) with the same spring constants as suspension_response, so a
+// landing or a ramp crest moves the whole body, not just the wheels.
+//   in:  h0..h3, accel, steer, speed, prev[pitch, roll, heave,
+//        pitchVel, rollVel, heaveVel], dt
+//   out: [pitch, roll, heave, pitchVel, rollVel, heaveVel,
+//         comp0, comp1, comp2, comp3]   (comp: 0.45 = nominal ride)
+void vehicle_body(double h0, double h1, double h2, double h3,
+                  double accel, double steer, double speed,
+                  double prev_pitch, double prev_roll, double prev_heave,
+                  double prev_pitch_vel, double prev_roll_vel,
+                  double prev_heave_vel, double delta_time, double* output) {
+  const double dt = clamp(delta_time, 0.0, kMaxStep);
+  const double h[4] = {h0, h1, h2, h3};
+  double comp[4];
+  for (int i = 0; i < 4; ++i) comp[i] = clamp(0.45 + h[i] * 1.5, 0.02, 0.98);
+  const double front = (h0 + h1) * 0.5, rear = (h2 + h3) * 0.5;
+  const double left = (h1 + h3) * 0.5, right = (h0 + h2) * 0.5; // +x side = indices 1,3
+  const double avg = (front + rear) * 0.5;
+  // terrain attitude + weight transfer (signs match step_vehicle_v2:
+  // positive pitch = nose-down dive, roll follows the steering sign)
+  double target_pitch = clamp((rear - front) * 0.16, -0.14, 0.14) +
+                        clamp(-accel * 0.0028, -0.055, 0.06);
+  double target_roll = clamp((left - right) * 0.16, -0.14, 0.14) +
+                       clamp(steer * std::fabs(speed) * 0.0042, -0.095, 0.095) *
+                           (speed < 0.0 ? -1.0 : 1.0);
+  const double target_heave = clamp(avg * 0.55, -0.13, 0.2);
+  double pitch = prev_pitch, roll = prev_roll, heave = prev_heave;
+  double pitch_vel = prev_pitch_vel, roll_vel = prev_roll_vel, heave_vel = prev_heave_vel;
+  {
+    const double acc = 52.0 * (target_pitch - pitch) - 11.0 * pitch_vel;
+    pitch_vel += acc * dt; pitch += pitch_vel * dt;
+  }
+  {
+    const double acc = 52.0 * (target_roll - roll) - 11.0 * roll_vel;
+    roll_vel += acc * dt; roll += roll_vel * dt;
+  }
+  {
+    const double acc = 38.0 * (target_heave - heave) - 9.0 * heave_vel;
+    heave_vel += acc * dt; heave += heave_vel * dt;
+  }
+  output[0] = pitch; output[1] = roll; output[2] = heave;
+  output[3] = pitch_vel; output[4] = roll_vel; output[5] = heave_vel;
+  output[6] = comp[0]; output[7] = comp[1]; output[8] = comp[2]; output[9] = comp[3];
+}
+
+// (c) Debris step: one pooled shard under gravity with a ground bounce.
+// Gravity −18 matches the game's established debris fall. On contact
+// the vertical velocity reflects × restitution and the horizontal
+// velocity keeps `ground_keep` of itself (friction); a resting shard
+// (|vy| < 0.8 after a bounce) settles flat instead of micro-bouncing.
+//   in:  x, y, z, vx, vy, vz, ground_y, restitution, ground_keep, dt
+//   out: [x, y, z, vx, vy, vz]
+void debris_step(double x, double y, double z, double vx, double vy, double vz,
+                 double ground_y, double restitution, double ground_keep,
+                 double delta_time, double* output) {
+  const double dt = clamp(delta_time, 0.0, kMaxStep);
+  vy -= 18.0 * dt;
+  vx *= std::max(0.0, 1.0 - 0.12 * dt); // light air drag
+  vz *= std::max(0.0, 1.0 - 0.12 * dt);
+  x += vx * dt; y += vy * dt; z += vz * dt;
+  if (y < ground_y) {
+    y = ground_y;
+    vy = -vy * clamp(restitution, 0.0, 0.9);
+    if (std::fabs(vy) < 0.8) vy = 0.0;
+    vx *= clamp(ground_keep, 0.0, 1.0);
+    vz *= clamp(ground_keep, 0.0, 1.0);
+  }
+  output[0] = x; output[1] = y; output[2] = z;
+  output[3] = vx; output[4] = vy; output[5] = vz;
+}
+
+// (d) Swim step: swimmer buoyancy + drag. Speed relaxes toward the
+// stroke's target with a water-drag time constant (no instant starts
+// or stops in water), the stroke cycle surges the effective speed
+// ±14%, and the body bobs on the stroke — calmer at a glide.
+//   in:  phase (stroke phase, rad), target_speed, prev_speed, dt
+//   out: [speed, surge, bobY]
+void swim_step(double phase, double target_speed, double prev_speed,
+               double delta_time, double* output) {
+  const double dt = clamp(delta_time, 0.0, kMaxStep);
+  const double k = 1.0 - std::exp(-2.4 * dt); // drag relaxation
+  const double speed = prev_speed + (clamp(target_speed, 0.0, 4.0) - prev_speed) * k;
+  const double surge = 0.86 + 0.14 * std::sin(phase * 2.0);
+  const double effort = clamp(std::fabs(speed) / 2.4, 0.0, 1.0);
+  const double bob = std::sin(phase) * 0.055 * (0.35 + 0.65 * effort);
+  output[0] = speed; output[1] = surge; output[2] = bob;
+}
+
 }  // extern "C"

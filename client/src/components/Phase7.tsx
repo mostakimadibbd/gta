@@ -86,13 +86,15 @@ export default function Phase7Systems() {
     return () => { window.removeEventListener("keydown", dn); window.removeEventListener("keyup", up); };
   }, []);
 
-  const spawnDebris = (x: number, y: number, z: number, color: string, n = 6) => {
+  const spawnDebris = (x: number, y: number, z: number, color: string, n = 6, dirX = 0, dirZ = 0, power = 0) => {
     for (let k = 0; k < n; k++) {
       const idx = debrisCursor.current;
       debrisCursor.current = (debrisCursor.current + 1) % debris.current.length;
       const d = debris.current[idx];
       d.active = true; d.x = x + rand(-0.4, 0.4); d.y = y + rand(0.1, 0.7); d.z = z + rand(-0.4, 0.4);
-      d.vx = rand(-3.4, 3.4); d.vy = rand(2.5, 6); d.vz = rand(-3.4, 3.4);
+      // Phase 10: the collision impulse aims the spray — debris flies
+      // AWAY from the striking car, scattered around its velocity
+      d.vx = rand(-3.4, 3.4) + dirX * power * rand(0.5, 1.1); d.vy = rand(2.5, 6); d.vz = rand(-3.4, 3.4) + dirZ * power * rand(0.5, 1.1);
       d.rx = rand(0, 3); d.rz = rand(0, 3); d.life = 2.2; d.color = color;
       const m = debrisRefs.current[idx];
       if (m) (m.material as THREE.MeshStandardMaterial).color.set(color);
@@ -368,7 +370,8 @@ export default function Phase7Systems() {
           saveDaySet(DESTRUCT_KEY, [...broken.current]);
           const g = destRefs.current[i];
           if (g) g.visible = false;
-          spawnDebris(d.x, groundYAt(d.x, d.z), d.z, d.kind === "barrel" ? "#b3402e" : d.kind === "fence" ? "#6d4c33" : "#a3764f", d.kind === "fence" ? 8 : 6);
+          spawnDebris(d.x, groundYAt(d.x, d.z), d.z, d.kind === "barrel" ? "#b3402e" : d.kind === "fence" ? "#6d4c33" : "#a3764f", d.kind === "fence" ? 8 : 6,
+            Math.sin(car.state.heading) * Math.sign(car.state.speed), Math.cos(car.state.heading) * Math.sign(car.state.speed), Math.min(6, Math.abs(car.state.speed) * 0.55));
           sfx.thud();
         }
       });
@@ -378,10 +381,12 @@ export default function Phase7Systems() {
       if (!m) return;
       if (!d.active) { m.visible = false; return; }
       m.visible = true;
-      d.vy -= 18 * dt;
-      d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt;
+      // Phase 10: integration is the C++ core's debris_step (gravity,
+      // bounce restitution, ground friction, rest settle) via its
+      // exact TS mirror — one physics home for every shard in the game
       const gy = groundYAt(d.x, d.z) + 0.14;
-      if (d.y < gy) { d.y = gy; d.vy *= -0.35; d.vx *= 0.7; d.vz *= 0.7; }
+      const ns = fallbackPhysics.debrisStep(d, gy, 0.35, 0.7, dt);
+      d.x = ns.x; d.y = ns.y; d.z = ns.z; d.vx = ns.vx; d.vy = ns.vy; d.vz = ns.vz;
       d.rx += dt * 3; d.rz += dt * 2.4;
       d.life -= dt;
       if (d.life <= 0) d.active = false;

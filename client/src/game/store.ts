@@ -9,6 +9,7 @@ import type { VehicleState } from "../physics/GamePhysics";
 export interface NpcCar extends VehicleState {
   axis: "x" | "z"; dir: 1 | -1; lane: number; color: string; stopped: number; fleeing: number;
   side: "main" | "coral" | "north"; steerVis: number; pitch: number; damage: number;
+  roll?: number; pitchVel?: number; rollVel?: number; // Phase 10: C++ vehicle_body state (traffic cheap version)
   svc?: "ambulance" | "fire"; // Phase 7: emergency-service traffic variants
   // ---- Phase 6: per-car kind + traffic-light / rush-hour / bus state ----
   kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
@@ -27,6 +28,7 @@ export interface Ped {
   memWitnessUntil?: number; memRobbedDay?: number; memHelpedUntil?: number;
   recogCd?: number; // next G.timeS this ped may bark a recognition line
   flailUntil?: number; // Phase 9 ragdoll-lite: car-hit flail window
+  kvx?: number; kvz?: number; // Phase 10: car-hit knock velocity (impact direction), decays in the ped loop
 }
 export interface Cop extends VehicleState { active: boolean; lightPhase: number; pitch: number; roll: number; }
 export type WeatherKind = "Clear" | "Cloudy" | "Rain" | "Storm" | "Fog";
@@ -41,6 +43,9 @@ export interface PlayerCar {
   state: VehicleState; stolen: boolean; damage: number; fuel: number; brokenWindow: boolean;
   pitch: number; roll: number; steerVis: number; storedAway: boolean;
   flatTyre?: boolean; tuneLvl?: number; brakeLvl?: number; pitchVel?: number; rollVel?: number;
+  // Phase 10: asymmetric crumple per side [front, back, left(+x), right(−x)] 0..1,
+  // and the C++ vehicle_body heave channel (pitch/roll reuse the fields above)
+  dent?: [number, number, number, number]; bodyHeave?: number; bodyHeaveVel?: number;
 }
 export type WeaponKind = "pistol" | "smg" | "shotgun" | "bat" | "bottle";
 export interface MissionResult { ok: boolean; title: string; reward: number; items: number; timeLeft: number; reason: string; at: number; }

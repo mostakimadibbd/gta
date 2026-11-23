@@ -45,6 +45,20 @@ double los_sampled(double ox, double oz, double tx, double tz,
                    double samples);
 void boat_buoyancy(double phase, double speed, double wave_amp, double* output);
 double race_pace(double player_dist, double opp_dist, double base_top, double rubber);
+// Phase 10 realism + physics round
+void step_vehicle_v3(double x, double z, double heading, double speed,
+                     double throttle, double steering, double handbrake,
+                     double surface_grip, double delta_time, double* output);
+void vehicle_body(double h0, double h1, double h2, double h3,
+                  double accel, double steer, double speed,
+                  double prev_pitch, double prev_roll, double prev_heave,
+                  double prev_pitch_vel, double prev_roll_vel,
+                  double prev_heave_vel, double delta_time, double* output);
+void debris_step(double x, double y, double z, double vx, double vy, double vz,
+                 double ground_y, double restitution, double ground_keep,
+                 double delta_time, double* output);
+void swim_step(double phase, double target_speed, double prev_speed,
+               double delta_time, double* output);
 }
 
 namespace {
@@ -187,6 +201,102 @@ int main() {
     check("race_pace behind speeds up", race_pace(100.0, 60.0, 20.0, 2.2) > 20.0);
     check("race_pace ahead eases off", race_pace(60.0, 100.0, 20.0, 2.2) < 20.0);
     check("race_pace capped at rubber band", std::fabs(race_pace(500.0, 0.0, 20.0, 2.2) - 22.2) < 1e-9);
+  }
+
+  // ---- Phase 10 realism + physics round --------------------------------
+  // step_vehicle_v3: the same corner on wet asphalt turns LESS than dry
+  {
+    double dry[8] = {0}, wet[8] = {0};
+    double ds[4] = {0, 0, 0, 12.0}, ws[4] = {0, 0, 0, 12.0};
+    for (int i = 0; i < 60; ++i) {
+      step_vehicle_v3(ds[0], ds[1], ds[2], ds[3], 0.0, 0.6, 0.0, 1.0, 1.0 / 60.0, dry);
+      for (int k = 0; k < 4; ++k) ds[k] = dry[k];
+      step_vehicle_v3(ws[0], ws[1], ws[2], ws[3], 0.0, 0.6, 0.0, 0.68, 1.0 / 60.0, wet);
+      for (int k = 0; k < 4; ++k) ws[k] = wet[k];
+    }
+    check("step_vehicle_v3 wet corner turns less than dry", std::fabs(wet[2]) < std::fabs(dry[2]) * 0.9);
+    check("step_vehicle_v3 grip scales with surface", dry[6] > wet[6] && wet[6] > 0.2);
+  }
+
+  // step_vehicle_v3: a full-throttle launch on sand spins the wheels;
+  // a gentle dry cruise does not
+  {
+    double sand[8] = {0}, cruise[8] = {0};
+    step_vehicle_v3(0.0, 0.0, 0.0, 0.5, 1.0, 0.0, 0.0, 0.55, 1.0 / 60.0, sand);
+    step_vehicle_v3(0.0, 0.0, 0.0, 10.0, 0.3, 0.0, 0.0, 1.0, 1.0 / 60.0, cruise);
+    check("step_vehicle_v3 sand launch wheelspin", sand[7] > 0.3);
+    check("step_vehicle_v3 dry cruise no wheelspin", cruise[7] < 0.05);
+  }
+
+  // step_vehicle_v3: handbrake slide runs wider (less heading change)
+  // on a wet surface than on dry
+  {
+    double hd[8] = {0}, hw[8] = {0};
+    step_vehicle_v3(0.0, 0.0, 0.0, 14.0, 0.0, 0.8, 1.0, 1.0, 1.0 / 60.0, hd);
+    step_vehicle_v3(0.0, 0.0, 0.0, 14.0, 0.0, 0.8, 1.0, 0.68, 1.0 / 60.0, hw);
+    check("step_vehicle_v3 wet handbrake slide is wider", std::fabs(hw[2]) < std::fabs(hd[2]));
+  }
+
+  // vehicle_body: flat ground settles neutral; a front bump lifts the
+  // nose (pitch < 0) and compresses the front wheels harder
+  {
+    double out[10] = {0};
+    double st[6] = {0, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 90; ++i) {
+      vehicle_body(0, 0, 0, 0, 0, 0, 0, st[0], st[1], st[2], st[3], st[4], st[5], 1.0 / 60.0, out);
+      for (int k = 0; k < 6; ++k) st[k] = out[k];
+    }
+    check("vehicle_body flat settles neutral",
+          std::fabs(out[0]) < 0.01 && std::fabs(out[1]) < 0.01 && std::fabs(out[2]) < 0.01 &&
+              std::fabs(out[6] - 0.45) < 0.001 && std::fabs(out[9] - 0.45) < 0.001);
+    double bump[10] = {0};
+    vehicle_body(0.3, 0.3, 0.0, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.0 / 60.0, bump);
+    check("vehicle_body front bump compresses front wheels", bump[6] > 0.8 && bump[8] < 0.5);
+    double bst[6] = {0, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 90; ++i) {
+      vehicle_body(0.3, 0.3, 0.0, 0.0, 0, 0, 0, bst[0], bst[1], bst[2], bst[3], bst[4], bst[5], 1.0 / 60.0, bump);
+      for (int k = 0; k < 6; ++k) bst[k] = bump[k];
+    }
+    check("vehicle_body front bump pitches nose up", bump[0] < -0.02);
+    // hard braking dives the nose (pitch > 0) even on flat ground
+    double dive[10] = {0};
+    double dst[6] = {0, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 90; ++i) {
+      vehicle_body(0, 0, 0, 0, -9.0, 0, 12.0, dst[0], dst[1], dst[2], dst[3], dst[4], dst[5], 1.0 / 60.0, dive);
+      for (int k = 0; k < 6; ++k) dst[k] = dive[k];
+    }
+    check("vehicle_body braking dive", dive[0] > 0.02);
+  }
+
+  // debris_step: falls under gravity, bounces lower, then settles
+  {
+    double out[6] = {0};
+    double s[6] = {0, 3.0, 0, 1.0, 0.0, 0.0};
+    double peak_vy_after_bounce = 0.0;
+    bool bounced = false;
+    for (int i = 0; i < 240; ++i) {
+      debris_step(s[0], s[1], s[2], s[3], s[4], s[5], 0.1, 0.35, 0.7, 1.0 / 60.0, out);
+      for (int k = 0; k < 6; ++k) s[k] = out[k];
+      if (s[1] <= 0.1 + 1e-9 && s[4] > 0.0) { bounced = true; peak_vy_after_bounce = std::max(peak_vy_after_bounce, s[4]); }
+    }
+    check("debris_step bounces off the ground", bounced && peak_vy_after_bounce > 0.5);
+    check("debris_step settles at rest on the ground",
+          std::fabs(s[1] - 0.1) < 1e-9 && s[4] == 0.0 && is_finite(s[0]) && is_finite(s[3]));
+  }
+
+  // swim_step: speed relaxes toward the target (drag), bob stays small
+  {
+    double out[3] = {0};
+    double speed = 0.0;
+    bool bob_ok = true;
+    for (int i = 0; i < 120; ++i) {
+      swim_step(i * 0.09, 2.4, speed, 1.0 / 60.0, out);
+      speed = out[0];
+      if (std::fabs(out[2]) > 0.056 || !is_finite(out[0]) || !is_finite(out[1])) bob_ok = false;
+    }
+    check("swim_step speed relaxes toward target", std::fabs(speed - 2.4) < 0.05);
+    check("swim_step bob bounded + outputs finite", bob_ok);
+    check("swim_step surge in range", out[1] >= 0.72 && out[1] <= 1.0);
   }
 
   if (failures == 0) {

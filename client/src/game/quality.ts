@@ -5,7 +5,8 @@
 //
 //   Low    — composer OFF, 1024 shadows, no normal maps, flat water sheet,
 //            procedural canvas textures only (CC0 off), standard car paint.
-//   Medium — composer (Bloom/SMAA/Vignette/Noise), 2048 follow shadows,
+//   Medium — composer (Bloom/SMAA/Vignette/Noise + Phase 10 radial
+//            chromatic aberration), 2048 follow shadows,
 //            normal maps on, CC0 textures at 512, water shader, clearcoat.
 //   High   — Medium + SSAO, stronger bloom, CC0 at native (768–1024),
 //            softer shadow radius, full water shader.

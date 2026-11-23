@@ -48,11 +48,20 @@ function RB({ args, radius = 0.07, mat, pos, rot, shadow = true }: {
   );
 }
 
-function Wheel({ x, z, r, w, classic, steerRef, carIndex }: { x: number; z: number; r: number; w: number; classic?: boolean; steerRef?: MutableRefObject<number>; carIndex?: number }) {
+function Wheel({ x, z, r, w, classic, steerRef, carIndex, suspRef, suspIdx }: { x: number; z: number; r: number; w: number; classic?: boolean; steerRef?: MutableRefObject<number>; carIndex?: number; suspRef?: MutableRefObject<Float32Array>; suspIdx?: number }) {
   const steerG = useRef<THREE.Group>(null);
-  useFrame(() => { if (steerG.current && steerRef) steerG.current.rotation.y = (carIndex === undefined || (G.driving && G.activeCarId === carIndex)) ? steerRef.current * 0.42 : 0; });
+  const rootG = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (steerG.current && steerRef) steerG.current.rotation.y = (carIndex === undefined || (G.driving && G.activeCarId === carIndex)) ? steerRef.current * 0.42 : 0;
+    // Phase 10: per-wheel suspension travel from the C++ vehicle_body
+    // compressions (0.45 = nominal ride) — compressed wheels tuck up
+    // into the arch, extended wheels droop toward the ground.
+    if (rootG.current && suspRef && suspIdx !== undefined) {
+      rootG.current.position.y = r + (suspRef.current[suspIdx] - 0.45) * 0.17;
+    }
+  });
   return (
-    <group position={[x, r, z]}>
+    <group ref={rootG} position={[x, r, z]}>
       <group ref={steerG}>
       <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
         <cylinderGeometry args={[r, r, w, 14]} /><primitive object={TYRE} attach="material" />
@@ -176,6 +185,46 @@ function DirtShell({ kind, liveDamage }: { kind: string; liveDamage?: () => numb
     <RoundedBox args={[s[0], s[1], s[2]]} radius={0.09} smoothness={2} position={[0, s[3], 0]}>
       <primitive object={mat} attach="material" />
     </RoundedBox>
+  );
+}
+
+/** Phase 10: asymmetric crumple — four dent panels (front / back /
+ * left / right) wearing the dirt-scratch texture, each fading in with
+ * ITS side's accumulated impact damage (store: car.dent). Panels sit a
+ * hair proud of the shell and tilt as the dent deepens, so a car that
+ * nose-dived a wall reads bent at the front, not uniformly dirty. */
+function DentPanels({ kind, liveDent }: { kind: string; liveDent?: () => [number, number, number, number] | undefined }) {
+  const mats = useMemo(() => [0, 1, 2, 3].map(() => new THREE.MeshStandardMaterial({
+    map: carDirtTexture(), transparent: true, opacity: 0, roughness: 0.95,
+    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2,
+  })), []);
+  const groups = useRef<Array<THREE.Group | null>>([]);
+  useFrame(() => {
+    const d = liveDent?.();
+    for (let i = 0; i < 4; i++) {
+      const v = d ? d[i] : 0;
+      mats[i].opacity = Math.min(1, v) * 0.92;
+      const g = groups.current[i];
+      if (g) { g.visible = v > 0.02; g.rotation.z = i < 2 ? v * 0.05 : 0; g.rotation.x = i >= 2 ? v * 0.05 : 0; }
+    }
+  });
+  const s = SHELL[kind];
+  if (!s || !liveDent) return null;
+  const [w, h, len, y] = s;
+  const panel = (i: number, pos: [number, number, number], rot: [number, number, number], args: [number, number, number]) => (
+    <group key={i} ref={(n) => { groups.current[i] = n; }} position={pos} rotation={rot} visible={false}>
+      <RoundedBox args={args} radius={0.03} smoothness={2}>
+        <primitive object={mats[i]} attach="material" />
+      </RoundedBox>
+    </group>
+  );
+  return (
+    <group>
+      {panel(0, [0, y, len / 2 + 0.01], [0, 0, 0], [w * 0.82, h * 0.8, 0.05])}
+      {panel(1, [0, y, -len / 2 - 0.01], [0, 0, 0], [w * 0.82, h * 0.8, 0.05])}
+      {panel(2, [w / 2 + 0.01, y, 0], [0, 0, 0], [0.05, h * 0.8, len * 0.5])}
+      {panel(3, [-w / 2 - 0.01, y, 0], [0, 0, 0], [0.05, h * 0.8, len * 0.5])}
+    </group>
   );
 }
 
@@ -396,9 +445,10 @@ export function PlaneBody({ color, carIndex }: { color: string; carIndex?: numbe
   );
 }
 
-export function WedgeBody({ color, carIndex, steerRef, liveDamage, brakeRef, beams, spotLights }: {
+export function WedgeBody({ color, carIndex, steerRef, liveDamage, brakeRef, beams, spotLights, suspRef, liveDent }: {
   color: string; carIndex?: number; steerRef?: MutableRefObject<number>;
   liveDamage?: () => number; brakeRef?: MutableRefObject<boolean>; beams?: boolean; spotLights?: boolean;
+  suspRef?: MutableRefObject<Float32Array>; liveDent?: () => [number, number, number, number] | undefined;
 }) {
   const paint = useMemo(() => paintMaterial(color, 0.35, 0.22), [color]);
   const root = useRef<THREE.Group>(null);
@@ -439,12 +489,13 @@ export function WedgeBody({ color, carIndex, steerRef, liveDamage, brakeRef, bea
       <mesh position={[0.75, 0.74, -2.05]}><boxGeometry args={[0.08, 0.3, 0.08]} /><primitive object={BUMPER} attach="material" /></mesh>
       {doorPanel(-1)}{doorPanel(1)}
       <LightsBumpers w={2.2} len={4.5} y={0.46} />
-      <Wheel x={-1.12} z={1.5} r={0.37} w={0.3} steerRef={steerRef} carIndex={carIndex} />
-      <Wheel x={1.12} z={1.5} r={0.37} w={0.3} steerRef={steerRef} carIndex={carIndex} />
-      <Wheel x={-1.17} z={-1.5} r={0.42} w={0.42} />
-      <Wheel x={1.17} z={-1.5} r={0.42} w={0.42} />
+      <Wheel x={-1.12} z={1.5} r={0.37} w={0.3} steerRef={steerRef} carIndex={carIndex} suspRef={suspRef} suspIdx={0} />
+      <Wheel x={1.12} z={1.5} r={0.37} w={0.3} steerRef={steerRef} carIndex={carIndex} suspRef={suspRef} suspIdx={1} />
+      <Wheel x={-1.17} z={-1.5} r={0.42} w={0.42} suspRef={suspRef} suspIdx={2} />
+      <Wheel x={1.17} z={-1.5} r={0.42} w={0.42} suspRef={suspRef} suspIdx={3} />
       <ArchesSkirts w={2.25} len={4.5} r={0.4} />
       <DirtShell kind="wedge" liveDamage={liveDamage} />
+      <DentPanels kind="wedge" liveDent={liveDent} />
       {(beams || spotLights || brakeRef) ? <CarFx kind="wedge" carIndex={carIndex} brakeRef={brakeRef} beams={beams} spotLights={spotLights} /> : null}
     </group>
   );
@@ -454,9 +505,10 @@ export function WedgeBody({ color, carIndex, steerRef, liveDamage, brakeRef, bea
  * hypercar. Smooth teardrop canopy, flush surfaces, and an ACTIVE rear
  * wing that rises + tilts with road speed (player fleet; parked and
  * showpiece cars keep it stowed). */
-export function HyperBody({ color, carIndex, steerRef, liveDamage, brakeRef, beams, spotLights }: {
+export function HyperBody({ color, carIndex, steerRef, liveDamage, brakeRef, beams, spotLights, suspRef, liveDent }: {
   color: string; carIndex?: number; steerRef?: MutableRefObject<number>;
   liveDamage?: () => number; brakeRef?: MutableRefObject<boolean>; beams?: boolean; spotLights?: boolean;
+  suspRef?: MutableRefObject<Float32Array>; liveDent?: () => [number, number, number, number] | undefined;
 }) {
   const paint = useMemo(() => paintMaterial(color, 0.4, 0.18), [color]);
   const wing = useRef<THREE.Group>(null);
@@ -484,22 +536,24 @@ export function HyperBody({ color, carIndex, steerRef, liveDamage, brakeRef, bea
       </group>
       <LightsBumpers w={2.2} len={4.4} y={0.47} />
       <Mirrors w={2.2} y={0.8} z={0.5} />
-      <Wheel x={-1.1} z={1.48} r={0.38} w={0.3} steerRef={steerRef} carIndex={carIndex} />
-      <Wheel x={1.1} z={1.48} r={0.38} w={0.3} steerRef={steerRef} carIndex={carIndex} />
-      <Wheel x={-1.12} z={-1.48} r={0.43} w={0.44} />
-      <Wheel x={1.12} z={-1.48} r={0.43} w={0.44} />
+      <Wheel x={-1.1} z={1.48} r={0.38} w={0.3} steerRef={steerRef} carIndex={carIndex} suspRef={suspRef} suspIdx={0} />
+      <Wheel x={1.1} z={1.48} r={0.38} w={0.3} steerRef={steerRef} carIndex={carIndex} suspRef={suspRef} suspIdx={1} />
+      <Wheel x={-1.12} z={-1.48} r={0.43} w={0.44} suspRef={suspRef} suspIdx={2} />
+      <Wheel x={1.12} z={-1.48} r={0.43} w={0.44} suspRef={suspRef} suspIdx={3} />
       <ArchesSkirts w={2.22} len={4.4} r={0.4} />
       <DirtShell kind="hyper" liveDamage={liveDamage} />
+      <DentPanels kind="hyper" liveDent={liveDent} />
       {(beams || spotLights || brakeRef) ? <CarFx kind="hyper" carIndex={carIndex} brakeRef={brakeRef} beams={beams} spotLights={spotLights} /> : null}
     </group>
   );
 }
 
-export default function CarBody({ kind, color, police, steerRef, liveDamage, brokenWindow, interior, carIndex, brakeRef, beams, spotLights }: {
+export default function CarBody({ kind, color, police, steerRef, liveDamage, brokenWindow, interior, carIndex, brakeRef, beams, spotLights, suspRef, liveDent }: {
   kind: CarKind; color: string; police?: boolean;
   steerRef?: MutableRefObject<number>; liveDamage?: () => number;
   brokenWindow?: boolean; interior?: boolean; carIndex?: number;
   brakeRef?: MutableRefObject<boolean>; beams?: boolean; spotLights?: boolean;
+  suspRef?: MutableRefObject<Float32Array>; liveDent?: () => [number, number, number, number] | undefined;
 }) {
   // deep glossy paint: clearcoat physical material on Medium/High (Step 5)
   const paint = useMemo(() => paintMaterial(color), [color]);
@@ -508,18 +562,20 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
   if (kind === "boat") return <BoatBody color={color} />;
   if (kind === "skiff") return <SkiffBody color={color} />;
   if (kind === "plane") return <PlaneBody color={color} carIndex={carIndex} />;
-  if (kind === "wedge") return <WedgeBody color={color} carIndex={carIndex} steerRef={steerRef} liveDamage={liveDamage} brakeRef={brakeRef} beams={beams} spotLights={spotLights} />;
-  if (kind === "hyper") return <HyperBody color={color} carIndex={carIndex} steerRef={steerRef} liveDamage={liveDamage} brakeRef={brakeRef} beams={beams} spotLights={spotLights} />;
+  if (kind === "wedge") return <WedgeBody color={color} carIndex={carIndex} steerRef={steerRef} liveDamage={liveDamage} brakeRef={brakeRef} beams={beams} spotLights={spotLights} suspRef={suspRef} liveDent={liveDent} />;
+  if (kind === "hyper") return <HyperBody color={color} carIndex={carIndex} steerRef={steerRef} liveDamage={liveDamage} brakeRef={brakeRef} beams={beams} spotLights={spotLights} suspRef={suspRef} liveDent={liveDent} />;
   const classic = kind === "classic";
   const glassMat = brokenWindow ? GLASS_BROKEN : interior ? GLASS_CLEAR : GLASS;
   let body: ReactNode = null;
   let wheels: ReactNode = null;
   const wheelSet = (w: number, len: number, r: number, ww: number, rearR?: number, rearW?: number) => (
     <>
-      <Wheel x={-w / 2 - 0.02} z={len / 2 - 0.72} r={r} w={ww} classic={classic} steerRef={steerRef} carIndex={carIndex} />
-      <Wheel x={w / 2 + 0.02} z={len / 2 - 0.72} r={r} w={ww} classic={classic} steerRef={steerRef} carIndex={carIndex} />
-      <Wheel x={-w / 2 - 0.02} z={-len / 2 + 0.72} r={rearR ?? r} w={rearW ?? ww} classic={classic} />
-      <Wheel x={w / 2 + 0.02} z={-len / 2 + 0.72} r={rearR ?? r} w={rearW ?? ww} classic={classic} />
+      {/* creation order = the C++ vehicle_body wheel contract:
+          0 (−x, front) · 1 (+x, front) · 2 (−x, rear) · 3 (+x, rear) */}
+      <Wheel x={-w / 2 - 0.02} z={len / 2 - 0.72} r={r} w={ww} classic={classic} steerRef={steerRef} carIndex={carIndex} suspRef={suspRef} suspIdx={0} />
+      <Wheel x={w / 2 + 0.02} z={len / 2 - 0.72} r={r} w={ww} classic={classic} steerRef={steerRef} carIndex={carIndex} suspRef={suspRef} suspIdx={1} />
+      <Wheel x={-w / 2 - 0.02} z={-len / 2 + 0.72} r={rearR ?? r} w={rearW ?? ww} classic={classic} suspRef={suspRef} suspIdx={2} />
+      <Wheel x={w / 2 + 0.02} z={-len / 2 + 0.72} r={rearR ?? r} w={rearW ?? ww} classic={classic} suspRef={suspRef} suspIdx={3} />
       <ArchesSkirts w={w} len={len} r={r} />
     </>
   );
@@ -667,5 +723,5 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
       </>); wheels = wheelSet(2.0, 3.7, 0.36, 0.25); break;
   }
   const cabin = CABIN_POS[kind];
-  return (<group>{body}{wheels}{interior && cabin ? <CabinInterior y={cabin.y} z={cabin.z} w={cabin.w} steerRef={steerRef} carIndex={carIndex} /> : null}<DirtShell kind={kind} liveDamage={liveDamage} />{(beams || spotLights || brakeRef) ? <CarFx kind={kind} carIndex={carIndex} brakeRef={brakeRef} beams={beams} spotLights={spotLights} /> : null}</group>);
+  return (<group>{body}{wheels}{interior && cabin ? <CabinInterior y={cabin.y} z={cabin.z} w={cabin.w} steerRef={steerRef} carIndex={carIndex} /> : null}<DirtShell kind={kind} liveDamage={liveDamage} /><DentPanels kind={kind} liveDent={liveDent} />{(beams || spotLights || brakeRef) ? <CarFx kind={kind} carIndex={carIndex} brakeRef={brakeRef} beams={beams} spotLights={spotLights} /> : null}</group>);
 }

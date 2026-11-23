@@ -39,6 +39,8 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
   const grounded = useRef(true);
   const animation = useRef<AnimationState>("Idle");
   const wasSwimming = useRef(false);
+  // Phase 10: C++ swim_step state (speed through drag, stroke phase, bob)
+  const swim = useRef({ speed: 0, phase: 0, surge: 1, bob: 0 });
   const [animationLabel, setAnimationLabel] = useState<AnimationState>("Idle");
   const { camera } = useThree();
 
@@ -224,6 +226,19 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         ? direction.multiplyScalar(-analog.y).addScaledVector(right, analog.x)
         : direction.multiplyScalar(forwardInput).addScaledVector(right, sideInput);
 
+      // ---- Phase 10: swim physics from the C++ core (swim_step) —
+      // speed relaxes toward the stroke target through water DRAG (no
+      // instant 0→2.4), the stroke cycle surges it ±14%, and the bob
+      // rides the same cycle. Runs every on-foot frame so a swimmer
+      // who lets go of the keys coasts to a stop instead of freezing.
+      if (swimmingNow) {
+        const stroking = movement.lengthSq() > 0;
+        swim.current.phase += dt * (stroking ? 5.4 : 2.2);
+        const target = stroking ? 2.4 * (analog ? analog.mag : 1) : 0;
+        const ss = fallbackPhysics.swimStep(swim.current.phase, target, swim.current.speed, dt);
+        swim.current.speed = ss.speed; swim.current.surge = ss.surge; swim.current.bob = ss.bob;
+      } else swim.current.speed = 0;
+
       // collision: interiors clamp to the room; open water is free (to a
       // sane offshore limit); the bridge deck is a corridor; everywhere
       // else uses the city blocker map
@@ -287,7 +302,9 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         // Phase 8: an analog stick pushed past 0.92 latches sprint too.
         running = (pressed.has("shift") || (analog !== null && analog.mag > 0.92)) && !swimmingNow && !G.crouched && G.stamina > 2 && !G.exhausted;
         const limp = G.health < 25 && !swimmingNow; // A7: hurt = slow + hunched (pose below)
-        const speed = (swimmingNow ? 2.4 : running ? 8 : 4.2) * (analog ? analog.mag : 1) * (G.crouched && !swimmingNow ? 0.45 : 1) * (limp ? 0.6 : 1) * (G.aiming ? 0.45 : 1);
+        const speed = swimmingNow
+          ? swim.current.speed * swim.current.surge // C++ swim_step output (drag + surge baked in)
+          : (running ? 8 : 4.2) * (analog ? analog.mag : 1) * (G.crouched ? 0.45 : 1) * (limp ? 0.6 : 1) * (G.aiming ? 0.45 : 1);
         // vault trigger: moving into a low spot's edge with Space held
         if (jumpRequested.current && grounded.current && !swimmingNow && !G.interior) {
           for (const s of VAULT_SPOTS) {
@@ -396,8 +413,8 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       root.current.position.copy(positionRef.current);
       root.current.position.y = groundYAt(positionRef.current.x, positionRef.current.z) + positionRef.current.y;
       if (G.swimming) {
-        // prone at the surface, gentle bob
-        root.current.position.y = -0.52 + Math.sin(tNow * 2.1) * 0.06;
+        // prone at the surface, bob from the C++ swim_step stroke cycle
+        root.current.position.y = -0.52 + swim.current.bob;
         root.current.rotation.x = -1.02;
       } else if (dive.current) {
         // Phase 7: head-first pitch through the dive arc

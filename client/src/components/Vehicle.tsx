@@ -3,7 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { PhysicsEngine } from "../physics/GamePhysics";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
-import { isBlocked, FUEL_STATIONS, groundYAt, isWaterAt, BRIDGE, buildings } from "../world";
+import { isBlocked, FUEL_STATIONS, groundYAt, isWaterAt, BRIDGE, buildings, surfaceGripBase, surfaceKindAt } from "../world";
 import { G, addCrime, toast } from "../game/store";
 import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
@@ -28,7 +28,7 @@ import CarBody from "./CarBody";
 
 /** CarBody wrapper that re-renders when the car's window gets smashed
  * (break-ins mutate G.cars outside React). Damage/steer stay ref-driven. */
-function LiveCarBody({ index, steerRef, brakeRef }: { index: number; steerRef: MutableRefObject<number>; brakeRef: MutableRefObject<boolean> }) {
+function LiveCarBody({ index, steerRef, brakeRef, suspRef }: { index: number; steerRef: MutableRefObject<number>; brakeRef: MutableRefObject<boolean>; suspRef: MutableRefObject<Float32Array> }) {
   const [, setTick] = useState(0);
   const last = useRef(`${G.cars[index].brokenWindow}|${G.cars[index].color}`);
   useFrame(() => {
@@ -37,8 +37,17 @@ function LiveCarBody({ index, steerRef, brakeRef }: { index: number; steerRef: M
     if (sig !== last.current) { last.current = sig; setTick((t) => t + 1); }
   });
   const c = G.cars[index];
-  return <CarBody kind={c.kind} color={c.color} carIndex={index} steerRef={steerRef} liveDamage={() => G.cars[index].damage} brokenWindow={c.brokenWindow} interior brakeRef={brakeRef} spotLights />;
+  return <CarBody kind={c.kind} color={c.color} carIndex={index} steerRef={steerRef} liveDamage={() => G.cars[index].damage} liveDent={() => G.cars[index].dent} suspRef={suspRef} brokenWindow={c.brokenWindow} interior brakeRef={brakeRef} spotLights />;
 }
+
+/** Phase 10: [halfWidth, halfLength] per kind for the vehicle_body
+ * wheel-height sampling (matches CarBody's wheel placement). */
+const BODY_DIMS: Record<string, [number, number]> = {
+  sedan: [1.0, 1.85], taxi: [1.0, 1.85], coupe: [1.0, 1.95], hatch: [0.95, 1.6],
+  muscle: [1.05, 2.2], suv: [1.05, 2.1], classic: [1.0, 2.25], pickup: [1.05, 2.05],
+  van: [1.05, 2.1], supercar: [1.1, 2.15], bus: [1.25, 3.5], wedge: [1.15, 2.25],
+  hyper: [1.1, 2.2], gt: [1.0, 2.3], tow: [1.05, 2.05],
+};
 
 export default function Vehicle(p: Props) {
   const groups = useRef<Array<THREE.Group | null>>([]);
@@ -74,6 +83,10 @@ export default function Vehicle(p: Props) {
     return s;
   };
   const alarmRefs = useRef<Array<THREE.Sprite | null>>([]);
+  // ---- Phase 10: per-wheel suspension compressions per fleet car
+  // (written by the C++ vehicle_body step, read by CarBody's wheels) ----
+  const suspRefs = useRef<Array<{ current: Float32Array }>>(G.cars.map(() => ({ current: new Float32Array([0.45, 0.45, 0.45, 0.45]) })));
+  const slipNow = useRef({ slip: 0, kind: "asphalt" as string });
   const eHeld = useRef(false);
   const breakIn = useRef<{ car: number; since: number } | null>(null);
   const alarmBeep = useRef(0);
@@ -290,13 +303,34 @@ export default function Vehicle(p: Props) {
         car.pitch += (targetPitch - car.pitch) * Math.min(1, dt * 4);
         car.roll += (targetRoll - car.roll) * Math.min(1, dt * 4);
       } else {
-        const stepped = physicsRef.current.stepVehicleV2(car.state, throttle, steering, k.has(" "), delta);
+        // ---- Phase 10: surface grip folds weather into the C++ v3
+        // step (dry asphalt 1.0 → wet 0.78 → rain-heavy 0.68; dirt and
+        // sand start lower and dirt goes muddy) ----
+        const surfKind = surfaceKindAt(car.state.x, car.state.z);
+        const weatherF = surfKind === "asphalt" ? 1 - 0.32 * G.rainAmt : surfKind === "dirt" ? 1 - 0.18 * G.rainAmt : 1;
+        const grip = surfaceGripBase(car.state.x, car.state.z) * weatherF;
+        const stepped = physicsRef.current.stepVehicleV3(car.state, throttle, steering, k.has(" "), grip, delta);
         next = stepped.state;
-        // Phase 6 (B5): suspension spring/damper (C++ v3) smooths the
-        // weight transfer instead of the old direct lerp.
-        const sr = physicsRef.current.suspensionResponse((next.speed - prevSpeed) / Math.max(dt, 0.001), steering, next.speed,
-          { pitch: car.pitch, roll: car.roll, pitchVel: car.pitchVel ?? 0, rollVel: car.rollVel ?? 0 }, dt);
-        car.pitch = sr.pitch; car.roll = sr.roll; car.pitchVel = sr.pitchVel; car.rollVel = sr.rollVel;
+        slipNow.current = { slip: stepped.slip, kind: surfKind };
+        // ---- Phase 10: per-wheel suspension + body dynamics (C++
+        // vehicle_body): ground heights sampled under each wheel
+        // (bridge ramps, the parking deck, kerbs of altitude) drive
+        // wheel travel + body pitch/roll/heave springs ----
+        const dims = BODY_DIMS[car.kind] ?? [1.0, 1.85];
+        const sh = Math.sin(car.state.heading), ch = Math.cos(car.state.heading);
+        const baseY = groundYAt(car.state.x, car.state.z);
+        const wz = dims[1] - 0.72;
+        const wheelH = ([[-dims[0], wz], [dims[0], wz], [-dims[0], -wz], [dims[0], -wz]] as const).map(([ox, oz]) => {
+          const wx = car.state.x + ch * ox + sh * oz;
+          const wzz = car.state.z - sh * ox + ch * oz;
+          return groundYAt(wx, wzz) - baseY;
+        }) as [number, number, number, number];
+        const vb = physicsRef.current.vehicleBody(wheelH, (next.speed - prevSpeed) / Math.max(dt, 0.001), steering, next.speed,
+          { pitch: car.pitch, roll: car.roll, heave: car.bodyHeave ?? 0, pitchVel: car.pitchVel ?? 0, rollVel: car.rollVel ?? 0, heaveVel: car.bodyHeaveVel ?? 0 }, dt);
+        car.pitch = vb.pitch; car.roll = vb.roll; car.pitchVel = vb.pitchVel; car.rollVel = vb.rollVel;
+        car.bodyHeave = vb.heave; car.bodyHeaveVel = vb.heaveVel;
+        const susp = suspRefs.current[G.activeCarId];
+        if (susp) susp.current.set(vb.comp);
         // ---- Phase 3: motorcycle character — harder launch, higher top end,
         // tighter turning (heading bias applied post-step, arcade style) ----
         if (car.kind === "motorcycle") {
@@ -338,6 +372,11 @@ export default function Vehicle(p: Props) {
           if (!wasBlocked.current && Math.abs(car.state.speed) > 6) {
             G.eventQueue.push("shake", "hitwall"); G.health = Math.max(0, G.health - 4);
             car.damage = Math.min(100, car.damage + Math.min(18, Math.abs(car.state.speed) * 0.9));
+            // Phase 10: the struck END crumples (front going forward,
+            // back while reversing) — CarBody's dent panels read this
+            car.dent ??= [0, 0, 0, 0];
+            const di = car.state.speed >= 0 ? 0 : 1;
+            car.dent[di] = Math.min(1, car.dent[di] + Math.min(0.45, Math.abs(car.state.speed) * 0.028));
             sfx.crash();
           }
           wasBlocked.current = true;
@@ -403,15 +442,22 @@ export default function Vehicle(p: Props) {
       const k = keys.current;
       const drifting = k.has(" ") && Math.abs(car.state.speed) > 6;
       const burnout = k.has("w") && Math.abs(car.state.speed) < 3 && car.damage < 100 && car.fuel > 0;
-      if (drifting || burnout) {
+      // Phase 10: C++ wheelspin (throttle overcame the surface grip)
+      // smokes too — and off asphalt it throws DUST, not tyre smoke
+      const spinning = slipNow.current.slip > 0.3 && Math.abs(car.state.speed) < 9 && car.damage < 100;
+      if (drifting || burnout || spinning) {
         spawnAcc.current += dt;
         if (skidCd.current <= 0) { sfx.skid(); skidCd.current = 0.55; }
+        const puffColor = slipNow.current.kind === "dirt" || slipNow.current.kind === "grass" ? "#b08b5a"
+          : slipNow.current.kind === "sand" ? "#d9c08a" : "#e8e6e0";
         while (spawnAcc.current > 0.045) {
           spawnAcc.current -= 0.045;
           const h = car.state.heading;
           const side = puffIdx.current % 2 === 0 ? -0.85 : 0.85;
           const puff = puffs.current[puffIdx.current % puffs.current.length];
+          const sp = puffRefs.current[puffIdx.current % puffs.current.length];
           puffIdx.current += 1;
+          if (sp) (sp.material as THREE.SpriteMaterial).color.set(puffColor);
           puff.life = 1;
           puff.x = car.state.x + Math.cos(h) * side - Math.sin(h) * 1.35;
           puff.z = car.state.z - Math.sin(h) * side - Math.cos(h) * 1.35;
@@ -483,7 +529,7 @@ export default function Vehicle(p: Props) {
         g.rotation.set(c.pitch, c.state.heading, c.roll);
         return;
       }
-      g.position.set(c.state.x, groundYAt(c.state.x, c.state.z), c.state.z);
+      g.position.set(c.state.x, groundYAt(c.state.x, c.state.z) + (c.bodyHeave ?? 0), c.state.z);
       if (c.kind === "motorcycle") {
         // bank into turns ∝ steering × speed; wheelie-lite pitch on launch
         const active = G.driving && G.activeCarId === i && !paused;
@@ -510,9 +556,10 @@ export default function Vehicle(p: Props) {
     <>
       {G.cars.map((c, i) => {
         const isActive = G.activeCarId === i;
+        if (!suspRefs.current[i]) suspRefs.current[i] = { current: new Float32Array([0.45, 0.45, 0.45, 0.45]) };
         return (
           <group key={c.id} ref={(n) => { groups.current[i] = n; }} position={[c.state.x, 0, c.state.z]} rotation={[0, c.state.heading, 0]}>
-            <LiveCarBody index={i} steerRef={steerRef} brakeRef={brakeRef} />
+            <LiveCarBody index={i} steerRef={steerRef} brakeRef={brakeRef} suspRef={suspRefs.current[i]} />
             {/* car-alarm flash (break-in alarms, Phase 4) */}
             <sprite ref={(n) => { alarmRefs.current[i] = n; }} position={[0, 1.5, 0]} visible={false}>
               <spriteMaterial map={puffTex} color="#ffd34d" transparent opacity={0.55} depthWrite={false} blending={THREE.AdditiveBlending} />

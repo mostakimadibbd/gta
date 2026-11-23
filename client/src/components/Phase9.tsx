@@ -135,24 +135,28 @@ export default function Phase9() {
   const shards = useRef<Shard[]>(Array.from({ length: 12 }, () => ({ active: false, x: 0, y: -20, z: 0, vx: 0, vy: 0, vz: 0, life: 0 })));
   const shardRefs = useRef<Array<THREE.Mesh | null>>([]);
   const shardCursor = useRef(0);
-  const spawnShards = (x: number, y: number, z: number, color: string, n: number, spread = 2.2) => {
+  const spawnShards = (x: number, y: number, z: number, color: string, n: number, spread = 2.2, dirX = 0, dirZ = 0, power = 0) => {
     for (let k = 0; k < n; k++) {
       const s = shards.current[shardCursor.current % shards.current.length];
       shardCursor.current += 1;
       s.active = true; s.life = 0.9 + Math.random() * 0.5;
       s.x = x; s.y = y; s.z = z;
-      s.vx = (Math.random() - 0.5) * spread; s.vy = 1.5 + Math.random() * 2.4; s.vz = (Math.random() - 0.5) * spread;
+      // Phase 10: shards inherit the impact's direction (thrown
+      // bottle's flight, ramming car's motion) around the random cone
+      s.vx = (Math.random() - 0.5) * spread + dirX * power * (0.5 + Math.random() * 0.6);
+      s.vy = 1.5 + Math.random() * 2.4;
+      s.vz = (Math.random() - 0.5) * spread + dirZ * power * (0.5 + Math.random() * 0.6);
       const m = shardRefs.current[(shardCursor.current - 1) % shards.current.length];
       if (m) (m.material as THREE.MeshStandardMaterial).color.set(color);
     }
   };
-  const breakGlass = (i: number, byPlayer: boolean) => {
+  const breakGlass = (i: number, byPlayer: boolean, dirX = 0, dirZ = 0, power = 0) => {
     if (glassBroken.current.has(i)) return;
     glassBroken.current.add(i);
     const pane = GLASS_PANES[i];
     const m = glassRefs.current[i];
     if (m) m.visible = false;
-    spawnShards(pane.x, 1.2, pane.z, "#bfe3ec", 5, 1.8);
+    spawnShards(pane.x, 1.2, pane.z, "#bfe3ec", 5, 1.8, dirX, dirZ, power);
     sfx.glass();
     if (byPlayer) addCrime("theft"); // witnessed property damage — no instant star
   };
@@ -476,9 +480,11 @@ export default function Phase9() {
         const groundHit = BOTTLE.y <= gy + 0.12;
         if (hitPed >= 0 || hitCar || glassHit >= 0 || groundHit) {
           BOTTLE.active = false;
-          spawnShards(BOTTLE.x, Math.max(BOTTLE.y, gy + 0.25), BOTTLE.z, "#7fae7f", 6);
+          const bvx = BOTTLE.vx, bvz = BOTTLE.vz;
+          const bl = Math.hypot(bvx, bvz) || 1;
+          spawnShards(BOTTLE.x, Math.max(BOTTLE.y, gy + 0.25), BOTTLE.z, "#7fae7f", 6, 2.2, bvx / bl, bvz / bl, Math.min(3, bl * 0.45));
           sfx.glass();
-          if (glassHit >= 0) breakGlass(glassHit, true);
+          if (glassHit >= 0) breakGlass(glassHit, true, bvx / bl, bvz / bl, Math.min(3, bl * 0.45));
           if (hitPed >= 0) {
             const ped = G.peds[hitPed];
             ped.downUntil = t + 3; ped.fleeUntil = t + 6; ped.flinchUntil = t + 0.4;
@@ -504,10 +510,11 @@ export default function Phase9() {
         const m = shardRefs.current[i]; if (!m) return;
         if (!s.active) { m.visible = false; return; }
         m.visible = true;
-        s.vy -= 16 * dt;
-        s.x += s.vx * dt; s.y += s.vy * dt; s.z += s.vz * dt;
+        // Phase 10: same C++ debris_step as the Phase 7 debris pool
+        // (gravity −18, restitution 0.3, ground keep 0.6, rest settle)
         const gy = groundYAt(s.x, s.z) + 0.05;
-        if (s.y < gy) { s.y = gy; s.vy *= -0.3; s.vx *= 0.6; s.vz *= 0.6; }
+        const ns = fallbackPhysics.debrisStep(s, gy, 0.3, 0.6, dt);
+        s.x = ns.x; s.y = ns.y; s.z = ns.z; s.vx = ns.vx; s.vy = ns.vy; s.vz = ns.vz;
         s.life -= dt;
         if (s.life <= 0) s.active = false;
         m.position.set(s.x, s.y, s.z);
@@ -522,7 +529,9 @@ export default function Phase9() {
       if (car && spd > 5 && !frozen) {
         GLASS_PANES.forEach((pane, i) => {
           if (glassBroken.current.has(i)) return;
-          if ((car.state.x - pane.x) ** 2 + (car.state.z - pane.z) ** 2 < 2.1 ** 2) breakGlass(i, true);
+          if ((car.state.x - pane.x) ** 2 + (car.state.z - pane.z) ** 2 < 2.1 ** 2) {
+            breakGlass(i, true, Math.sin(car.state.heading) * Math.sign(car.state.speed), Math.cos(car.state.heading) * Math.sign(car.state.speed), Math.min(5, spd * 0.5));
+          }
         });
         if (scaffold.current.state === "up" && (car.state.x - SCAFFOLD_POS.x) ** 2 + (car.state.z - SCAFFOLD_POS.z) ** 2 < 2.6 ** 2) {
           scaffold.current = { state: "falling", t: 0 };

@@ -452,3 +452,122 @@ can't hold ~27–42 fps.
   dependencies. Build: `tsc --noEmit && vite build` PASS. No C++ or
   Python files were touched this round, so no g++/py_compile re-run
   was required.
+
+## Phase 10 — realism + physics pass (2026-11-23)
+
+No new features this round — the brief was "make it FEEL more
+realistic: more graphics, more physics." Everything below is
+procedural, per the standing all-procedural decision.
+
+### Post-processing, per tier (what each tier actually gets)
+
+| Effect | Low | Medium | High |
+|---|---|---|---|
+| EffectComposer | off (direct render) | on | on |
+| Bloom (threshold 0.6 — only emissives/lights bloom) | — | 0.55 | 0.75 |
+| Hue/saturation + brightness/contrast grade | — | yes | yes |
+| Film grain (Noise 0.035) + Vignette | — | yes | yes |
+| Chromatic aberration (radial, 0.00045 — NEW) | — | yes | yes |
+| SSAO | — | no | yes |
+| SMAA | — | yes | yes |
+
+The composer already renders at the canvas size, so it follows the
+Phase 8 dynamic-resolution ladder step for step; when the adaptive
+tier drops to Low the composer unmounts entirely (the `postFx` +
+`gates.composer` gate), and returns if the tier rises again. Bloom's
+threshold rose 0.55 → 0.6 so lit facades stop blooming and only true
+emissives (streetlight halos, neon, police light bars, headlights)
+glow.
+
+### Sky, night, wet — what closed
+
+- **Chromatic aberration** was the one standard pass the chain was
+  missing; it is radial-modulated so only the frame edges fringe.
+- **Fog colour now follows the day cycle.** Before Phase 10 the fog
+  colour was baked from the theme at scene setup and only its
+  near/far lerped — the haze now darkens with the same scalar as the
+  sky background, so dusk haze and night haze match the dome.
+- **Stars**: 650 points on the dome shell, fading in with night,
+  killed by fog and rain, with a faint twinkle. Clear nights finally
+  read as nights.
+- **Cloud cover follows the weather**: sprite count (4 → 11) and
+  opacity scale with fog/rain amounts; storm clouds drift ~2.6×
+  faster. Cloudy/Storm skies are now visibly heavier than Clear.
+- **Windows at night**: the window system gained a dedicated night
+  emissive map — black except individually lit panes (~17% warm with
+  per-pane brightness and occasional blind shadows, ~6% cool TV
+  light). A facade reads as lived-in rooms, not a uniform glow grid.
+  Day appearance is unchanged (same base texture).
+- **Wet ground**: puddle decals 22 → 30 and their env reflection now
+  strengthens at night (+1.0) and in rain (+0.5), so puddles catch
+  the streetlights; the Phase 3 wet-road roughness behaviour is
+  unchanged and still stacks with this.
+- **Density**: power-line catenaries between the lamp poles along
+  every lamp row in all three districts (one LineSegments draw, sag
+  0.85u), bins 18 → 26, mailboxes 8 → 12 (same instanced meshes), and
+  an 11-palm row along the beach promenade.
+- **Blob contact shadows: deliberately NOT added.** The sun shadow
+  camera follows the player (±55u at 2048²), so peds and cars near
+  the player are already grounded by real shadows; blobs would only
+  double-darken the same contact patch. Recorded here so the skip is
+  a decision, not an omission.
+
+### Physics — the C++ core grew four steps (TS mirrors ship)
+
+- `step_vehicle_v3` — v2 plus a SURFACE GRIP input: asphalt 1.0 dry,
+  ×(1 − 0.32·rain) when wet (0.68 in full rain), dirt 0.72 (the Sable
+  Downs loop), sand 0.55 (beach + Sable Island), grass 0.8. Over-
+  driving the grip produces a slip value: wheelspin smoke (coloured
+  by surface — pale on asphalt, tan on dirt/sand) and dulled launch;
+  handbrake slides widen as grip falls.
+- `vehicle_body` — per-wheel suspension: each wheel's compression
+  comes from the terrain height under that corner, and body pitch /
+  roll / heave are spring-damper states fed by terrain attitude and
+  weight transfer (brake dive, launch squat, cornering lean). The
+  player car gets the full step with real wheel heights; traffic
+  gets the same step with flat wheel heights (attitude + transfer
+  only). Wheels visibly travel ±0.17u in their arches.
+- `debris_step` — one gravity/bounce/settle integrator now shared by
+  the Phase 7 debris pool and the Phase 9 glass shards. Debris and
+  shards inherit the IMPACT direction: prop debris flies along the
+  striking car's heading, bottle shards along the bottle's flight,
+  rammed glass along the ramming car.
+- `swim_step` — swimming has drag (speed relaxes to the stroke
+  target instead of snapping to 2.4), a ±14% stroke surge, and a bob
+  driven by the stroke cycle (the old fixed sine is gone).
+- **Asymmetric crumple**: cars carry a 4-side dent vector
+  [front, back, left, right]; wall hits dent the nose or tail by
+  travel direction, car-to-car hits dent the side facing the other
+  car. Dents render as dark crumpled panels that fade in with depth.
+- **Pedestrian knockback is momentum now**: a struck ped slides
+  along the car's velocity vector (friction-decayed, wall-checked)
+  instead of hopping along their own heading.
+- **Rain splash rings**: 42 pooled expanding rings spawn around the
+  camera focus at a rate scaled by rain amount, and ripple off the
+  swimmer in clear weather. Boat wake foam was verified: it already
+  scales with speed (Phase 3) and is unchanged.
+- Smoke: g++ suite **36 checks, all pass** (14 new). The WASM build
+  was attempted again — emcc is still absent from this environment,
+  so the TypeScript mirrors remain the shipping runtime, exactly as
+  Phases 5–9.
+
+### The ceiling that remains (honest)
+
+Phase 10 closes the *systems* gaps (missing passes, static fog
+colour, uniform windows, flat vehicle bodies, grip-less surfaces).
+What remains is the *asset* ceiling, and it does not move without
+breaking the all-procedural rule: textures are painted canvases and a
+CC0 photo set, characters are stylised-realistic rigs with painted
+faces (not scanned people), there is no PBR material library beyond
+the CC0 set, shadows are one 2048² follow cascade, and physics runs
+in the JS mirror of the C++ core until an Emscripten toolchain
+exists in the build environment. Within a browser tab on free
+hosting, this is the practical realism ceiling — the game should now
+read noticeably more "filmed" (lens, haze, lit windows, body roll,
+grip) even though no individual asset changed resolution.
+
+- **Bundle**: index 2,137.92 kB / gzip 1,361.79 kB (Phase 9:
+  2,125.96 / 1,357.09) — +11.96 kB raw / +4.70 kB gzip; the
+  chromatic-aberration pass was already inside the postprocessing
+  library. CSS unchanged at 51.24 kB; no new dependencies. Build:
+  `tsc --noEmit && vite build` PASS; g++ smoke 36/36 PASS.

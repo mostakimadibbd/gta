@@ -20,6 +20,31 @@ import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 
 // ---------- local canvas textures ----------
+function makeWindowNightTexture(): THREE.CanvasTexture {
+  // Phase 10: the NIGHT emissive layer for the window system — black
+  // except the panes that are actually lit, each with its own tone and
+  // brightness (warm room light, some with a blind shadow; a few cool
+  // TV/LED panes). As emissiveMap over the day texture, a facade at
+  // night reads as individual lived-in rooms, not a uniform glow grid.
+  const c = document.createElement("canvas"); c.width = 96; c.height = 192;
+  const g = c.getContext("2d")!;
+  let s = 4321; const rnd = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+  g.fillStyle = "#000000"; g.fillRect(0, 0, 96, 192);
+  for (let y = 5; y < 182; y += 15) for (let x = 5; x < 88; x += 15) {
+    const r = rnd();
+    if (r < 0.17) { // warm room light, per-pane brightness
+      const b = 0.5 + rnd() * 0.5;
+      g.fillStyle = `rgb(${Math.round(255 * b)},${Math.round(198 * b)},${Math.round(112 * b)})`;
+      g.fillRect(x, y, 8, 9);
+      if (rnd() < 0.35) { g.fillStyle = "rgba(0,0,0,0.4)"; g.fillRect(x, y, 8, 3.4); } // blind shadow
+    } else if (r < 0.23) { // cool TV / LED light
+      const b = 0.35 + rnd() * 0.4;
+      g.fillStyle = `rgb(${Math.round(165 * b)},${Math.round(205 * b)},${Math.round(255 * b)})`;
+      g.fillRect(x, y, 8, 9);
+    }
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
 function makeWindowTexture(): THREE.CanvasTexture {
   // Phase 3: windows with DEPTH — frame shading (lit top edge, dark sill),
   // a glass gradient per pane, and lived-in variance: some panes warm-lit,
@@ -434,6 +459,39 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
   const ambRotor = useRef<THREE.Mesh>(null);
   const domeMat = useRef<THREE.MeshBasicMaterial>(null);
   const winTex = useMemo(makeWindowTexture, []);
+  const winNightTex = useMemo(makeWindowNightTexture, []);
+  // Phase 10: star field — points on the sky dome's upper shell,
+  // opacity driven by night (and killed by fog/rain) in useFrame
+  const starGeo = useMemo(() => {
+    const N = 650; const arr = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const a = srnd() * Math.PI * 2; const y = 0.1 + srnd() * 0.88; const r = Math.sqrt(Math.max(0, 1 - y * y)) * 186;
+      arr[i * 3] = Math.cos(a) * r; arr[i * 3 + 1] = y * 186; arr[i * 3 + 2] = Math.sin(a) * r;
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(arr, 3)); return g;
+  }, []);
+  const starMat = useRef<THREE.PointsMaterial>(null);
+  // Phase 10: power-line catenaries — ONE LineSegments draw spanning
+  // pole to pole along the lamp rows (sag 0.85u, 7 segments per span)
+  const powerLines = useMemo(() => {
+    const pts: number[] = [];
+    const span = (x0: number, z0: number, x1: number, z1: number) => {
+      const SEG = 7, SAG = 0.85, Y = 5.45;
+      for (let i = 0; i < SEG; i++) {
+        const f0 = i / SEG, f1 = (i + 1) / SEG;
+        const y0 = Y - Math.sin(f0 * Math.PI) * SAG, y1 = Y - Math.sin(f1 * Math.PI) * SAG;
+        pts.push(x0 + (x1 - x0) * f0, y0, z0 + (z1 - z0) * f0, x0 + (x1 - x0) * f1, y1, z0 + (z1 - z0) * f1);
+      }
+    };
+    for (const c of ROAD_COORDS) for (let t = -99; t + 22 <= 121; t += 22) span(c + 7, t, c + 7, t + 22);
+    for (const c of CORAL_ROAD_X) for (let t = 206; t + 24 <= 318; t += 24) span(c + 7, t, c + 7, t + 24);
+    for (const c of CORAL_ROAD_Z) for (let t = 34; t + 24 <= 108; t += 24) span(t, c + 7, t + 24, c + 7);
+    for (const c of NORTH_ROAD_X) for (let t = -288; t + 24 <= -194; t += 24) span(c + 7, t, c + 7, t + 24);
+    for (const c of NORTH_ROAD_Z) for (let t = -110; t + 24 <= 30; t += 24) span(t, c + 7, t + 24, c + 7);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pts), 3));
+    return g;
+  }, []);
   const signTex = useMemo(() => SIGNS.map((s) => makeSignTexture(s.text, s.bg, s.fg)), []);
   const hillTex = useMemo(makeHillSignTexture, []);
   const skyTex = useMemo(makeSkyTexture, []);
@@ -579,7 +637,7 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
       if (i % 2) oils.push({ x: c + off, z: along, s: 1.6 + srnd() * 2.4, ry: srnd() * 3 });
       else oils.push({ x: along, z: c + off, s: 1.6 + srnd() * 2.4, ry: srnd() * 3 });
     }
-    for (let i = 0; i < 22; i++) {
+    for (let i = 0; i < 30; i++) {
       const c = ROAD_COORDS[Math.floor(srnd() * 6)]; const along = -105 + srnd() * 210; const off = (srnd() - 0.5) * 6.5;
       if (i % 2) puddles.push({ x: c + off, z: along, s: 1.8 + srnd() * 2.2, sy: 1.2 + srnd() * 1.6, ry: srnd() * 3 });
       else puddles.push({ x: along, z: c + off, s: 1.8 + srnd() * 2.2, sy: 1.2 + srnd() * 1.6, ry: srnd() * 3 });
@@ -614,11 +672,11 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
       tufts.push({ p: [x, 0.14, z], s: [0.8 + srnd() * 0.9, 0.8 + srnd() * 1.1, 0.8 + srnd() * 0.9] });
     }
     const bins: XForm[] = []; const mails: XForm[] = []; const planters: XForm[] = []; const planterBush: XForm[] = [];
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0; i < 26; i++) { // Phase 10: denser street furniture
       const c = ROAD_COORDS[i % 6]; const along = -102 + ((i * 41) % 204); const side = i % 2 ? 7.7 : -7.7;
       if (i % 2) bins.push({ p: [c + side, 0.42, along], s: [1, 1, 1] }); else bins.push({ p: [along, 0.42, c + side], s: [1, 1, 1] });
     }
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 12; i++) {
       const c = ROAD_COORDS[(i + 2) % 6]; const along = -88 + ((i * 53) % 176); const side = i % 2 ? -7.7 : 7.7;
       if (i % 2) mails.push({ p: [along, 0.5, c + side], s: [1, 1, 1] }); else mails.push({ p: [c + side, 0.5, along], s: [1, 1, 1] });
     }
@@ -764,9 +822,12 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
       }`,
   }), []);
   const winMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: "#ffffff", emissive: new THREE.Color(theme.windowGlow), emissiveMap: winTex, map: winTex,
-    emissiveIntensity: 0.25 + night * 1.3, roughness: 0.85,
-  }), [winTex, theme.windowGlow, night]);
+    // Phase 10: the emissive map is now the dedicated NIGHT layer —
+    // only individually lit panes glow (warm/cool, per-pane
+    // brightness); the day map is unchanged underneath
+    color: "#ffffff", emissive: new THREE.Color("#fff4e0"), emissiveMap: winNightTex, map: winTex,
+    emissiveIntensity: 0.05 + night * 1.55, roughness: 0.85,
+  }), [winTex, winNightTex, night]);
   const containerMat = useMemo(() => CONTAINER_COLORS.map((col, i) =>
     // Phase 5: every other container wears the corrugated-steel canvas so
     // the port reads as ridged metal, not painted boxes.
@@ -850,8 +911,10 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
     mats.asphaltH.roughness = rough;
     mats.asphaltV.metalness = 0.04 + night * 0.1 + G.rainAmt * 0.12;
     mats.asphaltH.metalness = mats.asphaltV.metalness;
-    // rain puddles fade in with the weather (Phase 3)
+    // rain puddles fade in with the weather (Phase 3); Phase 10: their
+    // env reflection strengthens at night so they catch the streetlights
     puddleMat.opacity = G.rainAmt * 0.88;
+    puddleMat.envMapIntensity = 1.3 + night * 1.0 + G.rainAmt * 0.5;
     // sun disc + warm glow riding the day cycle (low amber disc at dusk)
     if (sunDiscRef.current) {
       const ang = G.dayTime * Math.PI * 2 - Math.PI / 2;
@@ -873,8 +936,18 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
       base.lerp(new THREE.Color("#5d6a76"), G.fogAmt * 0.55 + G.rainAmt * 0.3);
       base.multiplyScalar(1 - night * 0.5);
       cloudMaterial.color.copy(base);
-      cloudMaterial.opacity = 0.5 + G.fogAmt * 0.25;
-      if (cloudGroup.current) cloudGroup.current.position.x = (t * 0.55) % 30;
+      // Phase 10: cloud COVER follows the weather — clear skies show a
+      // few drifters, storms pack the dome and move faster
+      cloudMaterial.opacity = THREE.MathUtils.clamp(0.4 + G.fogAmt * 0.3 + G.rainAmt * 0.34, 0, 0.94);
+      if (cloudGroup.current) {
+        const cover = Math.round(4 + THREE.MathUtils.clamp(G.fogAmt + G.rainAmt, 0, 1.6) / 1.6 * 7);
+        cloudGroup.current.children.forEach((ch, i) => { ch.visible = i < cover; });
+        cloudGroup.current.position.x = (t * (0.55 + G.rainAmt * 0.9)) % 30;
+      }
+    }
+    // Phase 10: stars fade in with the night, killed by fog and rain
+    if (starMat.current) {
+      starMat.current.opacity = Math.max(0, night * (1 - G.fogAmt * 0.85 - G.rainAmt * 0.4)) * (0.9 + 0.1 * Math.sin(t * 2.7)) * 0.95;
     }
     // streetlight glow halos (one Points draw): stronger on wet nights
     if (lampGlowMat.current) lampGlowMat.current.opacity = night * (0.3 + G.rainAmt * 0.3);
@@ -905,6 +978,14 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
           </sprite>
         ))}
       </group>
+      {/* Phase 10: star field (opacity follows the night in useFrame) */}
+      <points geometry={starGeo} frustumCulled={false}>
+        <pointsMaterial ref={starMat} map={glowTexW} color="#dfe9ff" size={1.5} sizeAttenuation={false} transparent opacity={0} depthWrite={false} blending={THREE.AdditiveBlending} fog={false} />
+      </points>
+      {/* Phase 10: power-line catenaries between the lamp poles */}
+      <lineSegments geometry={powerLines} frustumCulled={false}>
+        <lineBasicMaterial color="#14171a" transparent opacity={0.8} />
+      </lineSegments>
       {/* streetlight halos — single Points draw, opacity driven at night */}
       <points geometry={lampGlowGeo} frustumCulled={false}>
         <pointsMaterial ref={lampGlowMat} map={glowTexW} color={theme.lampGlow} size={6} transparent opacity={0} depthWrite={false} blending={THREE.AdditiveBlending} sizeAttenuation />
@@ -1133,6 +1214,11 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
       ))}
       {trees.map((t, i) => <Tree key={i} {...t} />)}
       {palms.map((pl, i) => <PalmTree key={i} {...pl} />)}
+      {/* Phase 10 density: a palm row along the beach promenade filling
+          the gaps in the generated scatter (visual only, like all palms) */}
+      {[-102, -88, -61, -47, -26, -6, 15, 35, 48, 76, 103].map((x, i) => (
+        <PalmTree key={`bp${i}`} x={x} z={109.5} scale={0.95 + (i % 3) * 0.12} lean={(i % 2 ? -1 : 1) * 0.06} />
+      ))}
       {/* street lamps */}
       {lamps.map(([x, y, z], i) => (
         <group key={i} position={[x, y, z]}>

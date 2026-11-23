@@ -131,6 +131,21 @@ corrupt harbour boss's debt ledger.
   topics — the two remaining ⬜ are trains (no rail network in the
   city plan) and seasons/snow (a subtropical harbour city with no
   winter art set), each with its reason stated in the ledger.
+- **Phase 10 — realism + physics pass** (no new features): the
+  post chain gains **radial chromatic aberration** and a stricter
+  bloom threshold; **fog colour follows the day cycle**; **stars**
+  fade in on clear nights; **cloud cover thickens with the weather**;
+  building windows get a **per-pane night emissive layer** (warm and
+  cool lit rooms, most dark); puddles reflect harder at night;
+  **power lines** sag between the lamp poles; and the C++ core grows
+  four steps — **per-wheel suspension** with visible wheel travel and
+  body pitch/roll/heave, **surface grip** (wet asphalt, dirt, sand —
+  with wheelspin smoke and wider wet handbrake slides),
+  **impact-directed debris** with **asymmetric car crumple**, and
+  **swim drag + stroke bob**. Pedestrian knockback now follows the
+  car's momentum, and rain throws up **splash rings**. Full per-tier
+  effect table and the remaining realism ceiling: docs/VISUAL_AUDIT.md
+  (Phase 10 section).
 
 ## Personal themes
 
@@ -220,8 +235,11 @@ tier with a toast) — picking a tier yourself turns the auto-drop off
 for the session. A **Show FPS** readout lives in the same two places.
 Override any time in **Pause → Graphics** or **Phone → Settings**.
 Low = no post-processing, 1024px shadows, procedural textures only.
-Medium = film grade, real CC0 photo textures at 512px, shader water.
+Medium = film grade (bloom, grain, vignette, radial chromatic
+aberration, SMAA), real CC0 photo textures at 512px, shader water.
 High = + SSAO, stronger bloom, CC0 at full size, softer shadows.
+The composer renders at canvas size, so it follows the dynamic-
+resolution ladder; dropping to Low unmounts it entirely.
 Dialogue is fully subtitled (cinematic letterbox + typewriter);
 subtitle size/background, ambient barks and the letterbox bars are
 adjustable in the same two places.
@@ -347,3 +365,12 @@ Unsigned installers may trigger SmartScreen/Gatekeeper first-run prompts.
   data, not the open internet. Wrecks, smashed glass and broken props
   persist for the current game day only (the daily tick repairs the
   city) — see BLUEPRINT §15 for the full per-topic ledger.
+- Phase 10 honesty: suspension, grip, debris and swim physics are
+  authored in the C++ core with exact TypeScript mirrors (g++ smoke
+  36/36) — the WASM binary still has not been compiled (no Emscripten
+  in the build environment), so the mirrors are the runtime, as
+  before. Car crumple is four dent panels faded by impact depth, not
+  mesh deformation. Blob contact shadows were deliberately skipped:
+  the follow shadow camera already grounds everything near the
+  player. The realism ceiling is asset-bound (procedural/CC0 only) —
+  see the Phase 10 section of docs/VISUAL_AUDIT.md.

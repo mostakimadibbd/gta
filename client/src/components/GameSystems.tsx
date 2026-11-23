@@ -316,6 +316,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   // Phase 4: per-car steering refs (front-wheel visuals) + traffic honks +
   // a frame counter for the far-ped animation tick skip (Visual V7)
   const trafficSteerRefs = useMemo(() => G.traffic.map(() => ({ current: 0 })), []);
+  // Phase 10: per-traffic-car C++ vehicle_body state (flat heights =
+  // the cheap version: weight transfer only, no wheel sampling)
+  const trafficBodyRefs = useRef<Array<{ pitch: number; roll: number; heave: number; pitchVel: number; rollVel: number; heaveVel: number }>>([]);
   const trafficBrakeRefs = useRef<Array<{ current: boolean }>>(G.traffic.map(() => ({ current: false })));
   const copSteerRefs = useMemo(() => G.cops.map(() => ({ current: 0 })), []);
   const honkCd = useRef(0);
@@ -345,6 +348,14 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     if (amb.current) amb.current.intensity = theme.ambient * (1 - night * 0.45) + G.lightning * 1.7;
     if (hemi.current) hemi.current.intensity = 1.05 * (1 - night * 0.5);
     if (scene.background instanceof THREE.Color) scene.background.copy(bg).multiplyScalar((1 - night * 0.55) * (1 - G.rainAmt * 0.22) + G.lightning * 0.35);
+    // Phase 10: fog colour rides the SAME day-cycle curve as the sky
+    // background — distance haze now darkens into night and greys with
+    // rain instead of staying at the theme's noon tint (Weather.tsx
+    // still owns the near/far distances; the water shader reads this
+    // colour every frame, so the bay haze matches too)
+    if (scene.fog instanceof THREE.Fog) {
+      scene.fog.color.copy(fogC).multiplyScalar(Math.max(0.05, (1 - night * 0.55) * (1 - G.rainAmt * 0.22) + G.lightning * 0.35));
+    }
     if (paused || G.dialogueActive || G.status) {
       // still render positions below? No: freeze gameplay while paused/dialogue/status.
       syncMeshes(t); return;
@@ -509,8 +520,15 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         }
       } else if (Math.abs(car.x) > 112 || Math.abs(car.z) > 112) { car.dir = (car.dir * -1) as 1 | -1; car.lane = car.dir > 0 ? 2.8 : -2.8; car.heading = headingFor(car.axis, car.dir); car.x = THREE.MathUtils.clamp(car.x, -110, 110); car.z = THREE.MathUtils.clamp(car.z, -110, 110); }
       car.heading = headingFor(car.axis, car.dir);
-      // presentation: pitch from acceleration, wheel steer decays after turns
-      car.pitch += (THREE.MathUtils.clamp(-(car.speed - prevSpeed) / Math.max(dt, 0.001) * 0.0028, -0.05, 0.055) - car.pitch) * Math.min(1, dt * 6);
+      // presentation: Phase 10 — body motion from the C++ vehicle_body
+      // (flat wheel heights: traffic gets weight-transfer pitch/roll
+      // with real spring lag, not the old direct pitch lerp)
+      const bs = (trafficBodyRefs.current[ti] ??= { pitch: 0, roll: 0, heave: 0, pitchVel: 0, rollVel: 0, heaveVel: 0 });
+      const vb = (physicsRef.current ?? fallbackPhysics).vehicleBody([0, 0, 0, 0],
+        (car.speed - prevSpeed) / Math.max(dt, 0.001), car.steerVis, car.speed, bs, dt);
+      bs.pitch = vb.pitch; bs.roll = vb.roll; bs.heave = vb.heave;
+      bs.pitchVel = vb.pitchVel; bs.rollVel = vb.rollVel; bs.heaveVel = vb.heaveVel;
+      car.pitch = vb.pitch; car.roll = vb.roll;
       car.steerVis += (0 - car.steerVis) * Math.min(1, dt * 5);
       if (trafficSteerRefs[ti]) trafficSteerRefs[ti].current = car.steerVis;
       if (trafficBrakeRefs.current[ti]) trafficBrakeRefs.current[ti].current = wantStop || car.speed < 1.5;
@@ -530,6 +548,16 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     const phys = physicsRef.current ?? fallbackPhysics;
     for (const ped of G.peds) {
       if (!ped.active) { ped.speed = 0; continue; }
+      // Phase 10: car-hit knock slide — the impact's momentum carries
+      // the ped (even while down) and bleeds off fast; walls stop it
+      if (ped.kvx || ped.kvz) {
+        const nx = ped.x + (ped.kvx ?? 0) * dt, nz = ped.z + (ped.kvz ?? 0) * dt;
+        if (!isBlocked(nx, nz, 0.4)) { ped.x = nx; ped.z = nz; }
+        const decay = Math.exp(-3.2 * dt);
+        ped.kvx = (ped.kvx ?? 0) * decay; ped.kvz = (ped.kvz ?? 0) * decay;
+        if (Math.abs(ped.kvx) < 0.05) ped.kvx = 0;
+        if (Math.abs(ped.kvz) < 0.05) ped.kvz = 0;
+      }
       // knocked down (punch/gunfire): lies still, then gets up and flees
       if (t < ped.downUntil) { ped.speed = 0; continue; }
       const threatD2 = (ped.x - px) ** 2 + (ped.z - pz) ** 2;
@@ -628,7 +656,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       if (G.driving && hitCooldown.current <= 0 && threatD2 < 2.2 ** 2 && pSpeed > 4) {
         hitCooldown.current = 1.5; ped.fleeUntil = t + 4; addCrime("ped"); cb.current.event("shake"); sfx.thud();
         const mine = G.cars[G.activeCarId]; if (mine) mine.damage = Math.min(100, mine.damage + 3);
-        ped.x += Math.sin(ped.heading) * 2; // knocked aside (arcade, non-graphic)
+        // Phase 10: the ped falls AWAY FROM the car's motion — knock
+        // velocity along the car's velocity vector (was: a fixed hop
+        // along the ped's own heading, which read as teleporting)
+        if (mine) {
+          ped.kvx = Math.sin(mine.state.heading) * pSpeed * 0.55;
+          ped.kvz = Math.cos(mine.state.heading) * pSpeed * 0.55;
+        }
         // Phase 9 ragdoll-lite: the ped goes down and FLAILS for a beat
         // (procedural limbs, no solver) before the usual get-up-and-run
         ped.downUntil = t + 2.2; ped.flailUntil = t + 1.2;
@@ -723,7 +757,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const physEng = physicsRef.current ?? fallbackPhysics;
       const myR = mine.kind === "motorcycle" ? 1.0 : 1.55;
       const toBody = (x: number, z: number, heading: number, speed: number, r: number) => ({ x, z, vx: Math.sin(heading) * speed, vz: Math.cos(heading) * speed, radius: r });
-      const applyHit = (res: { a: { x: number; z: number; vx: number; vz: number }; damage: number }, otherDamage: (d: number) => void, crimeKind: boolean) => {
+      const applyHit = (res: { a: { x: number; z: number; vx: number; vz: number }; damage: number }, otherDamage: (d: number) => void, crimeKind: boolean, ox?: number, oz?: number) => {
         if (res.damage <= 0.4) { // positional overlap only — still separate
           mine.state.x = res.a.x; mine.state.z = res.a.z;
           return;
@@ -731,6 +765,17 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         mine.state.x = res.a.x; mine.state.z = res.a.z;
         mine.state.speed = res.a.vx * Math.sin(mine.state.heading) + res.a.vz * Math.cos(mine.state.heading);
         mine.damage = Math.min(100, mine.damage + res.damage);
+        // Phase 10: crumple the side that actually took the hit —
+        // project the other body onto my forward/right axes
+        if (ox !== undefined && oz !== undefined) {
+          mine.dent ??= [0, 0, 0, 0];
+          const mh = mine.state.heading;
+          const dx = ox - mine.state.x, dz = oz - mine.state.z;
+          const f = dx * Math.sin(mh) + dz * Math.cos(mh);
+          const r = dx * Math.cos(mh) - dz * Math.sin(mh);
+          const di = Math.abs(f) >= Math.abs(r) ? (f >= 0 ? 0 : 1) : (r >= 0 ? 2 : 3);
+          mine.dent[di] = Math.min(1, mine.dent[di] + Math.min(0.5, res.damage * 0.02));
+        }
         otherDamage(res.damage * 0.8);
         if (crashCd.current <= 0) {
           crashCd.current = 0.4;
@@ -748,7 +793,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           tc.x = res.b.x; tc.z = res.b.z;
           tc.speed = Math.max(0, Math.min(13, res.b.vx * Math.sin(tc.heading) + res.b.vz * Math.cos(tc.heading)));
           if (res.damage > 4) { tc.stopped = Math.max(tc.stopped, 1.6); tc.fleeing = 3; }
-          applyHit(res, (d) => { tc.damage = Math.min(100, tc.damage + d); }, true);
+          applyHit(res, (d) => { tc.damage = Math.min(100, tc.damage + d); }, true, tc.x, tc.z);
         }
       }
       for (const cop of G.cops) {
@@ -757,7 +802,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         const res = physEng.resolveVehicleCollisionV2(me(), toBody(cop.x, cop.z, cop.heading, cop.speed, 1.55));
         cop.x = res.b.x; cop.z = res.b.z;
         cop.speed = Math.max(0, Math.min(25, res.b.vx * Math.sin(cop.heading) + res.b.vz * Math.cos(cop.heading)));
-        applyHit(res, () => undefined, false);
+        applyHit(res, () => undefined, false, cop.x, cop.z);
       }
       G.cars.forEach((other, oi) => {
         if (oi === G.activeCarId || other.state.speed !== 0) return;
@@ -1095,7 +1140,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     }
     function syncMeshes(tt: number) {
       frameNo.current += 1;
-      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.visible = !c.dormant; g.position.set(c.x, groundYAt(c.x, c.z), c.z); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, 0); } });
+      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.visible = !c.dormant; g.position.set(c.x, groundYAt(c.x, c.z), c.z); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, c.roll ?? 0); } });
       const reportT = performance.now() / 1000;
       G.peds.forEach((pd, i) => {
         const g = pedRefs.current[i]; if (!g) return;

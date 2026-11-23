@@ -150,6 +150,28 @@ export function groundYAt(x: number, z: number): number {
 }
 export const onBridge = (x: number, z: number) => groundYAt(x, z) > 0.05;
 export const inCoral = (x: number, z: number) => x >= CORAL.x0 && x <= CORAL.x1 && z >= CORAL.z0 && z <= CORAL.z1;
+/** Phase 10: driving surface under a point — the C++ vehicle step's
+ * grip multiplier starts here (weather folds in at the call site).
+ *   asphalt 1.0 · dirt (Sable Downs loop) 0.72 · grass infield 0.8 ·
+ *   sand (Lantern Beach band + Sable Island) 0.55 */
+export type SurfaceKind = "asphalt" | "dirt" | "grass" | "sand";
+export function surfaceKindAt(x: number, z: number): SurfaceKind {
+  const dd = Math.hypot(x + 78, z + 78); // Sable Downs ring, centre (−78, −78)
+  if (dd >= 13 && dd <= 20.5) return "dirt";
+  if (dd < 13) return "grass";
+  if (onIsland(x, z)) return "sand";
+  if (z >= 113 && z <= WATER_Z + 2 && Math.abs(x) <= WORLD_BOUND && !onBridge(x, z)) return "sand";
+  return "asphalt";
+}
+export function surfaceGripBase(x: number, z: number): number {
+  switch (surfaceKindAt(x, z)) {
+    case "dirt": return 0.72;
+    case "grass": return 0.8;
+    case "sand": return 0.55;
+    default: return 1.0;
+  }
+}
+
 /** Open water (swimmable; blocks cars). Land = Port Sable shore, Coral landmass, or the bridge deck. */
 export function isWaterAt(x: number, z: number): boolean {
   if (onBridge(x, z)) return false;

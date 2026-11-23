@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type RefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation, SSAO } from "@react-three/postprocessing";
+import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation, SSAO, ChromaticAberration } from "@react-three/postprocessing";
 import * as THREE from "three";
 import Collectibles from "./components/Collectibles";
 import GameSystems, { type SysCallbacks } from "./components/GameSystems";
@@ -69,6 +69,10 @@ function EnvSetup({ theme, quality }: { theme: GameTheme; quality: QualityTier }
   }, [gl, scene, theme, quality]);
   return null;
 }
+
+// Phase 10: chromatic aberration offset (radial modulation keeps the
+// centre clean; ~0.45% of the half-frame at the corners)
+const CA_OFFSET = new THREE.Vector2(0.00045, 0.00045);
 
 const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
 const tmpV = new THREE.Vector3();
@@ -1018,11 +1022,15 @@ export default function App() {
           {postFx && gates.composer(quality) && (
             <EffectComposer multisampling={0}>
               <>
-                <Bloom intensity={gates.bloom(quality)} luminanceThreshold={0.55} luminanceSmoothing={0.25} mipmapBlur />
+                <Bloom intensity={gates.bloom(quality)} luminanceThreshold={0.6} luminanceSmoothing={0.25} mipmapBlur />
                 <HueSaturation saturation={0.08} />
                 <BrightnessContrast contrast={0.06} brightness={0.01} />
                 <Noise opacity={0.035} />
                 <Vignette darkness={0.22} offset={0.28} />
+                {/* Phase 10: a whisper of lens chromatic aberration at
+                    the frame edges (radial, so the centre stays clean) —
+                    the last "camera, not viewport" cue in the chain */}
+                <ChromaticAberration offset={CA_OFFSET} radialModulation modulationOffset={0.42} />
                 {gates.ssao(quality) && (
                   <SSAO worldDistanceThreshold={80} worldDistanceFalloff={40} worldProximityThreshold={6} worldProximityFalloff={3}
                     radius={0.22} intensity={1.1} luminanceInfluence={0.35} samples={16} rings={4} />

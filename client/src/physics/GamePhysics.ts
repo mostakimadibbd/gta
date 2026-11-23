@@ -2,6 +2,9 @@ export interface VehicleState { x: number; z: number; heading: number; speed: nu
 export interface PedState { x: number; z: number; heading: number; speed: number; }
 
 export interface VehicleStepV2 { state: VehicleState; pitch: number; roll: number; grip: number; }
+export interface VehicleStepV3 { state: VehicleState; pitch: number; roll: number; grip: number; slip: number; }
+export interface VehicleBodyState { pitch: number; roll: number; heave: number; pitchVel: number; rollVel: number; heaveVel: number; }
+export interface VehicleBodyStep extends VehicleBodyState { comp: [number, number, number, number]; }
 export interface BodyCircle { x: number; z: number; vx: number; vz: number; radius: number; }
 
 export interface PhysicsEngine {
@@ -22,6 +25,11 @@ export interface PhysicsEngine {
   losSampled(ox: number, oz: number, tx: number, tz: number, blockers: { x: number; z: number; hw: number; hd: number }[]): number;
   boatBuoyancy(phase: number, speed: number, waveAmp: number): { bob: number; pitch: number; roll: number };
   racePace(playerDist: number, oppDist: number, baseTop: number, rubber: number): number;
+  // Phase 10 — realism + physics round
+  stepVehicleV3(state: VehicleState, throttle: number, steering: number, handbrake: boolean, surfaceGrip: number, deltaTime: number): VehicleStepV3;
+  vehicleBody(heights: [number, number, number, number], accel: number, steer: number, speed: number, prev: VehicleBodyState, dt: number): VehicleBodyStep;
+  debrisStep(p: { x: number; y: number; z: number; vx: number; vy: number; vz: number }, groundY: number, restitution: number, groundKeep: number, dt: number): { x: number; y: number; z: number; vx: number; vy: number; vz: number };
+  swimStep(phase: number, targetSpeed: number, prevSpeed: number, dt: number): { speed: number; surge: number; bob: number };
   source: "wasm" | "typescript";
 }
 
@@ -257,6 +265,80 @@ export const fallbackPhysics: PhysicsEngine = {
   racePace(playerDist, oppDist, baseTop, rubber) {
     return baseTop + clamp((playerDist - oppDist) * 0.014, -rubber, rubber);
   },
+  // --- Phase 10: exact TS mirrors of the realism-round C++ exports -------
+  stepVehicleV3(state, throttle, steering, handbrake, surfaceGrip, deltaTime) {
+    const dt = clamp(deltaTime, 0, 0.1);
+    const gas = clamp(throttle, -1, 1);
+    const steer = clamp(steering, -1, 1);
+    const sg = clamp(surfaceGrip, 0.3, 1.1);
+    const prevSpeed = state.speed;
+    let grip = clamp(1.12 - Math.abs(state.speed) / 34, 0.74, 1.05) * sg;
+    let slip = 0;
+    if (gas > 0.05) {
+      const demand = gas * 18;
+      const capacity = 15.5 * grip;
+      slip = clamp((demand - capacity) / 9, 0, 1);
+      if (Math.abs(state.speed) > 9) slip *= 0.25;
+    }
+    const accelScale = (0.5 + 0.5 * sg) * (1 - 0.45 * slip);
+    let speed = state.speed + gas * (gas >= 0 ? 18 : 8) * (gas >= 0 ? accelScale : 1) * dt;
+    speed *= Math.max(0, 1 - (handbrake ? 5.5 : 0.65) * dt);
+    if (gas === 0 && Math.abs(speed) < 0.12) speed = 0;
+    speed = clamp(speed, -8, 24);
+    const accel = dt > 0.0001 ? (speed - prevSpeed) / dt : 0;
+    let turnGrip = grip;
+    if (handbrake) turnGrip *= 0.58 * (0.72 + 0.28 * sg);
+    const speedFactor = clamp(Math.abs(speed) / 4, 0.18, 1);
+    const heading = wrap(state.heading + steer * 2.2 * speedFactor * turnGrip * dt * (speed < 0 ? -1 : 1));
+    const pitch = clamp(-accel * 0.0028, -0.055, 0.06);
+    const roll = clamp(steer * Math.abs(speed) * 0.0042, -0.095, 0.095) * (handbrake ? 0.55 : 1) * (speed < 0 ? -1 : 1);
+    return {
+      state: { x: state.x + Math.sin(heading) * speed * dt, z: state.z + Math.cos(heading) * speed * dt, heading, speed },
+      pitch, roll, grip, slip,
+    };
+  },
+  vehicleBody(heights, accel, steer, speed, prev, dtRaw) {
+    const dt = clamp(dtRaw, 0, 0.1);
+    const h = heights;
+    const comp = h.map((v) => clamp(0.45 + v * 1.5, 0.02, 0.98)) as [number, number, number, number];
+    const front = (h[0] + h[1]) * 0.5, rear = (h[2] + h[3]) * 0.5;
+    const left = (h[1] + h[3]) * 0.5, right = (h[0] + h[2]) * 0.5;
+    const avg = (front + rear) * 0.5;
+    const targetPitch = clamp((rear - front) * 0.16, -0.14, 0.14) + clamp(-accel * 0.0028, -0.055, 0.06);
+    const targetRoll = clamp((left - right) * 0.16, -0.14, 0.14) +
+      clamp(steer * Math.abs(speed) * 0.0042, -0.095, 0.095) * (speed < 0 ? -1 : 1);
+    const targetHeave = clamp(avg * 0.55, -0.13, 0.2);
+    let { pitch, roll, heave, pitchVel, rollVel, heaveVel } = prev;
+    { const acc = 52 * (targetPitch - pitch) - 11 * pitchVel; pitchVel += acc * dt; pitch += pitchVel * dt; }
+    { const acc = 52 * (targetRoll - roll) - 11 * rollVel; rollVel += acc * dt; roll += rollVel * dt; }
+    { const acc = 38 * (targetHeave - heave) - 9 * heaveVel; heaveVel += acc * dt; heave += heaveVel * dt; }
+    return { pitch, roll, heave, pitchVel, rollVel, heaveVel, comp };
+  },
+  debrisStep(p, groundY, restitution, groundKeep, dtRaw) {
+    const dt = clamp(dtRaw, 0, 0.1);
+    let { x, y, z, vx, vy, vz } = p;
+    vy -= 18 * dt;
+    vx *= Math.max(0, 1 - 0.12 * dt);
+    vz *= Math.max(0, 1 - 0.12 * dt);
+    x += vx * dt; y += vy * dt; z += vz * dt;
+    if (y < groundY) {
+      y = groundY;
+      vy = -vy * clamp(restitution, 0, 0.9);
+      if (Math.abs(vy) < 0.8) vy = 0;
+      vx *= clamp(groundKeep, 0, 1);
+      vz *= clamp(groundKeep, 0, 1);
+    }
+    return { x, y, z, vx, vy, vz };
+  },
+  swimStep(phase, targetSpeed, prevSpeed, dtRaw) {
+    const dt = clamp(dtRaw, 0, 0.1);
+    const k = 1 - Math.exp(-2.4 * dt);
+    const speed = prevSpeed + (clamp(targetSpeed, 0, 4) - prevSpeed) * k;
+    const surge = 0.86 + 0.14 * Math.sin(phase * 2);
+    const effort = clamp(Math.abs(speed) / 2.4, 0, 1);
+    const bob = Math.sin(phase) * 0.055 * (0.35 + 0.65 * effort);
+    return { speed, surge, bob };
+  },
 };
 
 interface WasmModule {
@@ -381,9 +463,54 @@ export async function loadPhysicsEngine(): Promise<PhysicsEngine> {
         racePace(playerDist, oppDist, baseTop, rubber) { return pace(playerDist, oppDist, baseTop, rubber) as number; },
       };
     } catch { core = null; }
+    // Phase 10 realism-round exports: own try/catch (older .wasm lacks
+    // them → exact TS mirrors take over, same pattern as Phase 4/6/8)
+    let p10: Pick<PhysicsEngine, "stepVehicleV3" | "vehicleBody" | "debrisStep" | "swimStep"> | null = null;
+    try {
+      const stepV3 = module.cwrap("step_vehicle_v3", null, Array(11).fill("number"));
+      const vBody = module.cwrap("vehicle_body", null, Array(18).fill("number"));
+      const dStep = module.cwrap("debris_step", null, Array(12).fill("number"));
+      const sStep = module.cwrap("swim_step", null, Array(6).fill("number"));
+      const h = module.HEAPF64;
+      const out8 = module._malloc(8 * Float64Array.BYTES_PER_ELEMENT);
+      const out10 = module._malloc(10 * Float64Array.BYTES_PER_ELEMENT);
+      const out6 = module._malloc(6 * Float64Array.BYTES_PER_ELEMENT);
+      const out3b = module._malloc(3 * Float64Array.BYTES_PER_ELEMENT);
+      if (!out8 || !out10 || !out6 || !out3b) throw new Error("Could not allocate WASM physics buffers.");
+      p10 = {
+        stepVehicleV3(state, throttle, steering, handbrake, surfaceGrip, deltaTime) {
+          stepV3(state.x, state.z, state.heading, state.speed, throttle, steering, handbrake ? 1 : 0, surfaceGrip, deltaTime, out8);
+          const i = out8 / Float64Array.BYTES_PER_ELEMENT;
+          return { state: { x: h[i], z: h[i + 1], heading: h[i + 2], speed: h[i + 3] }, pitch: h[i + 4], roll: h[i + 5], grip: h[i + 6], slip: h[i + 7] };
+        },
+        vehicleBody(heights, accel, steer, speed, prev, dt) {
+          vBody(heights[0], heights[1], heights[2], heights[3], accel, steer, speed,
+            prev.pitch, prev.roll, prev.heave, prev.pitchVel, prev.rollVel, prev.heaveVel, dt, out10);
+          const i = out10 / Float64Array.BYTES_PER_ELEMENT;
+          return {
+            pitch: h[i], roll: h[i + 1], heave: h[i + 2], pitchVel: h[i + 3], rollVel: h[i + 4], heaveVel: h[i + 5],
+            comp: [h[i + 6], h[i + 7], h[i + 8], h[i + 9]],
+          };
+        },
+        debrisStep(p, groundY, restitution, groundKeep, dt) {
+          dStep(p.x, p.y, p.z, p.vx, p.vy, p.vz, groundY, restitution, groundKeep, dt, out6);
+          const i = out6 / Float64Array.BYTES_PER_ELEMENT;
+          return { x: h[i], y: h[i + 1], z: h[i + 2], vx: h[i + 3], vy: h[i + 4], vz: h[i + 5] };
+        },
+        swimStep(phase, targetSpeed, prevSpeed, dt) {
+          sStep(phase, targetSpeed, prevSpeed, dt, out3b);
+          const i = out3b / Float64Array.BYTES_PER_ELEMENT;
+          return { speed: h[i], surge: h[i + 1], bob: h[i + 2] };
+        },
+      };
+    } catch { p10 = null; }
     const fb = fallbackPhysics;
     return {
       source: "wasm",
+      stepVehicleV3: p10?.stepVehicleV3 ?? fb.stepVehicleV3,
+      vehicleBody: p10?.vehicleBody ?? fb.vehicleBody,
+      debrisStep: p10?.debrisStep ?? fb.debrisStep,
+      swimStep: p10?.swimStep ?? fb.swimStep,
       trafficDecision: core?.trafficDecision ?? fb.trafficDecision,
       stepPedestrianV2: core?.stepPedestrianV2 ?? fb.stepPedestrianV2,
       losSampled: core?.losSampled ?? fb.losSampled,
