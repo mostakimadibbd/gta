@@ -70,7 +70,8 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ✅ Mission messages arrive on the phone; payments confirmed by SableBank (Phase 2)
 - ✅ Mission debrief screen — completion/failure panel with reward lines, time and balance (Phase 4 / Visual V6)
 - ⬜ Side activities: races, taxi fares, tow jobs (Phase 4)
-- ⬜ Branching choices in story (Phase 5)
+- ✅ Branching choices in story — one real choice in Ch.5 (side with Voss / warn Elias) changing Ch.6's opening, ending and payout split; persisted (Phase 5)
+- ✅ Side storylines — "Lina's Line" + "Voss's File", 3 parts each, phone-offered, persisted progress (Phase 5)
 
 ## 7. Economy
 - ✅ Cash, mission payouts, collectible income
@@ -124,7 +125,11 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ✅ Settings — camera-shake toggle, FOV slider 50–75°, Post FX + shadow toggles (phone Settings + pause menu), all persisted (Phase 4 / PDF delta C)
 - 🟡 Input remapping — fixed bindings + touch/gyro alternatives today; full remapping planned (Phase 5)
 - ⬜ Vault / climb movement (PDF) (Phase 5)
-- ⬜ Subtitles (PDF accessibility) (Phase 5)
+- ✅ Subtitles (PDF accessibility) — cinematic letterbox renderer, typewriter reveal, size/background settings, ambient barks (witness shouts, dispatch radio, busted) as subtitles (Phase 5)
+- ✅ Quality tiers — Low/Medium/High with first-run auto-detect + one-time FPS step-down; gates composer/SSAO/shadows/normals/CC0/water/paint (Phase 5)
+- ✅ Real CC0 PBR textures — Poly Haven asphalt/concrete/brick/plaster embedded (955 KB, ASSETS_LICENSES.md); procedural route kept for Low + new plaster/tile/corrugated set (Phase 5)
+- ✅ UI redesign + solidity — one design system, single right-side HUD stack, safe-area insets, compact mode <560px, zero selectable UI (Phase 5)
+- ✅ Camera boom guard — third-person camera clamps against building AABBs instead of clipping inside them (Phase 5)
 - ⬜ Controller/gamepad support (Phase 5)
 
 ## 13. Technical — Engine Note (honest)
@@ -149,8 +154,8 @@ materials, filmic light — inside the web stack instead.
 - ✅ **Phase 3** — visual round 2 (rounded sculpted cars, post-processing grade, facade/ground/prop detail, skyline ring) + rideable motorcycle, two enterable interiors (garage + club), swimming, first-person camera, combat lite (punch + pistol), buyable villa with garage save (this release)
 - ✅ **Phase 4** — UI realism overhaul (dark glass), garage car selection, character select (6 presets), C++ physics v2 + vehicle collisions, drivable Bay Bridge + Coral Shores (second city), theft system (pickpocket/robberies/break-ins/pawn), gyro steering, PDF deltas (crouch, photo mode, shake/FOV settings), Visual Upgrade V1–V7 (audit doc, normal maps, weathering, vehicle interiors, water/palm motion, debrief screen + weapon selector, far-ped tick skip) (this release)
 - ⬜ **Phase 4.5** — traffic obeys lights, rush hour, gamepad, side activities (races, taxi, tow)
-- ⬜ **Phase 5** — more interiors, customisation, NPC memory, businesses, 6-star design review
+- ✅ **Phase 5 (shipped as the realistic-visuals + story/UI round)** — quality tiers, equirect env + water shader + SSAO, CC0 PBR route, clearcoat cars + headlight beams, character material/animation pass, deepened story + 2 side arcs + Ch.5 choice, cinematic subtitles, UI redesign. Still open from the original Phase 5 list: more interiors, customisation, NPC memory, businesses, 6-star design review
 - ⬜ **Phase 6** — multiplayer co-op, map expansion
 
-**Status tally (recounted Phase 4):** ✅ Done 71 · 🟡 Partial 7 · ⬜ Planned 16
+**Status tally (recounted Phase 5):** ✅ Done 78 · 🟡 Partial 7 · ⬜ Planned 14
 *QA note (PDF §QA): each release is accepted against build-pass + in-game smoke checks of the new systems; a formal written QA checklist pass is tracked as a Phase 5 item.*

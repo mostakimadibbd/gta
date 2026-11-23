@@ -494,6 +494,25 @@ export function oilTexture(): THREE.CanvasTexture {
 // A height canvas is drawn per surface, then converted with a Sobel
 // filter into a tangent-space normal map. Data maps must NOT be sRGB.
 // ================================================================
+// ---- Phase 5 quality gate: Low tier skips normal maps entirely. World/App
+// call setNormalsEnabled when the tier changes; caches reset so materials
+// rebuilt afterwards pick the change up.
+let _normalsOn = true;
+let _flatN: THREE.CanvasTexture | undefined;
+function flatNormalTex(): THREE.CanvasTexture {
+  if (_flatN) return _flatN;
+  const [c, g] = canvas(4);
+  g.fillStyle = "rgb(128,128,255)"; g.fillRect(0, 0, 4, 4);
+  _flatN = finishData(c);
+  return _flatN;
+}
+export function setNormalsEnabled(on: boolean) {
+  if (on === _normalsOn) return;
+  _normalsOn = on;
+  _asphaltN = _concreteN = _facadeN = _brickN = _sandN = _grassN = undefined;
+  _plasterN = _tileN = _corrugatedN = undefined;
+}
+
 function finishData(c: HTMLCanvasElement, rx = 1, ry = 1): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -504,6 +523,7 @@ function finishData(c: HTMLCanvasElement, rx = 1, ry = 1): THREE.CanvasTexture {
 
 /** Sobel height→normal conversion. strength ~1.5–3 for architectural relief. */
 function normalFromHeight(height: HTMLCanvasElement, strength = 2): THREE.CanvasTexture {
+  if (!_normalsOn) return flatNormalTex();
   const w = height.width, h = height.height;
   const src = height.getContext("2d")!.getImageData(0, 0, w, h).data;
   const [c, g] = canvas(w, h);
@@ -693,6 +713,143 @@ export function carDirtTexture(): THREE.CanvasTexture {
   }
   _carDirt = finish(c);
   return _carDirt;
+}
+
+// ================================================================
+// Phase 5 procedural additions (Step 4a): district material identity.
+// Coral Shores = light shell plaster + tiled sidewalks; the port /
+// industrial district = stained concrete + corrugated metal.
+// ================================================================
+let _plaster: THREE.CanvasTexture | undefined;
+export function plasterTexture(): THREE.CanvasTexture {
+  if (_plaster) return _plaster;
+  const rnd = mulberry32(7701);
+  const [c, g] = canvas(512);
+  grain(g, 512, 512, [216, 203, 178], 9, rnd); // warm shell-sand base
+  stains(g, 512, 512, 8, "#b8a888", 0.16, rnd); // salt-air weathering patches
+  stains(g, 512, 512, 5, "#e8dfc9", 0.2, rnd); // sun-bleached blooms
+  g.strokeStyle = "rgba(120,104,80,0.35)"; g.lineWidth = 1; // hairline plaster cracks
+  for (let i = 0; i < 6; i++) { let x = rnd() * 512, y = rnd() * 300; g.beginPath(); g.moveTo(x, y); for (let s = 0; s < 5; s++) { x += (rnd() - 0.5) * 26; y += 18 + rnd() * 22; g.lineTo(x, y); } g.stroke(); }
+  _plaster = finish(c);
+  return _plaster;
+}
+
+let _plasterN: THREE.CanvasTexture | undefined;
+export function plasterNormal(): THREE.CanvasTexture {
+  if (_plasterN) return _plasterN;
+  _plasterN = normalFromHeight(heightCanvas(512, 142, (g, rnd) => {
+    g.fillStyle = "rgba(96,96,96,0.55)"; // trowel sweeps sit slightly low
+    for (let i = 0; i < 12; i++) { g.beginPath(); g.ellipse(rnd() * 512, rnd() * 512, 40 + rnd() * 90, 14 + rnd() * 26, rnd() * 3, 0, Math.PI * 2); g.fill(); }
+  }, 7702), 1.1);
+  return _plasterN;
+}
+
+let _tile: THREE.CanvasTexture | undefined;
+export function sidewalkTileTexture(): THREE.CanvasTexture {
+  if (_tile) return _tile;
+  const rnd = mulberry32(8801);
+  const [c, g] = canvas(512);
+  grain(g, 512, 512, [188, 182, 168], 8, rnd); // pale Coral paving stone
+  const cell = 128;
+  for (let y = 0; y < 512; y += cell) for (let x = 0; x < 512; x += cell) {
+    const v = (rnd() - 0.5) * 14; // per-tile tone drift
+    g.fillStyle = `rgba(${v > 0 ? "255,250,238" : "70,64,54"},${Math.abs(v) / 160})`;
+    g.fillRect(x, y, cell, cell);
+    g.fillStyle = "rgba(238,230,214,0.5)"; g.fillRect(x + 3, y + 3, cell - 6, 3); // bevel light
+  }
+  g.fillStyle = "#5d574c"; // grout lines
+  for (let i = 0; i <= 512; i += cell) { g.fillRect(i - 2, 0, 4, 512); g.fillRect(0, i - 2, 512, 4); }
+  stains(g, 512, 512, 5, "#8d8474", 0.14, rnd);
+  _tile = finish(c);
+  return _tile;
+}
+
+let _tileN: THREE.CanvasTexture | undefined;
+export function sidewalkTileNormal(): THREE.CanvasTexture {
+  if (_tileN) return _tileN;
+  _tileN = normalFromHeight(heightCanvas(512, 150, (g) => {
+    g.fillStyle = "rgba(20,20,20,1)"; // grout grooves
+    for (let i = 0; i <= 512; i += 128) { g.fillRect(i - 2, 0, 4, 512); g.fillRect(0, i - 2, 512, 4); }
+    g.fillStyle = "rgba(215,215,215,0.7)";
+    for (let i = 0; i <= 512; i += 128) { g.fillRect(i + 2, 0, 2, 512); g.fillRect(0, i + 2, 512, 2); }
+  }, 8802), 2.0);
+  return _tileN;
+}
+
+let _corrugated: THREE.CanvasTexture | undefined;
+export function corrugatedTexture(): THREE.CanvasTexture {
+  if (_corrugated) return _corrugated;
+  const rnd = mulberry32(9901);
+  const [c, g] = canvas(512);
+  grain(g, 512, 512, [104, 116, 118], 10, rnd); // galvanised steel base
+  for (let x = 0; x < 512; x += 32) { // ridge light/shade pairs
+    const gr = g.createLinearGradient(x, 0, x + 32, 0);
+    gr.addColorStop(0, "rgba(0,0,0,0.42)"); gr.addColorStop(0.45, "rgba(255,255,255,0.20)"); gr.addColorStop(0.62, "rgba(255,255,255,0.05)"); gr.addColorStop(1, "rgba(0,0,0,0.42)");
+    g.fillStyle = gr; g.fillRect(x, 0, 32, 512);
+  }
+  for (let i = 0; i < 26; i++) { // rust weep streaks from the ridge tops
+    const x = rnd() * 512, len = 40 + rnd() * 170;
+    const gr = g.createLinearGradient(0, 0, 0, len);
+    gr.addColorStop(0, `rgba(146,84,44,${0.24 + rnd() * 0.2})`); gr.addColorStop(1, "rgba(146,84,44,0)");
+    g.save(); g.translate(x, rnd() * 200); g.fillStyle = gr; g.fillRect(-2.5, 0, 5, len); g.restore();
+  }
+  stains(g, 512, 512, 7, "#4c4238", 0.18, rnd); // dock grime
+  _corrugated = finish(c);
+  return _corrugated;
+}
+
+let _corrugatedN: THREE.CanvasTexture | undefined;
+export function corrugatedNormal(): THREE.CanvasTexture {
+  if (_corrugatedN) return _corrugatedN;
+  _corrugatedN = normalFromHeight(heightCanvas(512, 128, (g) => {
+    for (let x = 0; x < 512; x++) { // smooth sinusoidal ridges, 32px pitch
+      const v = 128 + Math.round(Math.sin((x / 32) * Math.PI * 2) * 105);
+      g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(x, 0, 1, 512);
+    }
+  }, 9902), 2.4);
+  return _corrugatedN;
+}
+
+// ================================================================
+// Phase 5 (Step 3a): ONE neutral equirectangular environment canvas —
+// dusk coastal sky (zenith teal → azure → amber horizon → dark sea).
+// PMREM-converted in App for scene.environment on Medium/High; themes
+// keep their identity by tinting the visible dome + envMapIntensity.
+// ================================================================
+let _skyEnv: THREE.CanvasTexture | undefined;
+export function skyEnvTexture(): THREE.CanvasTexture {
+  if (_skyEnv) return _skyEnv;
+  const W = 2048, H = 1024;
+  const [c, g] = canvas(W, H);
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0.0, "#17384a"); // zenith, deep teal
+  grad.addColorStop(0.30, "#2e6d8c");
+  grad.addColorStop(0.46, "#7fb2c4");
+  grad.addColorStop(0.52, "#f2c184"); // amber horizon band
+  grad.addColorStop(0.545, "#e8956d");
+  grad.addColorStop(0.56, "#274b57"); // sea takes over below the horizon
+  grad.addColorStop(0.72, "#12262e");
+  grad.addColorStop(1.0, "#08151a");
+  g.fillStyle = grad; g.fillRect(0, 0, W, H);
+  const rnd = mulberry32(4242);
+  for (let i = 0; i < 240; i++) { // soft cloud streaks, denser near the horizon
+    const y = H * 0.16 + Math.pow(rnd(), 1.6) * H * 0.36;
+    const x = rnd() * W, wdt = 90 + rnd() * 340, hgt = 5 + rnd() * 13;
+    g.fillStyle = `rgba(255,244,230,${0.028 + rnd() * 0.05})`;
+    g.beginPath(); g.ellipse(x, y, wdt, hgt, 0, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.ellipse((x + W / 2) % W, y, wdt * 0.7, hgt, 0, 0, Math.PI * 2); g.fill();
+  }
+  const sunX = W * 0.70, sunY = H * 0.525; // low sun glow just above the horizon
+  const sg = g.createRadialGradient(sunX, sunY, 4, sunX, sunY, 300);
+  sg.addColorStop(0, "rgba(255,226,170,0.95)"); sg.addColorStop(0.12, "rgba(255,196,120,0.55)"); sg.addColorStop(1, "rgba(255,180,110,0)");
+  g.fillStyle = sg; g.fillRect(0, 0, W, H);
+  g.fillStyle = "rgba(255,240,205,0.95)";
+  g.beginPath(); g.arc(sunX, sunY, 17, 0, Math.PI * 2); g.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  _skyEnv = t;
+  return t;
 }
 
 // ---- cloud puffs: overlapping soft blobs, warm-white (tinted at runtime) ----

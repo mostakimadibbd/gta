@@ -39,6 +39,10 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
 
   const phase = useRef(0);
   const intensity = useRef(0);
+  // Phase 5 Step 6: enter-car slide (0.35 s) instead of a teleport-pose swap
+  const enterT = useRef(0);
+  const enterFrom = useRef(new THREE.Vector3());
+  const wasDriving = useRef(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -90,8 +94,19 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
 
     const activeVehicle = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
     const onMoto = !!activeVehicle && activeVehicle.kind === "motorcycle";
+    // enter-car slide: on the driving transition, capture where the player
+    // stood and glide to the driver's seat over 0.35 s (Vehicle waits via
+    // G.enterAnimT). The bike keeps its instant mount (rider stays visible).
+    if (driving && !wasDriving.current && activeVehicle && !onMoto) {
+      enterFrom.current.copy(positionRef.current);
+      enterT.current = 0.35;
+    }
+    wasDriving.current = driving;
+    if (enterT.current > 0) { enterT.current = Math.max(0, enterT.current - dt); G.enterAnimT = enterT.current; }
+    else if (G.enterAnimT > 0) G.enterAnimT = 0;
+    const entering = enterT.current > 0 && !!activeVehicle && !onMoto;
     // the rider stays visible (seated) on the bike; hidden inside cars
-    root.current.visible = !driving || onMoto;
+    root.current.visible = !driving || onMoto || entering;
 
     if (!driving) {
       const swimmingNow = !G.interior && isWaterAt(positionRef.current.x, positionRef.current.z);
@@ -175,7 +190,21 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     }
 
     // ---- root transform ----
-    if (onMoto && activeVehicle) {
+    if (entering && activeVehicle) {
+      // glide from the door-side standing spot into the driver's seat
+      const p = 1 - enterT.current / 0.35;
+      const ease = p * p * (3 - 2 * p);
+      const cs = activeVehicle.state;
+      const doorX = cs.x - Math.cos(cs.heading) * 1.15, doorZ = cs.z + Math.sin(cs.heading) * 1.15;
+      root.current.position.set(
+        THREE.MathUtils.lerp(enterFrom.current.x, cs.x, ease),
+        groundYAt(cs.x, cs.z) + Math.sin(ease * Math.PI) * 0.12,
+        THREE.MathUtils.lerp(enterFrom.current.z, cs.z, ease),
+      );
+      root.current.position.x = THREE.MathUtils.lerp(root.current.position.x, doorX, (1 - ease) * 0.35);
+      root.current.position.z = THREE.MathUtils.lerp(root.current.position.z, doorZ, (1 - ease) * 0.35);
+      root.current.rotation.set(0, THREE.MathUtils.lerp(root.current.rotation.y, cs.heading, ease), 0);
+    } else if (onMoto && activeVehicle) {
       root.current.position.set(activeVehicle.state.x, groundYAt(activeVehicle.state.x, activeVehicle.state.z), activeVehicle.state.z);
       root.current.rotation.set(0, activeVehicle.state.heading, 0);
     } else {
@@ -212,7 +241,15 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       rig.torso.rotation.x = 0.34;
       rig.head.rotation.x = -0.18;
     }
-    if (onMoto) {
+    if (entering) {
+      // slide-in pose: legs swing into the cabin as the glide progresses
+      const p = 1 - enterT.current / 0.35;
+      rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.25 * p;
+      rig.lShin.rotation.x = rig.rShin.rotation.x = 1.1 * p;
+      rig.lArm.rotation.x = -0.5 * p;
+      rig.rArm.rotation.x = -0.9 * p; // reaching for the wheel
+      rig.torso.rotation.x = 0.12 * p;
+    } else if (onMoto) {
       // seated rider: thighs forward, shins down to the pegs, arms to the bars
       rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.5;
       rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
@@ -228,12 +265,29 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       rig.rThigh.rotation.x = Math.sin(tNow * 6.4 + Math.PI) * 0.3;
       rig.head.rotation.x = 0.55;
     } else if (!driving) {
-      // punch swing (Combat sets G.punchT on click / J)
-      const pt = tNow - G.punchT;
-      if (pt >= 0 && pt < 0.3) {
-        const s = Math.sin((pt / 0.3) * Math.PI);
-        rig.rArm.rotation.x = -2.2 * s;
-        rig.rFore.rotation.x = -0.3 * s;
+      // Phase 5: proper jump arc — tucked knees + arms out on the way up,
+      // legs extending and arms rising to brace on the way down
+      if (!grounded.current && !G.swimming) {
+        if (jumpVelocity.current > 0.5) {
+          rig.lThigh.rotation.x = -0.55; rig.rThigh.rotation.x = -0.28;
+          rig.lShin.rotation.x = 0.75; rig.rShin.rotation.x = 0.5;
+          rig.lArm.rotation.x = -0.45; rig.rArm.rotation.x = -0.3;
+          rig.lArm.rotation.z = 0.38; rig.rArm.rotation.z = -0.38;
+        } else {
+          rig.lThigh.rotation.x = -0.16; rig.rThigh.rotation.x = 0.08;
+          rig.lShin.rotation.x = 0.14; rig.rShin.rotation.x = 0.05;
+          rig.lArm.rotation.x = -0.85; rig.rArm.rotation.x = -0.85;
+          rig.lArm.rotation.z = 0.55; rig.rArm.rotation.z = -0.55;
+        }
+      } else {
+        rig.lArm.rotation.z = 0; rig.rArm.rotation.z = 0; // reset jump spread
+        // punch swing (Combat sets G.punchT on click / J)
+        const pt = tNow - G.punchT;
+        if (pt >= 0 && pt < 0.3) {
+          const s = Math.sin((pt / 0.3) * Math.PI);
+          rig.rArm.rotation.x = -2.2 * s;
+          rig.rFore.rotation.x = -0.3 * s;
+        }
       }
     }
   });

@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type RefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation } from "@react-three/postprocessing";
+import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation, SSAO } from "@react-three/postprocessing";
 import * as THREE from "three";
 import Collectibles from "./components/Collectibles";
 import GameSystems, { type SysCallbacks } from "./components/GameSystems";
@@ -13,10 +13,12 @@ import World from "./components/World";
 import { isInteractiveTarget } from "./keyboard";
 import { fallbackPhysics, loadPhysicsEngine, type PhysicsEngine, type VehicleState } from "./physics/GamePhysics";
 import { G, resetAfterArrest, resetAfterWasted } from "./game/store";
-import { M, startPlay, endMission } from "./game/missionState";
-import { STORY_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, type DialogueLine, type MissionDef } from "./game/missions";
+import { M, startPlay, endMission, persist as persistMission } from "./game/missionState";
+import { STORY_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
-import { ROAD_COORDS, FUEL_STATIONS, districtAt } from "./world";
+import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked } from "./world";
+import { skyEnvTexture, setNormalsEnabled } from "./textures";
+import { gates, initQuality, runFpsSampleOnce, setTier, type QualityTier } from "./game/quality";
 import Weather from "./components/Weather";
 import Combat from "./components/Combat";
 import Interiors from "./components/Interiors";
@@ -33,26 +35,33 @@ import { WEATHER_META, cycleWeather } from "./game/weather";
 import { audioTick, initAudio, sfx, startMenuTheme, stopMenuTheme, toggleMute } from "./game/audio";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-// Environment reflections (PMREM RoomEnvironment): the single biggest
-// "not cartoon" upgrade — car paint, glass towers and wet roads pick up
-// real reflections. Moderate intensity keeps the dusk grade in charge.
-function EnvSetup() {
+// Environment reflections: the single biggest "not cartoon" upgrade — car
+// paint, glass towers and wet roads pick up real reflections. Phase 5
+// (Step 3a): Medium/High use a PMREM conversion of ONE procedural
+// equirectangular dusk-coast sky (textures.skyEnvTexture) so reflections
+// match the world; Low keeps the neutral RoomEnvironment. Themes keep
+// their identity through per-theme environment intensity.
+const THEME_ENV_INTENSITY: Record<string, number> = { dusk: 0.55, midnight: 0.25, desert: 0.7, emerald: 0.6, noir: 0.3 };
+function EnvSetup({ theme, quality }: { theme: GameTheme; quality: QualityTier }) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
   useEffect(() => {
     const pmrem = new THREE.PMREMGenerator(gl);
-    const rt = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    const rt = gates.cc0(quality)
+      ? pmrem.fromEquirectangular(skyEnvTexture())
+      : pmrem.fromScene(new RoomEnvironment(), 0.04);
     scene.environment = rt.texture;
-    scene.environmentIntensity = 0.5;
+    scene.environmentIntensity = THEME_ENV_INTENSITY[theme.id] ?? 0.5;
     return () => { scene.environment = null; rt.dispose(); pmrem.dispose(); };
-  }, [gl, scene]);
+  }, [gl, scene, theme, quality]);
   return null;
 }
 
 const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
 const tmpV = new THREE.Vector3();
-// Touch/mobile devices skip the post-processing composer entirely (perf).
-const COARSE_POINTER = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+// (Phase 5: the composer is gated by the quality tier now, not by pointer
+// type — see game/quality.ts. Auto-detection still starts coarse-pointer
+// devices on Low/Medium.)
 
 interface FpState { on: boolean; yaw: number; pitch: number; }
 
@@ -100,6 +109,31 @@ function CameraRig({ target, camFar, fp, orbit }: { target: RefObject<THREE.Vect
     const targetFov = G.settings.fov + Math.min(14, G.speedKph / 9);
     if (Math.abs(cam.fov - targetFov) > 0.4) { cam.fov += (targetFov - cam.fov) * 0.08; cam.updateProjectionMatrix(); }
     controls.current.update();
+    // Phase 5 camera guard (user report: camera pressed inside a dockside
+    // container wall): walk the target→camera segment in ~0.55u steps and
+    // stop at the last sample outside every building/static AABB. Cheap
+    // 2D test against world.ts blockers; skips interiors (rooms are small
+    // and already distance-capped) and the menu orbit.
+    if (!orbit && !G.interior) {
+      const from = controls.current.target;
+      const to = camera.position;
+      const dist = from.distanceTo(to);
+      if (dist > 1.7) {
+        const steps = Math.ceil(dist / 0.55);
+        for (let i = 1; i <= steps; i++) {
+          const d = (i / steps) * dist;
+          const k = d / dist;
+          const sx = from.x + (to.x - from.x) * k;
+          const sy = from.y + (to.y - from.y) * k;
+          const sz = from.z + (to.z - from.z) * k;
+          if (sy < 56 && isBlocked(sx, sz, 0.25)) {
+            const free = Math.max(1.5, d - 0.6) / dist;
+            camera.position.set(from.x + (to.x - from.x) * free, from.y + (to.y - from.y) * free, from.z + (to.z - from.z) * free);
+            break;
+          }
+        }
+      }
+    }
     applyShake();
   });
   return <OrbitControls ref={controls} makeDefault enablePan={false} minDistance={4} maxDistance={18} maxPolarAngle={Math.PI / 2.05} />;
@@ -230,6 +264,15 @@ export default function App() {
   const [garageZoneId, setGarageZoneId] = useState<string | null>(null);
   const [photoMode, setPhotoMode] = useState(false);
   const [postFx, setPostFx] = useState(G.settings.postFx);
+  // ---- Phase 5: quality tier (game/quality.ts owns detection + gates) ----
+  const [quality, setQualityState] = useState<QualityTier>(() => { initQuality(); return G.settings.quality; });
+  const qualityRef = useRef(quality);
+  useEffect(() => { qualityRef.current = quality; setNormalsEnabled(gates.normalMaps(quality)); }, [quality]);
+  // ---- Phase 5: cinematic subtitles (typewriter) + ambient barks + choice
+  const [subShown, setSubShown] = useState(0);
+  const [barkUi, setBarkUi] = useState<{ who: string; text: string } | null>(null);
+  const lastBarkAt = useRef(0);
+  const [choiceFor, setChoiceFor] = useState<MissionDef | null>(null);
   const [missionResult, setMissionResult] = useState<typeof G.missionResult>(null);
   const photoShotRef = useRef(0);
   const lastMissionAt = useRef(0);
@@ -246,6 +289,7 @@ export default function App() {
   const bigmapRef = useRef<HTMLCanvasElement>(null);
   const prevHud = useRef({ health: 100, wanted: 0 });
   const dialogueRef = useRef(dialogue); dialogueRef.current = dialogue;
+  const choiceRef = useRef(choiceFor); choiceRef.current = choiceFor;
   const sysCb = useRef<SysCallbacks>(null as unknown as SysCallbacks);
 
   const applyTheme = useCallback((t: GameTheme) => {
@@ -263,18 +307,48 @@ export default function App() {
   const beginDialogue = useCallback((lines: DialogueLine[], after: () => void) => {
     if (!lines.length) { after(); return; }
     G.dialogueActive = true;
+    setSubShown(0);
     setDialogue({ lines, idx: 0, after });
   }, []);
   const advanceDialogue = useCallback(() => {
     const d = dialogueRef.current; if (!d) return;
+    // subtitle flow: first press completes the typewriter line, second advances
+    const full = d.lines[d.idx].text.length;
+    if (subShown < full) { setSubShown(full); return; }
     sfx.dialogue();
-    if (d.idx < d.lines.length - 1) setDialogue({ ...d, idx: d.idx + 1 });
+    if (d.idx < d.lines.length - 1) { setSubShown(0); setDialogue({ ...d, idx: d.idx + 1 }); }
     else { setDialogue(null); G.dialogueActive = false; d.after(); }
-  }, []);
+  }, [subShown]);
+  // typewriter reveal ~40 chars/s, with a soft blip every few characters
+  useEffect(() => {
+    if (!dialogue) return;
+    const id = window.setInterval(() => {
+      const d = dialogueRef.current; if (!d) { window.clearInterval(id); return; }
+      const full = d.lines[d.idx].text.length;
+      setSubShown((s) => {
+        if (s >= full) { window.clearInterval(id); return s; }
+        if (s % 6 === 0) sfx.dialogue();
+        return Math.min(full, s + 1);
+      });
+    }, 25);
+    return () => window.clearInterval(id);
+  }, [dialogue]);
 
   const startMission = useCallback((def: MissionDef) => {
     endMission(); M.phase = "intro";
-    beginDialogue(def.intro, () => { startPlay(def); showBanner(`${def.title} — ${def.giver}`, true); });
+    const intro = def.introAlt && M.choice === "elias" ? def.introAlt : def.intro;
+    beginDialogue(intro, () => {
+      // Phase 5: the Ch.5 choice interrupts between intro and play, once.
+      if (def.choice && !M.choice) { setChoiceFor(def); return; }
+      startPlay(def); showBanner(`${def.title} — ${def.giver}`, true);
+    });
+  }, [beginDialogue, showBanner]);
+  const resolveChoice = useCallback((def: MissionDef, flag: string, reply: DialogueLine[]) => {
+    M.choice = flag as "voss" | "elias";
+    persistMission();
+    setChoiceFor(null);
+    sfx.click();
+    beginDialogue(reply, () => { startPlay(def); showBanner(`${def.title} — ${def.giver}`, true); });
   }, [beginDialogue, showBanner]);
 
   sysCb.current = {
@@ -436,6 +510,17 @@ export default function App() {
       }
       if (G.requestCharSelect) { G.requestCharSelect = false; tryOpenCharSelectRef.current(); }
       if (G.settings.postFx !== postFxRef.current) { postFxRef.current = G.settings.postFx; setPostFx(G.settings.postFx); }
+      // Phase 5: quality can change under us (FPS step-down, phone settings)
+      if (G.settings.quality !== qualityRef.current) setQualityState(G.settings.quality);
+      // Phase 5: ambient barks surface as small subtitles for ~4 s
+      if (G.bark && G.bark.at !== lastBarkAt.current) {
+        lastBarkAt.current = G.bark.at;
+        if (G.settings.subBarks) {
+          const b = { who: G.bark.who, text: G.bark.text };
+          setBarkUi(b);
+          window.setTimeout(() => setBarkUi((cur) => (cur === b ? null : cur)), 4200);
+        }
+      }
       if (G.toastAt !== lastToastAt.current) { lastToastAt.current = G.toastAt; if (G.toast) showPopup(G.toast); }
       if (G.health < prevHud.current.health) { setFlash(true); window.setTimeout(() => setFlash(false), 350); }
       if (G.wanted > prevHud.current.wanted) { setStarPulse(true); window.setTimeout(() => setStarPulse(false), 900); }
@@ -459,6 +544,7 @@ export default function App() {
         if (key === "e" || key === "enter" || key === " ") { e.preventDefault(); advanceDialogue(); }
         return;
       }
+      if (choiceRef.current) return; // the Ch.5 choice is answered by click/tap only
       // Phase 4/V6: mission debrief dismiss
       if (missionResult && (key === "enter" || key === "e")) { e.preventDefault(); setMissionResult(null); return; }
       // PDF delta B: photo mode owns H / U / Enter / Esc while active
@@ -515,7 +601,7 @@ export default function App() {
     return () => window.removeEventListener("pointermove", move);
   }, []);
 
-  const effectivePaused = paused || !!dialogue || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen || charOpen || !!garageZoneId;
+  const effectivePaused = paused || !!dialogue || !!choiceFor || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen || charOpen || !!garageZoneId;
   // ---- poster loading screen: real first-frame signal + minimum display ----
   const loaded = sceneReady && minWait;
   useEffect(() => { const id = window.setTimeout(() => setMinWait(true), 1800); return () => window.clearTimeout(id); }, []);
@@ -554,6 +640,7 @@ export default function App() {
 
   const startGame = (story: boolean) => {
     initAudio(); sfx.playStart(); stopMenuTheme(); setStarted(true); setCharOpen(false); savedPosRef.current = null;
+    runFpsSampleOnce(); // Phase 5: one 2.5 s sample may step the tier down once
     if (story && M.storyIndex === 0 && !localStorage.getItem("harborfall-intro")) setIntroIdx(0);
     else if (story && M.storyIndex < 6) startMission(STORY_MISSIONS[M.storyIndex]);
   };
@@ -561,12 +648,12 @@ export default function App() {
   const nextRepeatable = () => startMission(REPEATABLE[M.repeatIndex % REPEATABLE.length]);
 
   return (
-    <main className={`game-shell ${shake ? "shake" : ""}`}>
+    <main className={`game-shell ${shake ? "shake" : ""}`} onContextMenu={(e) => e.preventDefault()}>
       <Canvas shadows="soft" dpr={[1, 2]} camera={{ position: [0, 7, 124], fov: 58, near: 0.1, far: 420 }}
         gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15, outputColorSpace: THREE.SRGBColorSpace }}>
         <Suspense fallback={null}>
-          <EnvSetup />
-          <World theme={theme} night={nightBucket} />
+          <EnvSetup theme={theme} quality={quality} />
+          <World theme={theme} night={nightBucket} quality={quality} />
           <Collectibles targetRef={followRef} paused={effectivePaused}
             onCollect={() => { tokenCountRef.current += 1; G.tokens = tokenCountRef.current; sfx.pickup(); showPopup("Harbour token +$25"); G.cash += 25; }} />
           <Vehicle playerPositionRef={playerPositionRef} vehiclePositionRef={vehiclePositionRef} vehicleStateRef={vehicleStateRef}
@@ -574,7 +661,7 @@ export default function App() {
             onNearVehicleChange={setNearVehicle} physicsRef={physicsRef} themeAccent={theme.carAccent} />
           <Player positionRef={playerPositionRef} rotationRef={playerRotationRef} driving={driving} paused={effectivePaused}
             preset={presetById(charChoice.id)} variant={charChoice.variant} showcase={charOpen} />
-          <GameSystems paused={effectivePaused} physicsRef={physicsRef} theme={theme} cb={sysCb} tokenCountRef={tokenCountRef} />
+          <GameSystems paused={effectivePaused} physicsRef={physicsRef} theme={theme} cb={sysCb} tokenCountRef={tokenCountRef} quality={quality} />
           <Weather paused={effectivePaused} theme={theme} />
           <Combat enabled={started && !effectivePaused} />
           <Interiors />
@@ -583,17 +670,22 @@ export default function App() {
           <FirstFrame onReady={() => setSceneReady(true)} />
           {players.map((pl) => <RemoteAvatar key={pl.playerId} player={pl} />)}
           <CameraRig target={followRef} camFar={camFar} fp={fpRef} orbit={charOpen} />
-          {/* Phase 3 film grade: bloom + warm grade + grain + vignette +
-              SMAA. Skipped entirely on coarse pointers (mobile) for fps,
-              and when the player turns Post FX off in Settings. */}
-          {!COARSE_POINTER && postFx && (
+          {/* Film grade: bloom + warm grade + grain + vignette + SMAA.
+              Phase 5: gated by the quality tier (Low = composer OFF;
+              Medium = as Phase 4; High adds SSAO + stronger bloom) and by
+              the player's Post FX toggle. */}
+          {postFx && gates.composer(quality) && (
             <EffectComposer multisampling={0}>
               <>
-                <Bloom intensity={0.55} luminanceThreshold={0.55} luminanceSmoothing={0.25} mipmapBlur />
+                <Bloom intensity={gates.bloom(quality)} luminanceThreshold={0.55} luminanceSmoothing={0.25} mipmapBlur />
                 <HueSaturation saturation={0.08} />
                 <BrightnessContrast contrast={0.06} brightness={0.01} />
                 <Noise opacity={0.035} />
                 <Vignette darkness={0.22} offset={0.28} />
+                {gates.ssao(quality) && (
+                  <SSAO worldDistanceThreshold={80} worldDistanceFalloff={40} worldProximityThreshold={6} worldProximityFalloff={3}
+                    radius={0.22} intensity={1.1} luminanceInfluence={0.35} samples={16} rings={4} />
+                )}
                 <SMAA />
               </>
             </EffectComposer>
@@ -607,23 +699,51 @@ export default function App() {
           <div className="hud-topleft">
             <div className="hud-brand">HARBOR<span>FALL</span></div>
             <div className="hud-meta">{hud.district} · {theme.name}{hud.storyDone ? " · Story Complete" : ""}</div>
-            <div className="weather-chip" title="Weather (Y to change)">{hud.weatherIcon} {hud.weather}</div>
-            <canvas ref={minimapRef} className="minimap" width={148} height={148} aria-label="Minimap" />
+            <div className="weather-chip" title="Weather (Y to change)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="9" cy="9" r="3.4" /><path d="M9 2.5v1.6M2.5 9h1.6M4.9 4.9l1.1 1.1M13.1 4.9l-1.1 1.1" /><path d="M10 20h7.2a3.4 3.4 0 0 0 .6-6.7 4.6 4.6 0 0 0-8.7 1A3.2 3.2 0 0 0 10 20Z" /></svg>
+              {hud.weather}
+            </div>
+            <div className="minimap-disc"><canvas ref={minimapRef} className="minimap" width={148} height={148} aria-label="Minimap" /></div>
             <div className="health-wrap"><div className="health-bar" style={{ width: `${hud.health}%` }} /><span>{hud.health}</span></div>
             {hud.bust > 0.2 && <div className="bust-bar"><div style={{ width: `${Math.min(100, (hud.bust / 3) * 100)}%` }} /></div>}
             {hud.eye && <div className={`stealth-eye ${hud.eye}`}>{hud.eye === "open" ? "◉ SEEN" : "◎ HIDDEN"}</div>}
           </div>
-          <div className="hud-topright">
-            <div className={`stars ${starPulse ? "pulse" : ""}`} aria-label={`Wanted ${hud.wanted} stars`}>
-              {[1, 2, 3, 4, 5].map((i) => <span key={i} className={i <= hud.wanted ? "on" : ""}>★</span>)}
+          {/* Phase 5 redesign: the ENTIRE right side is one flex stack —
+              phone → stars/cash → panel row → popups → vehicle panel →
+              speedometer — so siblings can never overlap at any size. */}
+          <div className="hud-right">
+            <div className="hud-topright">
+              <div className={`stars ${starPulse ? "pulse" : ""}`} aria-label={`Wanted ${hud.wanted} stars`}>
+                {[1, 2, 3, 4, 5].map((i) => <span key={i} className={i <= hud.wanted ? "on" : ""}>★</span>)}
+              </div>
+              <div className="cash">${hud.cash.toLocaleString()}</div>
+              {hud.lootCount > 0 && <div className="loot-chip" title="Stolen goods — fence them at Coral Pawn or Lina's">STASH ${hud.loot.toLocaleString()} <span>· {hud.lootCount} item{hud.lootCount > 1 ? "s" : ""}</span></div>}
+              {hud.armed && hud.weapon === "pistol" && <div className="ammo-chip" title="Pistol ammo — click or J to fire">PISTOL · {hud.ammo}</div>}
+              <div className="hud-meta">Tokens {hud.tokens}/6 · {players.length + 1} player{players.length ? "s" : ""} · GFX {quality.toUpperCase()}</div>
             </div>
-            <div className="cash">${hud.cash.toLocaleString()}</div>
-            {hud.lootCount > 0 && <div className="loot-chip" title="Stolen goods — fence them at Coral Pawn or Lina's">⚿ ${hud.loot.toLocaleString()} <span>· {hud.lootCount} item{hud.lootCount > 1 ? "s" : ""}</span></div>}
-            {hud.armed && hud.weapon === "pistol" && <div className="ammo-chip" title="Pistol ammo — click or J to fire">PISTOL · {hud.ammo}</div>}
-            <div className="hud-meta">Tokens {hud.tokens}/6 · {players.length + 1} player{players.length ? "s" : ""}</div>
+            <div className="hud-right-row">
+              <button type="button" className="phone-fab" aria-label="Open phone (U)" onClick={() => setPhoneOpen(true)}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.4" /><path d="M10.8 18.6h2.4" /></svg>
+              </button>
+              <button type="button" className="panel-toggle" onClick={() => setPanelOpen((v) => !v)}>Panel</button>
+            </div>
+            {popup && <div className="cash-popup">{popup}</div>}
+            <div className="hud-right-flex" />
+            {driving && (
+              <div className="car-bars">
+                <div className="car-bar"><span>FUEL</span><div className="car-bar-track"><div className={`car-bar-fill fuel ${hud.fuel < 20 ? "low" : ""}`} style={{ width: `${hud.fuel}%` }} /></div><b>{hud.fuel}%</b></div>
+                <div className="car-bar"><span>DMG</span><div className="car-bar-track"><div className={`car-bar-fill dmg ${hud.damage > 60 ? "bad" : ""}`} style={{ width: `${hud.damage}%` }} /></div><b>{hud.damage}%</b></div>
+              </div>
+            )}
+            {hud.armed && !driving && (
+              <button type="button" className="weapon-chip" onClick={() => { G.weaponSel = G.weaponSel === "pistol" ? "fist" : "pistol"; }}>
+                <span className="keycap">Q</span>{hud.weapon === "pistol" ? "PISTOL" : "FISTS"}
+              </button>
+            )}
+            {driving && <div className="speedo"><div className="speedo-arc" style={{ ["--speed" as string]: `${Math.min(100, hud.speed / 1.4)}%` }} /><strong>{hud.speed}</strong><span>km/h</span></div>}
           </div>
           {hud.objective && (
-            <div className="objective-banner"><span className="objective-label">{M.active?.title}</span>{hud.objective}{hud.dist ? ` · ${hud.dist}m` : ""}{M.phase === "play" ? ` · ${Math.floor(hud.timer / 60)}:${String(hud.timer % 60).padStart(2, "0")}` : ""}</div>
+            <div className="objective-banner"><span className="objective-district">{hud.district}</span><span className="objective-label">{M.active?.title}</span><span className="objective-text">{hud.objective}{hud.dist ? ` · ${hud.dist}m` : ""}{M.phase === "play" ? ` · ${Math.floor(hud.timer / 60)}:${String(hud.timer % 60).padStart(2, "0")}` : ""}</span></div>
           )}
           <div className="prompt-stack">
             {nearVehicle && !driving && !hud.prompt && <p className="interaction-prompt"><span className="keycap">E</span>Enter car<span className="prompt-sub">hold — break in</span></p>}
@@ -632,20 +752,6 @@ export default function App() {
               <div className="hold-bar"><span>{hud.holdLabel}</span><div className="hold-track"><div style={{ width: `${hud.holdP * 100}%` }} /></div></div>
             )}
           </div>
-          {driving && <div className="speedo"><div className="speedo-arc" style={{ ["--speed" as string]: `${Math.min(100, hud.speed / 1.4)}%` }} /><strong>{hud.speed}</strong><span>km/h</span></div>}
-          {hud.armed && !driving && (
-            <button type="button" className="weapon-chip" onClick={() => { G.weaponSel = G.weaponSel === "pistol" ? "fist" : "pistol"; }}>
-              <span className="keycap">Q</span>{hud.weapon === "pistol" ? "PISTOL" : "FISTS"}
-            </button>
-          )}
-          {driving && (
-            <div className="car-bars">
-              <div className="car-bar"><span>FUEL</span><div className="car-bar-track"><div className={`car-bar-fill fuel ${hud.fuel < 20 ? "low" : ""}`} style={{ width: `${hud.fuel}%` }} /></div><b>{hud.fuel}%</b></div>
-              <div className="car-bar"><span>DMG</span><div className="car-bar-track"><div className={`car-bar-fill dmg ${hud.damage > 60 ? "bad" : ""}`} style={{ width: `${hud.damage}%` }} /></div><b>{hud.damage}%</b></div>
-            </div>
-          )}
-          <button type="button" className="phone-fab" aria-label="Open phone (U)" onClick={() => setPhoneOpen(true)}>▣</button>
-          {popup && <div className="cash-popup">{popup}</div>}
           {banner && <div className={`mission-banner ${banner.ok ? "ok" : "bad"}`}>{banner.text}</div>}
           <div className="controls"><b>WASD</b> Move <i /><b>E</b> Interact · hold: rob / break in <i /><b>G</b> Garage <i /><b>X</b> Crouch <i /><b>Q</b> Weapon <i /><b>V</b> 1st person <i /><b>U</b> Phone <i /><b>M</b> Map <i /><b>ESC</b> Pause</div>
         </section>
@@ -684,7 +790,6 @@ export default function App() {
           onDone={() => { if (started) closeCharSelect(); else { closeCharSelect(); startGame(true); } }} />
       )}
 
-      <button type="button" className="panel-toggle" onClick={() => setPanelOpen((v) => !v)}>☰ Panel</button>
       <aside className={`game-panel ${panelOpen ? "open" : ""}`} aria-label="Game panel">
         <header className="panel-header">
           <div><h1>Harborfall</h1><p>Port Sable — an original harbour-city adventure</p></div>
@@ -733,7 +838,19 @@ export default function App() {
         onOpenMap={() => { setPhoneOpen(false); setBigMap(true); }}
         onPhotoMode={enterPhotoMode}
         onChangeCharacter={() => { setPhoneOpen(false); G.requestCharSelect = true; }}
-        onContact={(name, line, hint) => { setPhoneOpen(false); beginDialogue([{ who: name, text: line }, { who: name, text: hint }], () => {}); }} />
+        onContact={(name, line, hint) => {
+          setPhoneOpen(false);
+          // Phase 5 Step 7a: Lina (after Ch.2) and Voss (after Ch.4) offer
+          // their side-story arcs by phone — calling them starts the next
+          // unplayed part instead of the ambient chat.
+          const side = name === "Lina Park" ? "lina" : name === "Det. Mara Voss" ? "voss" : null;
+          if (side && started && !M.active && !dialogueRef.current) {
+            const unlocked = side === "lina" ? M.storyIndex >= 2 : M.storyIndex >= 4;
+            const next = unlocked ? nextSideMission(side, M.side[side]) : null;
+            if (next) { startMission(next); return; }
+          }
+          beginDialogue([{ who: name, text: line }, { who: name, text: hint }], () => {});
+        }} />
 
       {!started && (
         <div className="start-screen poster-screen">
@@ -782,6 +899,7 @@ export default function App() {
         </div>
       )}
 
+      {introIdx >= 0 && G.settings.letterbox && <><div className="letterbox top" /><div className="letterbox bottom" /></>}
       {introIdx >= 0 && (
         <div className="dialog-backdrop">
           <section className="game-dialog story-panel">
@@ -799,14 +917,29 @@ export default function App() {
         </div>
       )}
 
+      {/* Phase 5 Step 7b: cinematic subtitles replace the old dialogue box.
+          Letterbox bars (toggleable), speaker in accent caps, typewriter
+          reveal synced to the dialogue blips; E / Enter / click advances —
+          first press completes the line, second moves on. */}
+      {(dialogue || choiceFor) && G.settings.letterbox && <><div className="letterbox top" /><div className="letterbox bottom" /></>}
+      {barkUi && !dialogue && (
+        <div className={`bark-sub sub-${G.settings.subSize.toLowerCase()} ${G.settings.subBg ? "with-bg" : ""}`} aria-live="polite">
+          <span className="bark-who">{barkUi.who}</span>{barkUi.text}
+        </div>
+      )}
       {dialogue && (
-        <div className="dialogue-box" role="dialog" aria-label="Dialogue">
-          <div className="dialogue-avatar">{dialogue.lines[dialogue.idx].who.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
-          <div className="dialogue-main">
-            <b>{dialogue.lines[dialogue.idx].who}</b>
-            <p>{dialogue.lines[dialogue.idx].text}</p>
-            <button type="button" onClick={advanceDialogue}>{dialogue.idx < dialogue.lines.length - 1 ? "Continue ▸ (E)" : "Let's go ▸ (E)"}</button>
-          </div>
+        <div className={`subtitle-bar sub-${G.settings.subSize.toLowerCase()} ${G.settings.subBg ? "with-bg" : ""}`} role="dialog" aria-label="Dialogue" onClick={advanceDialogue}>
+          <div className="subtitle-who">{dialogue.lines[dialogue.idx].who}</div>
+          <p className="subtitle-text">{dialogue.lines[dialogue.idx].text.slice(0, subShown)}<span className="subtitle-caret">{subShown < dialogue.lines[dialogue.idx].text.length ? "" : " ▸"}</span></p>
+          <div className="subtitle-hint">{dialogue.idx + 1}/{dialogue.lines.length} · E</div>
+        </div>
+      )}
+      {choiceFor?.choice && (
+        <div className="choice-box" role="dialog" aria-label="Your choice">
+          <div className="choice-kicker">Your call, Rayan</div>
+          {choiceFor.choice.options.map((opt) => (
+            <button key={opt.flag} type="button" className="choice-btn" onClick={() => resolveChoice(choiceFor, opt.flag, opt.reply)}>{opt.label}</button>
+          ))}
         </div>
       )}
 
@@ -855,6 +988,24 @@ export default function App() {
               <label><span>Post FX (bloom / grade)</span><input type="checkbox" checked={postFx} onChange={(e) => { G.settings.postFx = e.target.checked; persistSettings(); setPostFx(e.target.checked); }} /></label>
               <label><span>Shadows</span><input type="checkbox" checked={G.settings.shadows} onChange={(e) => { G.settings.shadows = e.target.checked; persistSettings(); showPopup(`Shadows ${e.target.checked ? "on" : "off"}`); }} /></label>
               <label><span>Field of view · {G.settings.fov}°</span><input type="range" min={50} max={75} step={1} defaultValue={G.settings.fov} onChange={(e) => { G.settings.fov = Number(e.target.value); persistSettings(); }} /></label>
+            </div>
+            <h3 className="settings-head">Graphics · quality {quality.toUpperCase()}</h3>
+            <div className="seg-row" role="group" aria-label="Quality tier">
+              {(["low", "medium", "high"] as QualityTier[]).map((t) => (
+                <button key={t} type="button" className={`seg-btn ${quality === t ? "active" : ""}`} onClick={() => { setTier(t); setQualityState(t); showPopup(`Quality: ${t}`); }}>{t}</button>
+              ))}
+            </div>
+            <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + SSAO, stronger bloom, CC0 at full size.</p>
+            <h3 className="settings-head">Subtitles</h3>
+            <div className="seg-row" role="group" aria-label="Subtitle size">
+              {(["S", "M", "L"] as const).map((s) => (
+                <button key={s} type="button" className={`seg-btn ${G.settings.subSize === s ? "active" : ""}`} onClick={() => { G.settings.subSize = s; persistSettings(); showPopup(`Subtitle size ${s}`); }}>{s}</button>
+              ))}
+            </div>
+            <div className="settings-list">
+              <label><span>Subtitle background</span><input type="checkbox" defaultChecked={G.settings.subBg} onChange={(e) => { G.settings.subBg = e.target.checked; persistSettings(); }} /></label>
+              <label><span>Ambient barks as subtitles</span><input type="checkbox" defaultChecked={G.settings.subBarks} onChange={(e) => { G.settings.subBarks = e.target.checked; persistSettings(); }} /></label>
+              <label><span>Letterbox bars in dialogue</span><input type="checkbox" defaultChecked={G.settings.letterbox} onChange={(e) => { G.settings.letterbox = e.target.checked; persistSettings(); }} /></label>
             </div>
             <div className="dialog-actions">
               <button type="button" className="primary" onClick={() => setPaused(false)}>Resume</button>

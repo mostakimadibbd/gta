@@ -129,3 +129,124 @@ supplied mood-board collage, used as a menu backdrop only — they are
 not game models or textures. **No third-party or AI-generated assets
 are used as game models.** No Rockstar/GTA assets, names, maps or
 logos appear anywhere in the game.
+
+---
+
+# Phase 5 addendum — Step 1 inventory (realistic-visuals spec)
+
+*Where everything is built, how the five themes survive, the exact
+dimension↔physics contract, and the measured/estimated performance
+picture. Estimates are labelled; nothing here is dressed up as a
+measurement it isn't.*
+
+## File map — where each system is built
+
+| System | File(s) | Notes |
+|---|---|---|
+| Renderer / Canvas / tone mapping | `client/src/App.tsx` | R3F Canvas, ACES 1.15 exposure, PCF-soft shadows, DPR 1–2 |
+| Environment reflections | `App.tsx` `EnvSetup` + `textures.ts` `skyEnvTexture()` | Phase 5: PMREM from a procedural equirect sky (Med/High); RoomEnvironment (Low) |
+| Lights | `components/GameSystems.tsx` | ambient + hemisphere + one directional sun, shadow camera follows the player, ±55u box |
+| Sky dome / sun disc / clouds | `components/World.tsx` | gradient dome (Phase 5: horizon cloud band painted into the canvas), sun disc + glow sprite, 11 cloud sprites |
+| Fog | `GameSystems.tsx` (scene.fog) + `components/Weather.tsx` (lerps near/far per weather) | linear fog, theme-driven |
+| Water | `World.tsx` | Phase 5: custom ShaderMaterial (Med/High), Phase 4 sheet (Low) |
+| Buildings / roads / ground | `World.tsx` + `world.ts` (data) + `textures.ts` / `cc0Textures.ts` (surfaces) | instanced props; per-material-family draws |
+| Cars | `components/CarBody.tsx` (bodies), `Vehicle.tsx` (player fleet), `GameSystems.tsx` (traffic/police) | 10 kinds, RoundedBox sculpting |
+| Characters | `humanoid.ts` (rig builder), `Player.tsx`, `GameSystems.tsx` (peds), `App.tsx` RemoteAvatar (multiplayer = simplified capsule rig, unchanged) | articulated primitive rigs, canvas faces |
+| Police | `GameSystems.tsx` | LOS + last-known search, roadblocks, helicopter ≥4★ |
+| Post-processing | `App.tsx` | EffectComposer gated by quality tier (Phase 5) |
+| Quality tiers | `game/quality.ts` | ONE module: detection, FPS step-down, every gate |
+| HUD / menus / subtitles | `App.tsx` + `styles.css` + `components/Phone.tsx` | Phase 5 redesign: one design system |
+
+## Themes — how the 5 themes map and survive Phase 5
+
+Each theme (`themes.ts`: Harbor Dusk, Midnight Patrol, Desert Gold,
+Emerald Bay, Noir Mono) drives: sky/fog colour + fog near/far, sun
+colour/intensity, ambient + hemisphere colours, water colour, window
+glow, lamp glow, car accent, shirt colour, CSS variables, minimap
+palette. Phase 5 changes **none** of that data. What changed is only
+*how* two consumers read it:
+
+- **Environment map:** the new equirect env is ONE neutral dusk-coast
+  sky for all themes; each theme keeps its identity via
+  `scene.environmentIntensity` per theme (dusk 0.55, midnight 0.25,
+  desert 0.70, emerald 0.60, noir 0.30) and the visible dome is still
+  tinted per theme exactly as before.
+- **Water shader:** deep colour ← `theme.water`, sky tint ←
+  `theme.sky`, glint colour ← `theme.sunColor`, fog ← the live scene
+  fog (which Weather lerps). No theme can be broken by the shader; it
+  has no hard-coded palette of its own beyond fallbacks.
+
+## Dimension ↔ physics AABB contract (actual numbers from code)
+
+Gameplay collision is 2D (x/z) AABBs and circles; visuals must fit
+inside them. Any future glTF model (see SETUP_MANUAL.md) must fit the
+same boxes or it will clip through walls it visually overlaps.
+
+- **Buildings:** blocker = `width/2 × depth/2` AABB (`world.ts`
+  `isBlocked` / `blockersNear`). Player-vs-wall test radius **1.3**
+  while driving, **0.45** on foot.
+- **Cars (visual w × len → collision circle radius):** sedan 2.0×3.7,
+  hatch 1.9×3.15, coupe 2.0×3.9, pickup 2.1×4.1, van 2.1×4.2,
+  supercar 2.2×4.3, muscle 2.05×4.4, SUV 2.1×4.2, classic 1.95×4.5 →
+  parked-car collision circle **r = 1.55**; motorcycle (0.34 wheel r,
+  ~1.9 long) → **r = 1.0**.
+- **Characters:** ~1.85u tall rigs; ped separation and witness radii
+  are point-based (crime witness radius 13u, cop +6u).
+- **World bounds:** Port Sable ±118 (roads at −100…100, width 12),
+  water from z = 128, Coral Shores x 28…112 / z 196…324, bridge deck
+  at x = 60 (half-width ≈ 4.2, deck height 5.5), interiors pocketed at
+  z ≈ −175.
+
+## Bundle sizes (measured from production builds)
+
+| | Phase 4 build | Phase 5 build |
+|---|---|---|
+| index JS | 578.69 kB (gzip 314.85) | 1,884.41 kB (gzip 1,286.47) |
+| three chunk | 689.71 kB | 689.76 kB |
+| CSS | — | 44.57 kB (gzip 9.07) |
+
+The index growth is **entirely** the embedded CC0 texture module
+(`client/src/cc0Textures.ts`): 955,200 bytes of WebP payload carried
+as ~1.27 MB of base64 text — the price of shipping real photographed
+PBR maps through a text-only snapshot pipeline with zero hosting.
+Procedural-only (Low tier) players download the same bytes but never
+decode them into textures. If a future host allows binary files,
+moving these maps to hosted `.webp` files is the single biggest load
+win available (≈ −950 kB gzip).
+
+## Draw calls / triangles (ESTIMATES from scene composition)
+
+*Estimates, not profiler captures:* ~350–450 draw calls in a typical
+street view (instancing keeps props/decals/tufts to single draws;
+buildings share ~30 cached materials; cars ≈ 25–40 draws each with
+~16 player cars + 12 traffic + 6 police worst case, frustum-culled),
+roughly 0.9–1.4 M triangles/frame worst case downtown. **FPS: not
+measurable in this build environment — user-side check.** The Phase 5
+quality system exists precisely for this: auto-detection plus a 2.5 s
+FPS sample after game start steps the tier down once if the device
+can't hold ~27–42 fps.
+
+## Phase 5 rendering changes (summary)
+
+- Quality tiers Low/Medium/High (`game/quality.ts`) gate: composer,
+  SSAO (High, built-in postprocessing effect), shadow map size
+  (1024/2048) + radius, normal maps, CC0 textures (off / 512 / native),
+  water shader, clearcoat car paint, bloom strength.
+- Water: two scrolling normal layers, fresnel deep↔sky, sun glint,
+  rain-ripple uniform from `G.rainAmt`, analytic shore fades, manual
+  fog blend.
+- District material identity: Coral Shores = shell plaster + tiled
+  sidewalks; The Docks = corrugated steel + stained concrete;
+  Port Sable = brick/facade. Medium/High use real CC0 photographs for
+  asphalt, concrete pavement, brick and plaster (ASSETS_LICENSES.md).
+- Cars: clearcoat paint (Med/High), headlight beam cones at night,
+  real SpotLights on the player's active car only, brake-light boost.
+- Characters: skin sheen (roughness 0.55 + env response), cloth weave
+  bump maps, enter-car slide animation, jump-arc pose.
+- Camera: a boom guard walks the target→camera segment against the
+  blocker AABBs so the third-person camera no longer sinks inside
+  buildings/containers when the player backs against a wall.
+- Motion blur: **not implemented** — the postprocessing library has no
+  cheap, robust motion-blur effect; the existing speed FOV kick
+  (+14° at speed) carries the sensation instead. Stated honestly
+  rather than faked.

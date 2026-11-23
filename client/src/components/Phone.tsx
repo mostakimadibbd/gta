@@ -173,6 +173,26 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
               <button type="button" className="phone-toggle" onClick={() => setSetting({ shadows: !G.settings.shadows })}>{G.settings.shadows ? "On" : "Off"}</button></div>
             <div className="bank-row"><span>Field of view · {G.settings.fov}°</span>
               <input type="range" min={50} max={75} step={1} value={G.settings.fov} onChange={(e) => setSetting({ fov: Number(e.target.value) })} /></div>
+            <h3 className="phone-subhead">Graphics quality</h3>
+            <div className="bank-row"><span>Quality tier</span>
+              <span className="phone-seg">
+                {(["low", "medium", "high"] as const).map((t) => (
+                  <button key={t} type="button" className={`phone-seg-btn ${G.settings.quality === t ? "active" : ""}`} onClick={() => setSetting({ quality: t })}>{t}</button>
+                ))}
+              </span></div>
+            <h3 className="phone-subhead">Subtitles</h3>
+            <div className="bank-row"><span>Subtitle size</span>
+              <span className="phone-seg">
+                {(["S", "M", "L"] as const).map((s) => (
+                  <button key={s} type="button" className={`phone-seg-btn ${G.settings.subSize === s ? "active" : ""}`} onClick={() => setSetting({ subSize: s })}>{s}</button>
+                ))}
+              </span></div>
+            <div className="bank-row"><span>Subtitle background</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ subBg: !G.settings.subBg })}>{G.settings.subBg ? "On" : "Off"}</button></div>
+            <div className="bank-row"><span>Ambient barks</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ subBarks: !G.settings.subBarks })}>{G.settings.subBarks ? "On" : "Off"}</button></div>
+            <div className="bank-row"><span>Letterbox bars</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ letterbox: !G.settings.letterbox })}>{G.settings.letterbox ? "On" : "Off"}</button></div>
             <button type="button" className="phone-row" onClick={onChangeCharacter}>
               <span><b>Change character</b><small>Pick who you play as in Port Sable</small></span><span>›</span>
             </button>

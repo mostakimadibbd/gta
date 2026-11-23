@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars } from "../game/store";
-import { M, currentTarget, endMission, persist } from "../game/missionState";
+import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, bark } from "../game/store";
+import { M, currentTarget, endMission, persist, effectivePayout } from "../game/missionState";
+import { gates, type QualityTier } from "../game/quality";
 import { pushPhoneMsg } from "../game/phone";
 import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, districtAt, isBlocked, MANSION_DRIVE, groundYAt, CAR_MODELS } from "../world";
 import { glowTexture } from "../textures";
@@ -91,9 +92,10 @@ function initWorld() {
   if (G.cops.length === 0) for (let i = 0; i < 6; i++) G.cops.push({ x: 0, z: -140, heading: 0, speed: 0, active: false, lightPhase: i * 0.7, pitch: 0, roll: 0 });
 }
 
-export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountRef }: {
+export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountRef, quality }: {
   paused: boolean; physicsRef: MutableRefObject<PhysicsEngine>; theme: GameTheme;
   cb: MutableRefObject<SysCallbacks>; tokenCountRef: MutableRefObject<number>;
+  quality: QualityTier;
 }) {
   initWorld();
   const trafficRefs = useRef<Array<THREE.Group | null>>([]);
@@ -159,6 +161,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   // Phase 4: per-car steering refs (front-wheel visuals) + traffic honks +
   // a frame counter for the far-ped animation tick skip (Visual V7)
   const trafficSteerRefs = useMemo(() => G.traffic.map(() => ({ current: 0 })), []);
+  const trafficBrakeRefs = useRef<Array<{ current: boolean }>>(G.traffic.map(() => ({ current: false })));
   const copSteerRefs = useMemo(() => G.cops.map(() => ({ current: 0 })), []);
   const honkCd = useRef(0);
   const frameNo = useRef(0);
@@ -245,6 +248,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       void prevHeading;
       const ti = G.traffic.indexOf(car);
       if (trafficSteerRefs[ti]) trafficSteerRefs[ti].current = car.steerVis;
+      if (trafficBrakeRefs.current[ti]) trafficBrakeRefs.current[ti].current = car.stopped > 0 || car.speed < 1.5;
     }
     // ---- pedestrians: density breathes with the time of day (Blueprint §2) —
     // downtown/Market Row crowds thin out late at night; the beach peaks at dusk.
@@ -427,6 +431,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       else { rb.x = snap(ax); rb.z = THREE.MathUtils.clamp(az, -112, 118); rb.hx = 0; rb.hz = Math.sign(fz) || 1; rb.ox = 1; rb.oz = 0; }
       rb.active = true;
       cb.current.popup("⚠ Roadblock ahead!");
+      bark("Dispatch", "All units — roadblock deployed ahead of the suspect vehicle.");
     }
     if (rb.active) {
       const passed = (px - rb.x) * rb.hx + (pz - rb.z) * rb.hz > 20;
@@ -456,11 +461,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     });
     if (want > 0) {
       const nearestCop = Math.min(...G.cops.filter((c) => c.active).map((c) => Math.hypot(c.x - px, c.z - pz)), 999);
-      if (!seen) { G.wantedCooldown += dt; if (G.wantedCooldown > 11) { G.wanted -= 1; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup("Heat lost — wanted level down"); } }
+      if (!seen) { G.wantedCooldown += dt; if (G.wantedCooldown > 11) { G.wanted -= 1; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup("Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
       // busted: cop close + player slow (unchanged rule, cleaner condition)
       if (nearestCop < 7.5 && pSpeed < 2.5) {
         G.bustTimer += dt;
-        if (G.bustTimer > 3) { G.status = "busted"; G.statusTimer = 0; sfx.busted(); }
+        if (G.bustTimer > 3) { G.status = "busted"; G.statusTimer = 0; sfx.busted(); bark("Harbour Patrol", "Suspect in custody. Repeat — suspect in custody."); }
       } else G.bustTimer = Math.max(0, G.bustTimer - dt * 1.5);
     } else G.bustTimer = 0;
     if (G.health <= 0 && !G.status) { G.status = "wasted"; G.statusTimer = 0; sfx.fail(); }
@@ -528,19 +533,29 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     }
     function completeMission() {
       const def = M.active; if (!def) return;
-      G.missionResult = { ok: true, title: def.title, reward: def.payout, items: 0, timeLeft: Math.max(0, Math.round(M.timer)), reason: "", at: t };
-      G.cash += def.payout; G.lifetimeEarned += def.payout;
-      pushPhoneMsg("SableBank", `💰 $${def.payout} received — ${def.title}. Balance: $${G.cash}.`);
+      // Phase 5: Ch.6 pays the alternate split when Elias was warned;
+      // side arcs advance their own progress and NEVER touch storyIndex.
+      const pay = effectivePayout(def);
+      const outro = def.outroAlt && M.choice === "elias" ? def.outroAlt : def.outro;
+      G.missionResult = { ok: true, title: def.title, reward: pay, items: 0, timeLeft: Math.max(0, Math.round(M.timer)), reason: "", at: t };
+      G.cash += pay; G.lifetimeEarned += pay;
+      pushPhoneMsg("SableBank", `💰 $${pay} received — ${def.title}. Balance: $${G.cash}.`);
       persist();
-      sfx.complete(); cb.current.popup(`+$${def.payout}`);
-      cb.current.banner(`Mission complete: ${def.title} +$${def.payout}`, true);
+      sfx.complete(); cb.current.popup(`+$${pay}`);
+      cb.current.banner(`Mission complete: ${def.title} +$${pay}`, true);
       const wasStory = def.story;
+      const side = def.side;
       endMission();
-      cb.current.dialogue(def.outro, () => {
+      cb.current.dialogue(outro, () => {
         if (wasStory) {
           M.storyIndex += 1;
           if (M.storyIndex >= 6) { M.storyDone = true; persist(); cb.current.storyFinished(); }
           persist(); cb.current.event("missionEnd");
+        } else if (side) {
+          M.side[side] = Math.min(3, M.side[side] + 1);
+          persist();
+          if (M.side[side] >= 3) pushPhoneMsg(side === "lina" ? "Lina Park" : "Det. Mara Voss", side === "lina" ? "That's the whole line done, Rayan. The garage owes you — come by any time." : "File closed and filed. The parole board has everything. Thank you, Kade.");
+          cb.current.event("missionEnd");
         } else { M.repeatIndex += 1; persist(); cb.current.event("missionEnd"); }
       });
       cb.current.event("missionEnd");
@@ -635,13 +650,14 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     <group>
       <ambientLight ref={amb} intensity={theme.ambient} />
       <hemisphereLight ref={hemi} args={[theme.hemiSky, theme.hemiGround, 1.05]} />
-      <directionalLight ref={sun} castShadow position={[40, 50, 30]} intensity={theme.sunIntensity}
-        shadow-mapSize-width={2048} shadow-mapSize-height={2048}
+      <directionalLight key={quality} ref={sun} castShadow position={[40, 50, 30]} intensity={theme.sunIntensity}
+        shadow-mapSize-width={gates.shadowMapSize(quality)} shadow-mapSize-height={gates.shadowMapSize(quality)}
+        shadow-radius={gates.shadowRadius(quality)}
         shadow-camera-left={-55} shadow-camera-right={55} shadow-camera-top={55} shadow-camera-bottom={-55} shadow-bias={-0.0002} shadow-normalBias={0.02} />
       {/* traffic — detailed bodies, classes cycle like the mood board */}
       {G.traffic.map((c, i) => (
         <group key={i} ref={(n) => { trafficRefs.current[i] = n; }} position={[c.x, 0, c.z]}>
-          <CarBody kind={TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} steerRef={trafficSteerRefs[i]} liveDamage={() => G.traffic[i].damage} />
+          <CarBody kind={TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} steerRef={trafficSteerRefs[i]} liveDamage={() => G.traffic[i].damage} brakeRef={trafficBrakeRefs.current[i]} beams />
         </group>
       ))}
       {/* pedestrians — articulated humanoids with outfit variety */}

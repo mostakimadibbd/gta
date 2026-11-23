@@ -5,12 +5,13 @@
 // canopies, wheel-arch insets, side skirts — so the silhouette stops being
 // stacked rectangles. Glossy paint, rim/spoke wheels, lights, mirrors,
 // plates, bumpers, exhaust. Facing +Z = front.
-import { useMemo, useRef, type ReactNode, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, type ReactNode, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { RoundedBox } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { glowTexture, tyreTexture, shatteredTexture, carDirtTexture } from "../textures";
 import { G } from "../game/store";
+import { gates, tier } from "../game/quality";
 
 export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle";
 
@@ -173,9 +174,18 @@ function DirtShell({ kind, liveDamage }: { kind: string; liveDamage?: () => numb
   );
 }
 
+/** Phase 5 Step 5 paint: Medium/High get MeshPhysicalMaterial clearcoat
+ * (1.0 / 0.08) over the base coat; Low keeps the Phase 4 standard paint. */
+function paintMaterial(color: string, metalness = 0.25, roughness = 0.27): THREE.Material {
+  if (gates.clearcoat(tier())) {
+    return new THREE.MeshPhysicalMaterial({ color, metalness, roughness: roughness + 0.03, clearcoat: 1.0, clearcoatRoughness: 0.08, envMapIntensity: 1.25 });
+  }
+  return new THREE.MeshStandardMaterial({ color, metalness, roughness, envMapIntensity: 1.2 });
+}
+
 /** Rideable motorcycle — Sable Stinger: thin wheels, tube frame, tank, seat. */
 export function MotorcycleBody({ color }: { color: string }) {
-  const paint = useMemo(() => new THREE.MeshStandardMaterial({ color, metalness: 0.45, roughness: 0.3, envMapIntensity: 1.25 }), [color]);
+  const paint = useMemo(() => paintMaterial(color, 0.45, 0.3), [color]);
   const wheel = (z: number) => (
     <group position={[0, 0.34, z]}>
       <mesh rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[0.34, 0.34, 0.09, 16]} /><primitive object={TYRE} attach="material" /></mesh>
@@ -205,13 +215,59 @@ export function MotorcycleBody({ color }: { color: string }) {
   );
 }
 
-export default function CarBody({ kind, color, police, steerRef, liveDamage, brokenWindow, interior, carIndex }: {
+/** Phase 5 Step 5 night FX: headlight beam cones (additive, cheap) +
+ * brake-light boost bar. Traffic gets cones + its own brakeRef; the player
+ * fleet gets cones + real SpotLights, gated to the ACTIVE car only. */
+function CarFx({ kind, carIndex, brakeRef, beams, spotLights }: {
+  kind: CarKind; carIndex?: number;
+  brakeRef?: MutableRefObject<boolean>; beams?: boolean; spotLights?: boolean;
+}) {
+  const s = SHELL[kind];
+  const brakeMat = useMemo(() => { const m = TAIL.clone(); m.emissiveIntensity = 3.4; return m; }, []);
+  const beamMat = useMemo(() => new THREE.MeshBasicMaterial({ color: "#ffd9a0", transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false }), []);
+  const brakeMesh = useRef<THREE.Mesh>(null);
+  const spot = useRef<THREE.SpotLight>(null);
+  const spotTarget = useMemo(() => new THREE.Object3D(), []);
+  useEffect(() => { if (spot.current) spot.current.target = spotTarget; }, [spotTarget]);
+  useFrame(() => {
+    const active = carIndex !== undefined && G.driving && G.activeCarId === carIndex;
+    const lit = beams || active;
+    beamMat.opacity = lit ? G.nightFactor * 0.13 : 0;
+    if (spot.current) spot.current.intensity = spotLights && active ? G.nightFactor * 42 : 0;
+    if (brakeMesh.current) brakeMesh.current.visible = !!brakeRef?.current && (beams === true || active);
+  });
+  if (!s) return null;
+  const w = s[0] - 0.05, len = s[2], y = s[3] + 0.08;
+  return (
+    <group>
+      {[-1, 1].map((sgn) => (
+        <mesh key={sgn} position={[sgn * w * 0.32, y, len / 2 + 2.25]} rotation={[-Math.PI / 2 + 0.045, 0, 0]}>
+          <coneGeometry args={[0.62, 4.7, 12, 1, true]} />
+          <primitive object={beamMat} attach="material" />
+        </mesh>
+      ))}
+      <mesh ref={brakeMesh} position={[0, y, -len / 2 - 0.045]} visible={false}>
+        <boxGeometry args={[w * 0.66, 0.1, 0.03]} />
+        <primitive object={brakeMat} attach="material" />
+      </mesh>
+      {spotLights && (
+        <>
+          <spotLight ref={spot} position={[0, y + 0.05, len / 2]} angle={0.48} penumbra={0.7} distance={30} decay={1.1} color="#ffd9a0" intensity={0} />
+          <primitive object={spotTarget} position={[0, 0, len / 2 + 15]} />
+        </>
+      )}
+    </group>
+  );
+}
+
+export default function CarBody({ kind, color, police, steerRef, liveDamage, brokenWindow, interior, carIndex, brakeRef, beams, spotLights }: {
   kind: CarKind; color: string; police?: boolean;
   steerRef?: MutableRefObject<number>; liveDamage?: () => number;
   brokenWindow?: boolean; interior?: boolean; carIndex?: number;
+  brakeRef?: MutableRefObject<boolean>; beams?: boolean; spotLights?: boolean;
 }) {
-  // deep glossy paint: low roughness + strong environment reflections
-  const paint = useMemo(() => new THREE.MeshStandardMaterial({ color, metalness: 0.25, roughness: 0.27, envMapIntensity: 1.2 }), [color]);
+  // deep glossy paint: clearcoat physical material on Medium/High (Step 5)
+  const paint = useMemo(() => paintMaterial(color), [color]);
   if (kind === "motorcycle") return <MotorcycleBody color={color} />;
   const classic = kind === "classic";
   const glassMat = brokenWindow ? GLASS_BROKEN : interior ? GLASS_CLEAR : GLASS;
@@ -230,7 +286,9 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
   switch (kind) {
     case "supercar":
       body = (<>
-        <RB args={[2.2, 0.42, 4.3]} radius={0.13} mat={paint} pos={[0, 0.44, 0]} />
+        {/* Phase 5: deeper bevels (radius 0.17) — the sanctioned fallback for
+            extruded side profiles; silhouette reads rounder at glancing light */}
+        <RB args={[2.2, 0.42, 4.3]} radius={0.17} mat={paint} pos={[0, 0.44, 0]} />
         <RB args={[2.02, 0.2, 1.15]} radius={0.08} mat={paint} pos={[0, 0.4, 1.72]} rot={[0.16, 0, 0]} />
         {/* curved glass canopy (scaled sphere) instead of a glass box */}
         <mesh position={[0, 0.68, -0.28]} scale={[1.42, 0.62, 1.7]} castShadow><sphereGeometry args={[0.55, 16, 12]} /><primitive object={glassMat} attach="material" /></mesh>
@@ -294,9 +352,9 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
       </>); wheels = wheelSet(1.9, 3.15, 0.35, 0.24); break;
     case "coupe":
       body = (<>
-        <RB args={[2.0, 0.46, 3.9]} radius={0.11} mat={paint} pos={[0, 0.52, 0]} />
+        <RB args={[2.0, 0.46, 3.9]} radius={0.15} mat={paint} pos={[0, 0.52, 0]} />
         <RB args={[1.9, 0.16, 1.2]} radius={0.06} mat={paint} pos={[0, 0.72, 1.3]} rot={[0.09, 0, 0]} />
-        <RB args={[1.62, 0.44, 1.55]} radius={0.15} mat={glassMat} pos={[0, 0.94, -0.35]} />
+        <RB args={[1.62, 0.44, 1.55]} radius={0.18} mat={glassMat} pos={[0, 0.94, -0.35]} />
         <LightsBumpers w={2.0} len={3.9} y={0.56} />
         <Mirrors w={2.0} y={1.0} z={0.4} />
       </>); wheels = wheelSet(2.0, 3.9, 0.37, 0.26); break;
@@ -311,5 +369,5 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
       </>); wheels = wheelSet(2.0, 3.7, 0.36, 0.25); break;
   }
   const cabin = CABIN_POS[kind];
-  return (<group>{body}{wheels}{interior && cabin ? <CabinInterior y={cabin.y} z={cabin.z} w={cabin.w} steerRef={steerRef} carIndex={carIndex} /> : null}<DirtShell kind={kind} liveDamage={liveDamage} /></group>);
+  return (<group>{body}{wheels}{interior && cabin ? <CabinInterior y={cabin.y} z={cabin.z} w={cabin.w} steerRef={steerRef} carIndex={carIndex} /> : null}<DirtShell kind={kind} liveDamage={liveDamage} />{(beams || spotLights || brakeRef) ? <CarFx kind={kind} carIndex={carIndex} brakeRef={brakeRef} beams={beams} spotLights={spotLights} /> : null}</group>);
 }

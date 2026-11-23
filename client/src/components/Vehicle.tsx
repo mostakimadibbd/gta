@@ -25,7 +25,7 @@ import CarBody from "./CarBody";
 
 /** CarBody wrapper that re-renders when the car's window gets smashed
  * (break-ins mutate G.cars outside React). Damage/steer stay ref-driven. */
-function LiveCarBody({ index, steerRef }: { index: number; steerRef: MutableRefObject<number> }) {
+function LiveCarBody({ index, steerRef, brakeRef }: { index: number; steerRef: MutableRefObject<number>; brakeRef: MutableRefObject<boolean> }) {
   const [, setTick] = useState(0);
   const last = useRef(G.cars[index].brokenWindow);
   useFrame(() => {
@@ -33,7 +33,7 @@ function LiveCarBody({ index, steerRef }: { index: number; steerRef: MutableRefO
     if (bw !== last.current) { last.current = bw; setTick((t) => t + 1); }
   });
   const c = G.cars[index];
-  return <CarBody kind={c.kind} color={c.color} carIndex={index} steerRef={steerRef} liveDamage={() => G.cars[index].damage} brokenWindow={c.brokenWindow} interior />;
+  return <CarBody kind={c.kind} color={c.color} carIndex={index} steerRef={steerRef} liveDamage={() => G.cars[index].damage} brokenWindow={c.brokenWindow} interior brakeRef={brakeRef} spotLights />;
 }
 
 export default function Vehicle(p: Props) {
@@ -55,6 +55,7 @@ export default function Vehicle(p: Props) {
   const puffTex = glowTexture();
   // Phase 4: shared steering ref (front wheels + cabin wheel), break-in hold
   const steerRef = useRef(0);
+  const brakeRef = useRef(false); // Phase 5: brake-light boost state
   const alarmRefs = useRef<Array<THREE.Sprite | null>>([]);
   const eHeld = useRef(false);
   const breakIn = useRef<{ car: number; since: number } | null>(null);
@@ -125,7 +126,7 @@ export default function Vehicle(p: Props) {
   useFrame(({ clock }, delta) => {
     const { paused, physicsRef, vehicleStateRef, vehiclePositionRef } = refs.current;
     const dt = Math.min(delta, 0.05);
-    if (G.driving && !paused && !G.dialogueActive && G.activeCarId >= 0) {
+    if (G.driving && !paused && !G.dialogueActive && G.activeCarId >= 0 && G.enterAnimT <= 0) {
       const car = G.cars[G.activeCarId];
       const k = keys.current;
       // ---- Phase 2: damage + fuel shape the driving (arcade-forgiving) ----
@@ -135,6 +136,7 @@ export default function Vehicle(p: Props) {
       if (empty && !warnedRef.current.empty) { warnedRef.current.empty = true; toast("Out of fuel! Coast to a stop and find another car — fuel stations refill runners."); }
       const power = wrecked || empty ? 0 : car.damage > 60 ? 0.55 : car.damage > 35 ? 0.82 : 1;
       const throttle = (Number(k.has("w")) - Number(k.has("s"))) * power;
+      brakeRef.current = k.has("s") || k.has(" ");
       // gyro tilt steering feeds the same path; touch/key steer overrides
       const keySteer = Number(k.has("a")) - Number(k.has("d"));
       const steering = keySteer !== 0 ? keySteer : gyroSteer();
@@ -294,7 +296,7 @@ export default function Vehicle(p: Props) {
         const isActive = G.activeCarId === i;
         return (
           <group key={c.id} ref={(n) => { groups.current[i] = n; }} position={[c.state.x, 0, c.state.z]} rotation={[0, c.state.heading, 0]}>
-            <LiveCarBody index={i} steerRef={steerRef} />
+            <LiveCarBody index={i} steerRef={steerRef} brakeRef={brakeRef} />
             {/* car-alarm flash (break-in alarms, Phase 4) */}
             <sprite ref={(n) => { alarmRefs.current[i] = n; }} position={[0, 1.5, 0]} visible={false}>
               <spriteMaterial map={puffTex} color="#ffd34d" transparent opacity={0.55} depthWrite={false} blending={THREE.AdditiveBlending} />

@@ -83,10 +83,22 @@ export const G = {
   weaponSel: "fist" as "fist" | "pistol",
   missionResult: null as null | MissionResult, // debrief panel data (Visual V6)
   robbedUntil: {} as Record<string, number>, // register id → G.timeS when it can be robbed again
-  settings: { shake: true, fov: 58, postFx: true, shadows: true },
+  settings: {
+    shake: true, fov: 58, postFx: true, shadows: true,
+    // ---- Phase 5: quality tier + subtitles (game/quality.ts owns detection) ----
+    quality: "medium" as "low" | "medium" | "high",
+    subSize: "M" as "S" | "M" | "L", // subtitle text size
+    subBg: true, // subtitle background plate on/off
+    subBarks: true, // ambient barks (witness shouts, dispatch radio) as subtitles
+    letterbox: true, // cinematic bars during dialogue
+  },
   shakeAmp: 0, // current camera-shake amplitude (gated by settings.shake)
+  bark: null as null | { who: string; text: string; at: number }, // ambient subtitle line (Phase 5)
+  enterAnimT: 0, // seconds left of the enter-car slide (Player sets, Vehicle waits)
 };
 export function toast(msg: string) { G.toast = msg; G.toastAt = nowS(); }
+/** Ambient subtitle bark — witness shouts, police radio, system voices. */
+export function bark(who: string, text: string) { G.bark = { who, text, at: nowS() }; }
 
 // ---- Phase 3 persistence: mansion ownership + garage-saved car ----
 export interface SavedCar { kind: string; color: string; x: number; z: number; heading: number; }

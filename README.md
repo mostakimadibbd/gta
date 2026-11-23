@@ -89,6 +89,18 @@ JUMP and E buttons on foot; steering buttons + GAS/BRAKE pedals, DRIFT and
 EXIT while driving; a pause button top-right; drag the right side of the
 screen to orbit the camera. The side panel collapses behind the ☰ button.
 
+### Graphics quality (Phase 5)
+Three tiers — **Low / Medium / High** — auto-detected on first run
+(touch + small screen + low memory start lower) and self-tuning: a
+2.5-second FPS sample after you start playing steps the tier down once
+if the device struggles. Override any time in **Pause → Graphics** or
+**Phone → Settings**. Low = no post-processing, 1024px shadows,
+procedural textures only. Medium = film grade, real CC0 photo textures
+at 512px, shader water. High = + SSAO, stronger bloom, CC0 at full
+size, softer shadows. Dialogue is fully subtitled (cinematic
+letterbox + typewriter); subtitle size/background, ambient barks and
+the letterbox bars are adjustable in the same two places.
+
 ## Architecture
 
 ```
@@ -161,9 +173,19 @@ Unsigned installers may trigger SmartScreen/Gatekeeper first-run prompts.
 
 ## Honest limits
 
-- Low-poly original art, not photoreal AAA graphics — it targets 60 fps in
-  a browser, on phones included (pixel ratio capped, one shadow light).
+- **Realistic-styled, not photoreal.** Phase 5 raised the ceiling —
+  real CC0 photographed PBR maps on roads/sidewalks/brick/plaster
+  (credits: `ASSETS_LICENSES.md`), clearcoat car paint, a custom
+  water shader, PMREM sky reflections, SSAO on High — but buildings,
+  cars and people are still code-built geometry, not scanned or
+  modelled assets. Photoreal is not achievable in an instant-play
+  browser build; glTF upgrades are a manual path (`SETUP_MANUAL.md`).
+- The embedded CC0 maps cost ~950 KB (gzip) of download so the game
+  can ship with zero hosted files; the Low tier never decodes them.
+- Motion blur is not implemented (no cheap robust effect exists in
+  the post library); a speed FOV kick carries the sensation instead.
 - Multiplayer is positional relay (no server-side game simulation);
   room state is in-memory on one server instance.
-- Story is text dialogue (no voice acting); progress/cash/theme persist
-  in `localStorage` on the device you play on.
+- Story is text dialogue with full subtitles (no voice acting);
+  progress/cash/theme/quality persist in `localStorage` on the
+  device you play on.

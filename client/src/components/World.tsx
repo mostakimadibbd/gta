@@ -11,7 +11,11 @@ import {
   arrowTexture, oilTexture,
   asphaltNormal, concreteNormal, facadeNormal, brickNormal, sandNormal, grassNormal,
   asphaltRoughness, concreteRoughness,
+  plasterTexture, plasterNormal, sidewalkTileTexture, sidewalkTileNormal,
+  corrugatedTexture, corrugatedNormal,
 } from "../textures";
+import { cc0Texture } from "../cc0Textures";
+import { gates, type QualityTier } from "../game/quality";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 
@@ -72,6 +76,18 @@ function makeSkyTexture(): THREE.CanvasTexture {
   grad.addColorStop(0.55, "#79b4c0"); grad.addColorStop(0.72, "#f2c184");
   grad.addColorStop(0.85, "#ff9a5c"); grad.addColorStop(1, "#e2703a");
   g.fillStyle = grad; g.fillRect(0, 0, 64, 512);
+  // Phase 5: horizon cloud band — soft horizontal streaks stacked just
+  // above the horizon line (v ≈ 0.60–0.78 of the dome's texture height),
+  // warm-lit from below so the sky stops reading as a bare gradient.
+  let s = 987; const sr = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+  for (let i = 0; i < 46; i++) {
+    const y = 300 + Math.pow(sr(), 1.5) * 105;
+    const wdt = 8 + sr() * 30, hgt = 1.6 + sr() * 4.2;
+    g.fillStyle = `rgba(255,238,218,${0.05 + sr() * 0.10})`;
+    g.beginPath(); g.ellipse(sr() * 64, y, wdt, hgt, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = `rgba(214,120,80,${0.04 + sr() * 0.06})`;
+    g.beginPath(); g.ellipse(sr() * 64, y + hgt * 1.4, wdt * 0.9, hgt * 0.7, 0, 0, Math.PI * 2); g.fill();
+  }
   return new THREE.CanvasTexture(c);
 }
 const SIGNS: { text: string; bg: string; fg: string; pos: [number, number, number]; rot: number }[] = [
@@ -223,7 +239,7 @@ function ShopFronts({ night }: { night: number }) {
   );
 }
 
-export default function World({ theme, night }: { theme: GameTheme; night: number }) {
+export default function World({ theme, night, quality }: { theme: GameTheme; night: number; quality: QualityTier }) {
   const water = useRef<THREE.MeshStandardMaterial>(null);
   const wheelSpin = useRef<THREE.Group>(null);
   const cabins = useRef<Array<THREE.Group | null>>([]);
@@ -269,17 +285,24 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
   // directionally instead of reading flat.
   const mats = useMemo(() => {
     const rough = 0.96 - night * 0.5;
-    const aV = asphaltTexture(); aV.repeat.set(1, 20);
-    const aH = asphaltTextureH(); aH.repeat.set(1, 20);
-    const cV = concreteTexture(); cV.repeat.set(1, 60);
-    const cH = concreteTextureH(); cH.repeat.set(1, 60);
-    const aNV = asphaltNormal(); aNV.repeat.set(1, 20);
-    const aNH = asphaltNormal().clone(); aNH.center.set(0.5, 0.5); aNH.rotation = Math.PI / 2; aNH.repeat.set(1, 20); aNH.needsUpdate = true;
-    const aRV = asphaltRoughness(); aRV.repeat.set(1, 20);
-    const aRH = asphaltRoughness().clone(); aRH.center.set(0.5, 0.5); aRH.rotation = Math.PI / 2; aRH.repeat.set(1, 20); aRH.needsUpdate = true;
-    const cNV = concreteNormal(); cNV.repeat.set(1, 60);
-    const cNH = concreteNormal().clone(); cNH.center.set(0.5, 0.5); cNH.rotation = Math.PI / 2; cNH.repeat.set(1, 60); cNH.needsUpdate = true;
-    const cRV = concreteRoughness(); cRV.repeat.set(1, 60);
+    const useCc0 = gates.cc0(quality);
+    const px = gates.cc0Px(quality);
+    const rot = (t: THREE.Texture, rx: number, ry: number) => { const c = t.clone(); c.center.set(0.5, 0.5); c.rotation = Math.PI / 2; c.repeat.set(rx, ry); c.needsUpdate = true; return c; };
+    // Phase 5 Step 4b: Medium/High pave the city with real CC0 photographs
+    // (Poly Haven asphalt_04 / concrete_pavement); Low keeps the procedural
+    // canvas set, which is also the fallback identity of the game.
+    const cc0H = (s: "asphalt" | "concrete", k: "diff" | "nor" | "rough", ry: number) => { const t = cc0Texture(s, k, px, "h"); t.center.set(0.5, 0.5); t.rotation = Math.PI / 2; t.repeat.set(1, ry); return t; };
+    const aV = useCc0 ? cc0Texture("asphalt", "diff", px) : asphaltTexture(); aV.repeat.set(1, 20);
+    const aH = useCc0 ? cc0H("asphalt", "diff", 20) : asphaltTextureH(); if (!useCc0) aH.repeat.set(1, 20);
+    const cV = useCc0 ? cc0Texture("concrete", "diff", px) : concreteTexture(); cV.repeat.set(1, 60);
+    const cH = useCc0 ? cc0H("concrete", "diff", 60) : concreteTextureH(); if (!useCc0) cH.repeat.set(1, 60);
+    const aNV = useCc0 ? cc0Texture("asphalt", "nor", px) : asphaltNormal(); aNV.repeat.set(1, 20);
+    const aNH = useCc0 ? cc0H("asphalt", "nor", 20) : rot(asphaltNormal(), 1, 20);
+    const aRV = useCc0 ? cc0Texture("asphalt", "rough", px) : asphaltRoughness(); aRV.repeat.set(1, 20);
+    const aRH = useCc0 ? cc0H("asphalt", "rough", 20) : rot(asphaltRoughness(), 1, 20);
+    const cNV = useCc0 ? cc0Texture("concrete", "nor", px) : concreteNormal(); cNV.repeat.set(1, 60);
+    const cNH = useCc0 ? cc0H("concrete", "nor", 60) : rot(concreteNormal(), 1, 60);
+    const cRV = useCc0 ? cc0Texture("concrete", "rough", px) : concreteRoughness(); cRV.repeat.set(1, 60);
     const nScale = new THREE.Vector2(0.55, 0.55);
     return {
       asphaltV: new THREE.MeshStandardMaterial({ map: aV, normalMap: aNV, normalScale: nScale, roughnessMap: aRV, roughness: rough, metalness: 0.04 + night * 0.1 }),
@@ -290,7 +313,7 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       edge: new THREE.MeshStandardMaterial({ color: "#e9e7de", roughness: 0.7, transparent: true, opacity: 0.78 }),
       yellow: new THREE.MeshStandardMaterial({ color: "#d9a41c", roughness: 0.7, transparent: true, opacity: 0.92 }),
     };
-  }, [night]);
+  }, [night, quality]);
 
   // ---- instanced street furniture of the road surface itself
   const markings = useMemo(() => {
@@ -436,28 +459,133 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
     return { r: mk("#ff3b30"), a: mk("#ffb340"), g: mk("#2fe07a") };
   }), []);
 
-  // ---- building materials: facade / brick / glass towers, cached
+  // ---- building materials: facade / brick / glass towers, cached.
+  // Phase 5 Step 4: district identity through MATERIALS, not just colour —
+  // Coral Shores builds in light shell plaster, The Docks in corrugated
+  // steel + stained concrete, Port Sable keeps brick/facade. Medium/High
+  // swap brick + plaster to the real CC0 photographs (Poly Haven).
   const buildingMats = useMemo(() => {
     const cache = new Map<string, THREE.MeshStandardMaterial>();
+    const useCc0 = gates.cc0(quality);
+    const px = gates.cc0Px(quality);
     return buildings.map((b) => {
-      const kind = b.glass ? "glass" : b.height < 15 ? "brick" : "facade";
+      const kind = b.glass ? "glass"
+        : b.district === "Coral Shores" ? "plaster"
+        : b.district === "The Docks" ? "corrugated"
+        : b.height < 15 ? "brick" : "facade";
       const key = `${kind}|${b.color}`;
       let m = cache.get(key);
       if (!m) {
-        m = kind === "glass"
-          ? new THREE.MeshStandardMaterial({ color: "#39657f", map: facadeTexture(), normalMap: facadeNormal(), normalScale: new THREE.Vector2(0.4, 0.4), roughness: 0.1, metalness: 0.6, envMapIntensity: 1.25 })
-          : new THREE.MeshStandardMaterial({ color: b.color, map: kind === "brick" ? brickTexture() : facadeTexture(), normalMap: kind === "brick" ? brickNormal() : facadeNormal(), normalScale: new THREE.Vector2(0.65, 0.65), roughness: 0.92 });
+        if (kind === "glass") {
+          m = new THREE.MeshStandardMaterial({ color: "#39657f", map: facadeTexture(), normalMap: facadeNormal(), normalScale: new THREE.Vector2(0.4, 0.4), roughness: 0.1, metalness: 0.6, envMapIntensity: 1.25 });
+        } else if (kind === "plaster") {
+          m = new THREE.MeshStandardMaterial({
+            color: b.color, roughness: 0.94,
+            map: useCc0 ? cc0Texture("plaster", "diff", px) : plasterTexture(),
+            normalMap: useCc0 ? cc0Texture("plaster", "nor", px) : plasterNormal(),
+            normalScale: new THREE.Vector2(0.5, 0.5),
+          });
+        } else if (kind === "corrugated") {
+          m = new THREE.MeshStandardMaterial({
+            color: b.color, roughness: 0.58, metalness: 0.38,
+            map: corrugatedTexture(), normalMap: corrugatedNormal(),
+            normalScale: new THREE.Vector2(0.8, 0.8),
+          });
+        } else if (kind === "brick" && useCc0) {
+          m = new THREE.MeshStandardMaterial({
+            color: b.color, roughness: 0.92,
+            map: cc0Texture("brick", "diff", px), normalMap: cc0Texture("brick", "nor", px),
+            normalScale: new THREE.Vector2(0.65, 0.65),
+          });
+        } else {
+          m = new THREE.MeshStandardMaterial({ color: b.color, map: kind === "brick" ? brickTexture() : facadeTexture(), normalMap: kind === "brick" ? brickNormal() : facadeNormal(), normalScale: new THREE.Vector2(0.65, 0.65), roughness: 0.92 });
+        }
         cache.set(key, m);
       }
       return m;
     });
+  }, [quality]);
+  // Coral Shores tiled sidewalks (Step 4a) — pale paving tiles, distinct
+  // from Port Sable's poured concrete.
+  const coralWalkMat = useMemo(() => {
+    const t = sidewalkTileTexture(); t.repeat.set(1, 42);
+    const n = sidewalkTileNormal(); n.repeat.set(1, 42);
+    return new THREE.MeshStandardMaterial({ map: t, normalMap: n, normalScale: new THREE.Vector2(0.5, 0.5), roughness: 0.9 });
   }, []);
+
+  // ---- Phase 5 Step 3d: bay water shader (Medium/High). Two scrolling
+  // procedural normal layers + fresnel deep↔sky + sun glint + rain ripple
+  // (uRain ← G.rainAmt) + analytic shore fades (beach line, Coral rect,
+  // outer edges) + manual linear-fog blend. Low keeps the Phase 4 sheet.
+  const waterShaderMat = useMemo(() => new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      uTime: { value: 0 },
+      uRain: { value: 0 },
+      uNight: { value: 0 },
+      uDeep: { value: new THREE.Color("#0d3a4a") },
+      uSky: { value: new THREE.Color("#7fb2c4") },
+      uSunColor: { value: new THREE.Color("#ffb066") },
+      uSunDir: { value: new THREE.Vector3(0.5, 0.35, 0.4) },
+      uNormalMap: { value: sandNormal() },
+      uFogColor: { value: new THREE.Color("#79b4c0") },
+      uFogNear: { value: 60 },
+      uFogFar: { value: 210 },
+    },
+    vertexShader: /* glsl */`
+      varying vec3 vWorld;
+      varying float vFogDepth;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorld = wp.xyz;
+        vec4 mv = viewMatrix * wp;
+        vFogDepth = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uTime, uRain, uNight, uFogNear, uFogFar;
+      uniform vec3 uDeep, uSky, uSunColor, uSunDir, uFogColor;
+      uniform sampler2D uNormalMap;
+      varying vec3 vWorld;
+      varying float vFogDepth;
+      void main() {
+        vec2 uv1 = vWorld.xz * 0.045 + vec2(uTime * 0.013, uTime * 0.008);
+        vec2 uv2 = vWorld.xz * 0.115 - vec2(uTime * 0.009, -uTime * 0.016);
+        vec3 t1 = texture2D(uNormalMap, uv1).rgb * 2.0 - 1.0;
+        vec3 t2 = texture2D(uNormalMap, uv2).rgb * 2.0 - 1.0;
+        float amp = 0.38 + uRain * 0.35;
+        float ripple = sin(vWorld.x * 2.3 + uTime * 2.8) * sin(vWorld.z * 1.9 - uTime * 2.3) * uRain * 0.22;
+        vec3 N = normalize(vec3((t1.x + t2.x) * amp + ripple, 1.0, (t1.y + t2.y) * amp - ripple));
+        vec3 viewDir = normalize(cameraPosition - vWorld);
+        float fres = pow(1.0 - max(dot(viewDir, N), 0.0), 3.0);
+        vec3 col = mix(uDeep, uSky, 0.16 + fres * 0.64);
+        vec3 refl = reflect(-viewDir, N);
+        float glint = pow(max(dot(refl, normalize(uSunDir)), 0.0), 240.0);
+        col += uSunColor * glint * 2.4;
+        col *= 1.0 - uNight * 0.38;
+        float a = 0.94;
+        a *= smoothstep(128.0, 137.0, vWorld.z);
+        vec2 dCoral = abs(vWorld.xz - vec2(70.0, 260.0)) - vec2(46.0, 70.0);
+        float dOut = length(max(dCoral, 0.0));
+        a *= smoothstep(0.0, 6.0, dOut);
+        a *= 1.0 - smoothstep(252.0, 279.0, abs(vWorld.x));
+        a *= 1.0 - smoothstep(348.0, 363.0, vWorld.z);
+        float f = smoothstep(uFogNear, uFogFar, vFogDepth);
+        col = mix(col, uFogColor, f);
+        gl_FragColor = vec4(col, a);
+      }`,
+  }), []);
   const winMat = useMemo(() => new THREE.MeshStandardMaterial({
     color: "#ffffff", emissive: new THREE.Color(theme.windowGlow), emissiveMap: winTex, map: winTex,
     emissiveIntensity: 0.25 + night * 1.3, roughness: 0.85,
   }), [winTex, theme.windowGlow, night]);
-  const containerMat = useMemo(() => CONTAINER_COLORS.map((col) =>
-    new THREE.MeshStandardMaterial({ color: col, map: containerTexture(), roughness: 0.6, metalness: 0.35 })), []);
+  const containerMat = useMemo(() => CONTAINER_COLORS.map((col, i) =>
+    // Phase 5: every other container wears the corrugated-steel canvas so
+    // the port reads as ridged metal, not painted boxes.
+    i % 2 === 0
+      ? new THREE.MeshStandardMaterial({ color: col, map: corrugatedTexture(), normalMap: corrugatedNormal(), normalScale: new THREE.Vector2(0.9, 0.9), roughness: 0.52, metalness: 0.42 })
+      : new THREE.MeshStandardMaterial({ color: col, map: containerTexture(), roughness: 0.6, metalness: 0.35 })), []);
 
   // ---- nightclub queue: 3 static humanoids idling outside Club Solace
   const clubQueue = useMemo<HumanoidRig[]>(() => [
@@ -466,8 +594,14 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
     buildHumanoid({ top: "#e8e4da", bottom: "#274268", skin: "#8d5524", hair: "#14100e", topStyle: "tank", gender: "m", hairStyle: "cap", tattooSleeve: true, sunglasses: true }),
   ], []);
 
-  useFrame(({ clock }) => {
+  useFrame(({ clock, scene }) => {
     const t = clock.elapsedTime;
+    if (scene.fog instanceof THREE.Fog) {
+      const u = waterShaderMat.uniforms;
+      (u.uFogColor.value as THREE.Color).setHex(scene.fog.color.getHex());
+      u.uFogNear.value = scene.fog.near;
+      u.uFogFar.value = scene.fog.far;
+    }
     if (water.current) {
       water.current.emissiveIntensity = 0.15 + Math.sin(t * 1.4) * 0.08;
       water.current.color.set(theme.water).offsetHSL(0, 0, Math.sin(t * 0.7) * 0.02);
@@ -475,6 +609,16 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       if (water.current.normalMap) {
         water.current.normalMap.offset.set(t * 0.008, t * 0.005);
       }
+    }
+    if (gates.waterShader(quality)) {
+      const u = waterShaderMat.uniforms;
+      u.uTime.value = t;
+      u.uRain.value = G.rainAmt;
+      u.uNight.value = night;
+      (u.uDeep.value as THREE.Color).set(theme.water);
+      (u.uSky.value as THREE.Color).set(theme.sky);
+      (u.uSunColor.value as THREE.Color).set(theme.sunColor);
+      if (sunDiscRef.current) (u.uSunDir.value as THREE.Vector3).copy(sunDiscRef.current.position).normalize();
     }
     if (domeMat.current) {
       const base = theme.id === "midnight" ? "#3a4a68" : theme.id === "noir" ? "#9a9a9a" : "#ffffff";
@@ -585,11 +729,19 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       {/* beach sand — warm textured sand */}
       <mesh position={[0, 0.0, 121]} receiveShadow><boxGeometry args={[290, 0.1, 14]} /><meshStandardMaterial map={sandTex} normalMap={sandNormal()} normalScale={new THREE.Vector2(0.5, 0.5)} roughness={1} /></mesh>
       {/* harbour + bay water — one sheet from Port Sable beach around Coral
-          Shores (animated emissive shimmer + drifting ripple normals) */}
-      <mesh position={[0, -0.05, WATER_Z + 118]} receiveShadow>
-        <boxGeometry args={[560, 0.08, 236]} />
-        <meshStandardMaterial ref={water} color={theme.water} emissive={theme.water} emissiveIntensity={0.2} roughness={0.35} metalness={0.1} normalMap={sandNormal()} normalScale={new THREE.Vector2(0.32, 0.32)} />
-      </mesh>
+          Shores. Phase 5: Medium/High get the custom shader (fresnel, sun
+          glint, rain ripples, shore fades); Low keeps the Phase 4 sheet. */}
+      {gates.waterShader(quality) ? (
+        <mesh position={[0, -0.02, WATER_Z + 118]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[560, 236]} />
+          <primitive object={waterShaderMat} attach="material" />
+        </mesh>
+      ) : (
+        <mesh position={[0, -0.05, WATER_Z + 118]} receiveShadow>
+          <boxGeometry args={[560, 0.08, 236]} />
+          <meshStandardMaterial ref={water} color={theme.water} emissive={theme.water} emissiveIntensity={0.2} roughness={0.35} metalness={0.1} normalMap={sandNormal()} normalScale={new THREE.Vector2(0.32, 0.32)} />
+        </mesh>
+      )}
       {/* ======== CORAL SHORES landmass (Phase 4): island slab + beach + grid ======== */}
       <mesh position={[70, -0.22, 260]} receiveShadow>
         <boxGeometry args={[92, 0.5, 140]} /><meshStandardMaterial map={grassTex} normalMap={grassNormal()} normalScale={new THREE.Vector2(0.5, 0.5)} color="#b9c4a4" roughness={1} />
@@ -603,6 +755,13 @@ export default function World({ theme, night }: { theme: GameTheme; night: numbe
       {CORAL_ROAD_Z.map((c) => (
         <mesh key={`cz${c}`} position={[70, 0.06, c]} receiveShadow><boxGeometry args={[84, 0.12, ROAD_WIDTH]} /><primitive object={mats.asphaltH} attach="material" /></mesh>
       ))}
+      {/* Coral tiled sidewalks — pale paving-tile strips flanking the grid */}
+      {CORAL_ROAD_X.map((c) => [-7.45, 7.45].map((o) => (
+        <mesh key={`cw${c}${o}`} position={[c + o, 0.055, 260]} receiveShadow><boxGeometry args={[1.9, 0.11, 128]} /><primitive object={coralWalkMat} attach="material" /></mesh>
+      )))}
+      {CORAL_ROAD_Z.map((c) => [-7.45, 7.45].map((o) => (
+        <mesh key={`cwz${c}${o}`} position={[70, 0.055, c + o]} receiveShadow><boxGeometry args={[84, 0.11, 1.9]} /><primitive object={coralWalkMat} attach="material" /></mesh>
+      )))}
       {/* pier */}
       <mesh position={[0, 0.06, 122]} receiveShadow><boxGeometry args={[10, 0.16, 16]} /><meshStandardMaterial color="#8a6b48" /></mesh>
 

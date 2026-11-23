@@ -83,7 +83,8 @@ const matCache = new Map<string, THREE.MeshStandardMaterial>();
 function fabricMat(color: string): THREE.MeshStandardMaterial {
   const key = `f:${color}`;
   let m = matCache.get(key);
-  if (!m) { m = new THREE.MeshStandardMaterial({ color, map: fabricTexture(), roughness: 0.88 }); matCache.set(key, m); }
+  // Phase 5 Step 6: cloth weave as a bump map so fabric catches raking light
+  if (!m) { m = new THREE.MeshStandardMaterial({ color, map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: 0.6, roughness: 0.88 }); matCache.set(key, m); }
   return m;
 }
 function plainMat(key: string, color: string, roughness: number, metalness = 0): THREE.MeshStandardMaterial {
@@ -95,7 +96,9 @@ function plainMat(key: string, color: string, roughness: number, metalness = 0):
 function skinMat(c: string): THREE.MeshStandardMaterial {
   const k = `skin:${c}`;
   let m = matCache.get(k);
-  if (!m) { m = new THREE.MeshStandardMaterial({ color: c, map: skinTexture(), roughness: 0.62 }); matCache.set(k, m); }
+  // Phase 5 Step 6: subtle skin sheen (roughness 0.55 + a touch of env
+  // response) instead of the flat 0.62 matte — reads as skin, not clay.
+  if (!m) { m = new THREE.MeshStandardMaterial({ color: c, map: skinTexture(), roughness: 0.55, envMapIntensity: 0.45 }); matCache.set(k, m); }
   return m;
 }
 function hairMatFn(c: string): THREE.MeshStandardMaterial {
@@ -109,7 +112,7 @@ const faceMats = new Map<string, THREE.MeshStandardMaterial>();
 function faceMat(variant: "m" | "f" | "beard"): THREE.MeshStandardMaterial {
   let m = faceMats.get(variant);
   if (!m) {
-    m = new THREE.MeshStandardMaterial({ map: faceTexture(variant), transparent: true, roughness: 0.62, depthWrite: false });
+    m = new THREE.MeshStandardMaterial({ map: faceTexture(variant), transparent: true, roughness: 0.55, envMapIntensity: 0.45, depthWrite: false });
     faceMats.set(variant, m);
   }
   return m;
@@ -133,10 +136,10 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
   const topMats: THREE.MeshStandardMaterial[] = [];
   // Top material is NOT cached-shared for the player (theme recolours it),
   // so each rig gets its own top fabric material instance.
-  const topMat = new THREE.MeshStandardMaterial({ color: o.top, map: fabricTexture(), roughness: 0.88 });
+  const topMat = new THREE.MeshStandardMaterial({ color: o.top, map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: 0.6, roughness: 0.88 });
   topMats.push(topMat);
   const sleeveMat = style === "varsity"
-    ? new THREE.MeshStandardMaterial({ color: o.sleeve ?? "#e8e4da", map: fabricTexture(), roughness: 0.88 })
+    ? new THREE.MeshStandardMaterial({ color: o.sleeve ?? "#e8e4da", map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: 0.6, roughness: 0.88 })
     : topMat;
   if (sleeveMat !== topMat) topMats.push(sleeveMat);
   const tattooMat = new THREE.MeshStandardMaterial({ color: "#5a4638", map: fabricTexture(), roughness: 0.7 });

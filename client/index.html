@@ -14,10 +14,11 @@
   <body>
     <div id="root"></div>
     <script>
-      // Game surface guards: no context menu, no text selection starts.
+      // Harborfall is a game, not a document: no text selection, no iOS
+      // callout, no context menu anywhere over the shell (hotfix 5456f35,
+      // re-applied in the Phase 5 tree).
       document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
       document.addEventListener("selectstart", function (e) { e.preventDefault(); });
-      document.addEventListener("dragstart", function (e) { e.preventDefault(); });
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

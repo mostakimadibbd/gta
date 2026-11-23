@@ -4,7 +4,7 @@
 // only writes the HUD prompt when Interiors left it empty.
 import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { G, addCrime, toast, stashTotal } from "../game/store";
+import { G, addCrime, toast, stashTotal, bark } from "../game/store";
 import { GARAGE_ZONES, REGISTERS, PAWN_SHOP, INTERIORS } from "../world";
 import { sfx } from "../game/audio";
 import { giveCash, giveItem, rollLootItem, sellStash } from "../game/theft";
@@ -112,6 +112,7 @@ export default function Interactions() {
             } else {
               sfx.shout();
               toast("Hey! Thief! Someone call the harbour patrol!");
+              bark("Bystander", "Hey! Thief! Someone call the harbour patrol!");
               victim.fleeUntil = t + 3.5;
               addCrime("theft");
             }
