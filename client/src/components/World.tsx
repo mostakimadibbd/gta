@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { buildings, trees, props, lamps, palms, houses, ROAD_COORDS, ROAD_WIDTH, WATER_Z, MANSION, FUEL_STATIONS, OVERLOOK, BRIDGE, CORAL_ROAD_X, CORAL_ROAD_Z, REGISTERS, PAWN_SHOP, groundYAt, NORTH_ROAD_X, NORTH_ROAD_Z, NORTH_MANSIONS, DEALER_CARS, VENDOR, HOSPITAL_DOOR, ISLAND } from "../world";
@@ -19,6 +19,7 @@ import { gates, type QualityTier } from "../game/quality";
 import CarBody from "./CarBody";
 import PlanarWater from "./PlanarWater";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
+import { seasonFoliage, seasonWaterHSL } from "../game/season";
 
 // ---------- local canvas textures ----------
 function makeWindowNightTexture(): THREE.CanvasTexture {
@@ -140,21 +141,58 @@ const STREET_SIGNS = [
 const LIGHT_SPOTS: [number, number][] = [[-20, -20], [-20, 20], [20, -20], [20, 20], [-60, 20], [60, -20], [-20, 60], [20, -60]];
 const CONTAINER_COLORS = ["#b3402e", "#2e5f8a", "#3f7a4d", "#c9711f", "#6a7076", "#7a4a6b"];
 
-function Tree({ x, z, scale }: { x: number; z: number; scale: number }) {
-  // rebuilt pine: tapered trunk + THREE jittered foliage layers (dark rich
-  // greens, smooth shading) + a rounded bush blob at the base on some trees
-  const j = (n: number) => ((Math.sin(x * 12.9898 + z * 78.233 + n * 37.7) * 43758.5453) % 1) * 0.16;
-  const bush = Math.abs(Math.sin(x * 3.1 + z * 1.7)) > 0.45;
-  return (
-    <group position={[x, 0, z]} scale={scale}>
-      <mesh position={[0, 0.85, 0]} castShadow><cylinderGeometry args={[0.13, 0.22, 1.7, 7]} /><meshStandardMaterial color="#5f4630" roughness={0.95} /></mesh>
-      <mesh position={[j(1), 2.0, j(2)]} castShadow><coneGeometry args={[1.12, 2.2, 9]} /><meshStandardMaterial color="#1f5c3d" roughness={0.9} /></mesh>
-      <mesh position={[j(3), 2.85, j(4)]} castShadow><coneGeometry args={[0.88, 1.9, 9]} /><meshStandardMaterial color="#276e47" roughness={0.9} /></mesh>
-      <mesh position={[j(5), 3.6, j(6)]} castShadow><coneGeometry args={[0.6, 1.55, 9]} /><meshStandardMaterial color="#2f7d4f" roughness={0.9} /></mesh>
-      {bush && <mesh position={[0.85, 0.42, 0.5]} castShadow><icosahedronGeometry args={[0.55, 1]} /><meshStandardMaterial color="#24513a" roughness={0.95} /></mesh>}
-      {bush && <mesh position={[-0.7, 0.34, -0.55]} castShadow><icosahedronGeometry args={[0.44, 1]} /><meshStandardMaterial color="#2c5f42" roughness={0.95} /></mesh>}
-    </group>
-  );
+// Phase 12: the pine forest is INSTANCED — ~75 trees × up to 6 meshes
+// (trunk, 3 jittered foliage cones, 2 bush blobs) were ~370 draw
+// calls; the whole forest is now 6 instanced meshes. The per-tree
+// jitter + bush placement replicate the old per-tree component's
+// deterministic functions EXACTLY, so the forest is unchanged tree
+// for tree (same geometries, colours, shadow flags).
+// Phase 13 SEASONS: the instanced tree set's five foliage materials
+// (3 cone tiers + 2 bush tiers; the trunk never changes) register
+// here so SeasonFoliage can re-tint them as the year turns — spring
+// fresh green + cream blossom, summer deep, autumn amber, winter
+// grey-green. Palms are NOT in this set: they stay green all year
+// (subtropical harbour — see game/season.ts).
+const FOLIAGE_MATS: THREE.MeshStandardMaterial[] = [];
+function SeasonFoliage() {
+  useFrame(() => {
+    for (let i = 0; i < FOLIAGE_MATS.length; i++) FOLIAGE_MATS[i].color.copy(seasonFoliage(i));
+  });
+  return null;
+}
+
+function TreeSet() {
+  const set = useMemo(() => {
+    const j = (x: number, z: number, n: number) => ((Math.sin(x * 12.9898 + z * 78.233 + n * 37.7) * 43758.5453) % 1) * 0.16;
+    const bushAt = (x: number, z: number) => Math.abs(Math.sin(x * 3.1 + z * 1.7)) > 0.45;
+    const compose = (x: number, z: number, s: number, lx: number, ly: number, lz: number) => {
+      const m = new THREE.Matrix4().makeScale(s, s, s);
+      m.setPosition(x, 0, z);
+      return m.multiply(new THREE.Matrix4().makeTranslation(lx, ly, lz));
+    };
+    const mk = (geo: THREE.BufferGeometry, color: string, rough: number, mats: THREE.Matrix4[]) => {
+      const im = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color, roughness: rough }), Math.max(1, mats.length));
+      im.count = mats.length;
+      mats.forEach((m, i) => im.setMatrixAt(i, m));
+      im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.castShadow = true;
+      return im;
+    };
+    const bushTrees = trees.filter((t) => bushAt(t.x, t.z));
+    const meshes = [
+      mk(new THREE.CylinderGeometry(0.13, 0.22, 1.7, 7), "#5f4630", 0.95, trees.map((t) => compose(t.x, t.z, t.scale, 0, 0.85, 0))),
+      mk(new THREE.ConeGeometry(1.12, 2.2, 9), "#1f5c3d", 0.9, trees.map((t) => compose(t.x, t.z, t.scale, j(t.x, t.z, 1), 2.0, j(t.x, t.z, 2)))),
+      mk(new THREE.ConeGeometry(0.88, 1.9, 9), "#276e47", 0.9, trees.map((t) => compose(t.x, t.z, t.scale, j(t.x, t.z, 3), 2.85, j(t.x, t.z, 4)))),
+      mk(new THREE.ConeGeometry(0.6, 1.55, 9), "#2f7d4f", 0.9, trees.map((t) => compose(t.x, t.z, t.scale, j(t.x, t.z, 5), 3.6, j(t.x, t.z, 6)))),
+      mk(new THREE.IcosahedronGeometry(0.55, 1), "#24513a", 0.95, bushTrees.map((t) => compose(t.x, t.z, t.scale, 0.85, 0.42, 0.5))),
+      mk(new THREE.IcosahedronGeometry(0.44, 1), "#2c5f42", 0.95, bushTrees.map((t) => compose(t.x, t.z, t.scale, -0.7, 0.34, -0.55))),
+    ];
+    // Phase 13: register the foliage materials (indices 1..5) for the
+    // seasonal re-tint; the trunk (0) keeps its bark colour all year
+    FOLIAGE_MATS.length = 0;
+    meshes.forEach((im, i) => { if (i >= 1) FOLIAGE_MATS.push(im.material as THREE.MeshStandardMaterial); });
+    return meshes;
+  }, []);
+  return (<>{set.map((im, i) => <primitive key={i} object={im} />)}</>);
 }
 
 // shared frond material (canvas palm-leaf alpha texture, double-sided)
@@ -181,11 +219,8 @@ function PalmTree({ x, z, scale, lean }: { x: number; z: number; scale: number; 
   });
   return (
     <group position={[x, 0, z]} scale={scale}>
-      {[0, 1, 2, 3].map((i) => (
-        <mesh key={i} position={[lean * i * i * 0.16, 0.85 + i * 1.42, 0]} rotation={[0, 0, -lean * 0.5]} castShadow>
-          <cylinderGeometry args={[0.145 - i * 0.018, 0.175 - i * 0.018, 1.75, 7]} /><meshStandardMaterial color="#7d5f3d" roughness={0.95} />
-        </mesh>
-      ))}
+      {/* Phase 12: trunk segments are instanced scene-wide (PalmTrunks
+          below) — this component keeps only the swaying crown + nuts */}
       <group ref={crown} position={[topX, 6.15, 0]}>
         {[0, 1, 2, 3, 4, 5, 6, 7].map((k) => (
           <group key={k} rotation={[0, (k * Math.PI) / 4 + (k % 2) * 0.2, 0]}>
@@ -215,6 +250,37 @@ function buildInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, items: X
   im.frustumCulled = false;
   im.receiveShadow = true;
   return im;
+}
+
+// Phase 12: palm TRUNKS instanced scene-wide — every palm (scatter,
+// beach row, mansion pair) × 4 trunk segments was ~390 draw calls;
+// now 4 instanced meshes (one per segment level). The matrix chain
+// replicates PalmTree's group transform (position + uniform scale) ×
+// the segment's local offset/tilt exactly; crowns stay per-palm
+// because their fronds sway.
+const BEACH_PALMS = [-102, -88, -61, -47, -26, -6, 15, 35, 48, 76, 103].map((x, i) => ({
+  x, z: 109.5, scale: 0.95 + (i % 3) * 0.12, lean: (i % 2 ? -1 : 1) * 0.06,
+}));
+const ALL_PALMS = [...palms, ...BEACH_PALMS,
+  { x: MANSION.x + 8.6, z: MANSION.z - 6, scale: 1.05, lean: 0.1 },
+  { x: MANSION.x - 9.4, z: MANSION.z - 6, scale: 1.0, lean: -0.12 }];
+function PalmTrunks() {
+  const set = useMemo(() => {
+    const mat = new THREE.MeshStandardMaterial({ color: "#7d5f3d", roughness: 0.95 });
+    return [0, 1, 2, 3].map((i) => {
+      const im = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.145 - i * 0.018, 0.175 - i * 0.018, 1.75, 7), mat, ALL_PALMS.length);
+      const m = new THREE.Matrix4(); const seg = new THREE.Matrix4(); const q = new THREE.Quaternion(); const one = new THREE.Vector3(1, 1, 1);
+      ALL_PALMS.forEach((pl, idx) => {
+        q.setFromEuler(new THREE.Euler(0, 0, -pl.lean * 0.5));
+        seg.compose(new THREE.Vector3(pl.lean * i * i * 0.16, 0.85 + i * 1.42, 0), q, one);
+        m.makeScale(pl.scale, pl.scale, pl.scale).setPosition(pl.x, 0, pl.z).multiply(seg);
+        im.setMatrixAt(idx, m);
+      });
+      im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.castShadow = true;
+      return im;
+    });
+  }, []);
+  return (<>{set.map((im, i) => <primitive key={i} object={im} />)}</>);
 }
 
 let seed = 31;
@@ -329,6 +395,13 @@ function NorthgateGroup({ night }: { night: number }) {
       {/* dealership: forecourt, display cars, sign */}
       <mesh position={[-36, 0.09, -236.5]} receiveShadow><boxGeometry args={[19, 0.12, 12]} /><meshStandardMaterial color="#9aa0a2" roughness={0.7} /></mesh>
       <mesh position={[-36, 6.9, -230.4]}><planeGeometry args={[11, 1.9]} /><meshStandardMaterial map={motorsTex} emissive="#ffffff" emissiveMap={motorsTex} emissiveIntensity={0.25 + night * 0.85} /></mesh>
+      {/* Phase 13: the showroom's GLASS FRONT — the pocket interior's
+          street face (door prompt at (-36,-233)); warm showroom glow
+          behind the glass at night, exotics visible as silhouettes */}
+      <mesh position={[-36, 1.75, -230.56]}><boxGeometry args={[15.5, 3.5, 0.08]} /><meshStandardMaterial color="#a8ccd4" roughness={0.12} metalness={0.55} transparent opacity={0.55} emissive="#ffca7a" emissiveIntensity={0.06 + night * 0.4} /></mesh>
+      {[-43.5, -28.5].map((x) => <mesh key={x} position={[x, 1.75, -230.6]}><boxGeometry args={[0.22, 3.5, 0.1]} /><meshStandardMaterial color="#2c3644" metalness={0.5} roughness={0.4} /></mesh>)}
+      <mesh position={[-36, 3.55, -230.6]}><boxGeometry args={[15.7, 0.22, 0.1]} /><meshStandardMaterial color="#2c3644" metalness={0.5} roughness={0.4} /></mesh>
+      <mesh position={[-36, 1.3, -230.62]}><boxGeometry args={[1.7, 2.6, 0.1]} /><meshStandardMaterial color="#14202a" roughness={0.25} metalness={0.4} emissive="#ffca7a" emissiveIntensity={night * 0.25} /></mesh>
       {DEALER_CARS.map((dc, i) => (
         <group key={i} position={[-43 + i * 7, 0.15, -238]} rotation={[0, 0.12, 0]}>
           <CarBody kind={dc.kind} color={dc.color} />
@@ -389,6 +462,7 @@ function NorthgateGroup({ night }: { night: number }) {
 function Phase7Frontages({ night }: { night: number }) {
   const policeTex = useMemo(() => makeSignTexture("HARBOUR PATROL HQ", "#16283e", "#cfe0f2", 512), []);
   const clinicTex = useMemo(() => makeSignTexture("SABLE CLINIC", "#eef2f0", "#c22e2e", 512), []);
+  const cafeTex = useMemo(() => makeSignTexture("CAFÉ CORAL", "#2b1c10", "#ffca7a", 512), []);
   const restTex = useMemo(() => makeSignTexture("MARINA TABLE", "#241a12", "#ffca7a", 512), []);
   const aptTex = useMemo(() => makeSignTexture("CORAL SHORES APARTMENTS", "#17303a", "#ffe9c9", 512), []);
   const washTex = useMemo(() => makeSignTexture("NORTHGATE CAR WASH", "#0f2c38", "#7fd8e8", 512), []);
@@ -413,6 +487,22 @@ function Phase7Frontages({ night }: { night: number }) {
         <mesh position={[3.9, 3.1, -4.13]}><boxGeometry args={[1.1, 0.34, 0.06]} /><meshStandardMaterial color="#c22e2e" emissive="#c22e2e" emissiveIntensity={0.25 + night * 0.6} /></mesh>
         {[-4.2, -1.4, 1.4].map((x) => <mesh key={x} position={[x, 3.1, -4.13]}><boxGeometry args={[1.7, 1.5, 0.06]} />{winMat}</mesh>)}
         <mesh position={[0, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#5c6a66" roughness={0.4} /></mesh>
+      </group>
+      {/* Café Coral (8, 106.5) — Phase 13: the Docks strip's coffee
+          house; warm windows, an amber awning, steam over the door */}
+      <group position={[8, 0, 106.5]}>
+        <mesh position={[0, 2.75, 0]} castShadow receiveShadow><boxGeometry args={[10, 5.5, 8.2]} /><meshStandardMaterial color="#e3d3b8" roughness={0.85} /></mesh>
+        <mesh position={[0, 5.65, 0]} castShadow><boxGeometry args={[10.4, 0.3, 8.6]} /><meshStandardMaterial color="#7a4a2b" roughness={0.85} /></mesh>
+        <mesh position={[0, 4.6, -4.16]} rotation={[0, Math.PI, 0]}><planeGeometry args={[6.8, 1.2]} /><meshStandardMaterial map={cafeTex} emissive="#ffffff" emissiveMap={cafeTex} emissiveIntensity={0.3 + night * 0.85} /></mesh>
+        <mesh position={[0, 3.1, -4.35]} rotation={[0.5, 0, 0]}><boxGeometry args={[9.2, 0.08, 1.6]} /><meshStandardMaterial color="#b3542e" roughness={0.8} /></mesh>
+        {[-3.1, 3.1].map((x) => <mesh key={x} position={[x, 1.55, -4.13]}><boxGeometry args={[2.4, 1.9, 0.06]} /><meshStandardMaterial color="#ffd9a0" emissive="#ffca7a" emissiveIntensity={0.35 + night * 1.25} /></mesh>)}
+        <mesh position={[0, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#2b1c10" roughness={0.5} /></mesh>
+        {[-3.6, 3.6].map((x) => (
+          <group key={x} position={[x, 0, -4.5]}>
+            <mesh position={[0, 0.26, 0]} castShadow><boxGeometry args={[1.7, 0.52, 0.55]} /><meshStandardMaterial color="#7a4a2b" roughness={0.9} /></mesh>
+            <mesh position={[0, 0.62, 0]}><boxGeometry args={[1.6, 0.28, 0.45]} /><meshStandardMaterial color="#2c5f42" roughness={1} /></mesh>
+          </group>
+        ))}
       </group>
       {/* Marina Table restaurant (64, 218) — Coral waterfront */}
       <group position={[64, 0, 218]}>
@@ -510,6 +600,43 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
   const sunDiscRef = useRef<THREE.Group>(null);
   const cloudGroup = useRef<THREE.Group>(null);
   const cloudMaterial = useMemo(() => new THREE.SpriteMaterial({ map: cloudTexture(), transparent: true, opacity: 0.55, depthWrite: false, fog: false }), []);
+  // ---- Phase 12 instancing: street lamps + street props ----
+  // ~300 lamps × 2 meshes (pole + head) were ~600 draw calls; the set
+  // is now 2 instanced meshes with the same geometries/materials. The
+  // head material is shared — its emissive still rides the night
+  // bucket via the effect below (no rebuild on bucket change).
+  const lampSet = useMemo(() => {
+    const headMat = new THREE.MeshStandardMaterial({ color: theme.lampGlow, emissive: theme.lampGlow, emissiveIntensity: 0.4 + night * 2.2 });
+    const unit: [number, number, number] = [1, 1, 1];
+    const poles = buildInstanced(new THREE.CylinderGeometry(0.09, 0.14, 5.6, 5), new THREE.MeshStandardMaterial({ color: "#39434b" }),
+      lamps.map(([x, y, z]) => ({ p: [x, y + 2.8, z] as [number, number, number], s: unit })));
+    const heads = buildInstanced(new THREE.BoxGeometry(0.45, 0.2, 0.35), headMat,
+      lamps.map(([x, y, z]) => ({ p: [x, y + 5.6, z] as [number, number, number], s: unit })));
+    poles.castShadow = false; poles.receiveShadow = false; // match the old per-lamp meshes
+    heads.castShadow = false; heads.receiveShadow = false;
+    return { poles, heads, headMat };
+    // night is applied via the effect below, not a rebuild
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme]);
+  useEffect(() => { lampSet.headMat.emissiveIntensity = 0.4 + night * 2.2; }, [lampSet, night]);
+  // Street props (benches + hydrants; crates stay with Phase 7's
+  // destructibles): ~85 individual meshes → 2 instanced meshes, same
+  // boxes/colours/rotations, castShadow as before.
+  const propSet = useMemo(() => {
+    const mk = (geo: THREE.BufferGeometry, color: string, items: Array<{ x: number; z: number; rot: number; y: number }>) => {
+      if (items.length === 0) return null;
+      const im = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color, flatShading: true }), items.length);
+      const m = new THREE.Matrix4(); const q = new THREE.Quaternion(); const e = new THREE.Euler(); const one = new THREE.Vector3(1, 1, 1);
+      items.forEach((it, i) => { e.set(0, it.rot, 0); q.setFromEuler(e); m.compose(new THREE.Vector3(it.x, it.y, it.z), q, one); im.setMatrixAt(i, m); });
+      im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.castShadow = true;
+      return im;
+    };
+    const vis = props.filter((p) => p.kind !== "crate");
+    return {
+      benches: mk(new THREE.BoxGeometry(1.8, 0.15, 0.5), "#6b4a2f", vis.filter((p) => p.kind === "bench").map((p) => ({ x: p.x, z: p.z, rot: p.rot, y: 0.35 }))),
+      hydrants: mk(new THREE.BoxGeometry(0.35, 0.8, 0.35), "#dc2626", vis.filter((p) => p.kind === "hydrant").map((p) => ({ x: p.x, z: p.z, rot: p.rot, y: 0.4 }))),
+    };
+  }, []);
   const lampGlowMat = useRef<THREE.PointsMaterial>(null);
   const lampGlowGeo = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -853,7 +980,10 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
     }
     if (water.current) {
       water.current.emissiveIntensity = 0.15 + Math.sin(t * 1.4) * 0.08;
-      water.current.color.set(theme.water).offsetHSL(0, 0, Math.sin(t * 0.7) * 0.02);
+      // Phase 13: the bay takes the season's tint too (summer brighter
+      // + richer, winter greyer + darker) under the breathing shimmer
+      const wsl = seasonWaterHSL();
+      water.current.color.set(theme.water).offsetHSL(wsl[0], wsl[1], wsl[2] + Math.sin(t * 0.7) * 0.02);
       // Visual V5: drifting ripple normals — the surface actually moves
       if (water.current.normalMap) {
         water.current.normalMap.offset.set(t * 0.008, t * 0.005);
@@ -864,7 +994,8 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
       u.uTime.value = t;
       u.uRain.value = G.rainAmt;
       u.uNight.value = night;
-      (u.uDeep.value as THREE.Color).set(theme.water);
+      const wsl2 = seasonWaterHSL();
+      (u.uDeep.value as THREE.Color).set(theme.water).offsetHSL(wsl2[0], wsl2[1], wsl2[2]);
       (u.uSky.value as THREE.Color).set(theme.sky);
       (u.uSunColor.value as THREE.Color).set(theme.sunColor);
       if (sunDiscRef.current) (u.uSunDir.value as THREE.Vector3).copy(sunDiscRef.current.position).normalize();
@@ -1222,31 +1353,23 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
           <mesh position={[3.4, 0.95, 6.2]}><boxGeometry args={[0.55, 0.32, 0.3]} /><meshStandardMaterial color="#b3312c" /></mesh>
         </group>
       ))}
-      {trees.map((t, i) => <Tree key={i} {...t} />)}
+      <TreeSet />
+      <SeasonFoliage />
+      <PalmTrunks />
       {palms.map((pl, i) => <PalmTree key={i} {...pl} />)}
       {/* Phase 10 density: a palm row along the beach promenade filling
           the gaps in the generated scatter (visual only, like all palms) */}
-      {[-102, -88, -61, -47, -26, -6, 15, 35, 48, 76, 103].map((x, i) => (
-        <PalmTree key={`bp${i}`} x={x} z={109.5} scale={0.95 + (i % 3) * 0.12} lean={(i % 2 ? -1 : 1) * 0.06} />
+      {BEACH_PALMS.map((pl, i) => (
+        <PalmTree key={`bp${i}`} {...pl} />
       ))}
-      {/* street lamps */}
-      {lamps.map(([x, y, z], i) => (
-        <group key={i} position={[x, y, z]}>
-          <mesh position={[0, 2.8, 0]}><cylinderGeometry args={[0.09, 0.14, 5.6, 5]} /><meshStandardMaterial color="#39434b" /></mesh>
-          <mesh position={[0, 5.6, 0]}>
-            <boxGeometry args={[0.45, 0.2, 0.35]} />
-            <meshStandardMaterial color={theme.lampGlow} emissive={theme.lampGlow} emissiveIntensity={0.4 + night * 2.2} />
-          </mesh>
-        </group>
-      ))}
+      {/* street lamps — Phase 12: instanced (2 draw calls, was ~2/lamp) */}
+      <primitive object={lampSet.poles} />
+      <primitive object={lampSet.heads} />
       {/* props — Phase 7: crates are owned by the destructibles system
-          (components/Phase7.tsx), so they're filtered out here */}
-      {props.filter((p) => p.kind !== "crate").map((p, i) => (
-        <mesh key={i} position={[p.x, p.kind === "bench" ? 0.35 : 0.4, p.z]} rotation={[0, p.rot, 0]} castShadow>
-          <boxGeometry args={p.kind === "bench" ? [1.8, 0.15, 0.5] : p.kind === "crate" ? [1, 0.8, 1] : [0.35, 0.8, 0.35]} />
-          <meshStandardMaterial color={p.kind === "hydrant" ? "#dc2626" : p.kind === "crate" ? "#a3764f" : "#6b4a2f"} flatShading />
-        </mesh>
-      ))}
+          (components/Phase7.tsx), so they're filtered out here.
+          Phase 12: benches + hydrants instanced (see propSet above) */}
+      {propSet.benches && <primitive object={propSet.benches} />}
+      {propSet.hydrants && <primitive object={propSet.hydrants} />}
       {/* fake-brand signs / billboards */}
       {SIGNS.map((s, i) => (
         <mesh key={i} position={s.pos} rotation={[0, s.rot, 0]}>

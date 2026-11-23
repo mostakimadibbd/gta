@@ -4,10 +4,11 @@ import * as THREE from "three";
 import type { PhysicsEngine } from "../physics/GamePhysics";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
 import { isBlocked, FUEL_STATIONS, groundYAt, isWaterAt, BRIDGE, buildings, surfaceGripBase, surfaceKindAt } from "../world";
-import { G, addCrime, toast } from "../game/store";
+import { G, addCrime, toast, noteLastCar } from "../game/store";
 import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
 import { gyroSteer } from "../game/gyro";
+import { SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
 import { completeBreakIn, carAlarms } from "../game/theft";
 import { J } from "../game/jobs";
 import { padKeys, padAxes } from "../game/gamepad";
@@ -42,6 +43,9 @@ function LiveCarBody({ index, steerRef, brakeRef, suspRef }: { index: number; st
 
 /** Phase 10: [halfWidth, halfLength] per kind for the vehicle_body
  * wheel-height sampling (matches CarBody's wheel placement). */
+// Phase 12: reused per-wheel ground-height tuple for the C++
+// vehicle_body step (consumed synchronously inside the step)
+const wheelHScratch: [number, number, number, number] = [0, 0, 0, 0];
 const BODY_DIMS: Record<string, [number, number]> = {
   sedan: [1.0, 1.85], taxi: [1.0, 1.85], coupe: [1.0, 1.95], hatch: [0.95, 1.6],
   muscle: [1.05, 2.2], suv: [1.05, 2.1], classic: [1.0, 2.25], pickup: [1.05, 2.05],
@@ -56,6 +60,7 @@ export default function Vehicle(p: Props) {
   const refs = useRef(p); refs.current = p;
   const nearRef = useRef(false);
   const wasBlocked = useRef(false);
+  const driveAcc = useRef(0); // Phase 12: fixed-step accumulator for the driving step
   const refuelTimer = useRef(0);
   const warnedRef = useRef({ wrecked: false, empty: false });
   // ---- burnout / drift tyre-smoke pool (white sprite puffs, rear wheels) ----
@@ -88,6 +93,7 @@ export default function Vehicle(p: Props) {
   const suspRefs = useRef<Array<{ current: Float32Array }>>(G.cars.map(() => ({ current: new Float32Array([0.45, 0.45, 0.45, 0.45]) })));
   const slipNow = useRef({ slip: 0, kind: "asphalt" as string });
   const eHeld = useRef(false);
+  const lastCarTick = useRef(0); // Phase 13: last-car snapshot refresh timer
   const breakIn = useRef<{ car: number; since: number } | null>(null);
   const alarmBeep = useRef(0);
 
@@ -98,6 +104,7 @@ export default function Vehicle(p: Props) {
       if (G.cars[best].damage >= 100) toast("This car is wrecked — it won't move. Find another ride.");
       else if (G.cars[best].fuel <= 0.5) toast("This car is out of fuel. A fuel station can fill it — if you can push it there… (find another car)");
       if (!G.cars[best].owned && !G.cars[best].stolen) { G.cars[best].stolen = true; addCrime("steal"); sfx.crime(); }
+      noteLastCar(G.cars[best]); // Phase 13: this is now your last-used car
     };
     const nearestCar = (): number => {
       const pl = refs.current.playerPositionRef.current;
@@ -124,10 +131,14 @@ export default function Vehicle(p: Props) {
       if ((key === "shift" || key === "control") && G.driving) keys.current.add(key);
       if (key === "b" && G.driving && !e.repeat) { sfx.horn(); e.preventDefault(); }
       if ((key === "e" || key === "f") && !e.repeat) {
+        // Phase 13: while riding the tram, E belongs to the tram
+        // (App fires G.interact) — never enter a car off the guideway
+        if (G.tramRide >= 0) { e.preventDefault(); return; }
         if (G.driving) {
           const car = G.cars[G.activeCarId];
           // Phase 9: no bailing out of a flying plane — land first
           if (car.kind === "plane" && (planeAlt.current.get(car.id)?.alt ?? 0) > 2) { toast("You can't bail out mid-flight — land the Sparrow first."); e.preventDefault(); return; }
+          noteLastCar(car); // Phase 13: finalise the last-car snapshot where you left it
           const exit = new THREE.Vector3(car.state.x + Math.cos(car.state.heading) * 2.4, 0, car.state.z - Math.sin(car.state.heading) * 2.4);
           G.driving = false; refs.current.onDrivingChange(false); refs.current.onExit(exit);
           G.playerPos.copy(exit); keys.current.clear(); sfx.door(); e.preventDefault(); return;
@@ -167,7 +178,20 @@ export default function Vehicle(p: Props) {
   useFrame(({ clock }, delta) => {
     const { paused, physicsRef, vehicleStateRef, vehiclePositionRef } = refs.current;
     const dt = Math.min(delta, 0.05);
-    if (G.driving && !paused && !G.dialogueActive && G.activeCarId >= 0 && G.enterAnimT <= 0) {
+    // Phase 13: refresh the last-car snapshot every ~2.5 s at the
+    // wheel (position/damage/fuel drift as you drive; noteLastCar
+    // clears it instead if the car has just been wrecked)
+    lastCarTick.current += dt;
+    if (G.driving && G.activeCarId >= 0 && lastCarTick.current > 2.5) {
+      lastCarTick.current = 0;
+      noteLastCar(G.cars[G.activeCarId]);
+    }
+    // Phase 12: the driving step runs at a FIXED 60 Hz — stepDrive is
+    // defined here (closing over this frame's refs) and run 0–3× by
+    // the accumulator driver right after its definition. The systems
+    // after the driver (break-in, pools, alarms, mesh sync) keep the
+    // clamped frame dt, as before.
+    function stepDrive(dt: number) {
       const car = G.cars[G.activeCarId];
       // Phase 8: keyboard ∪ gamepad (padKeys) — one merged view; the
       // analog stick / triggers ride padAxes alongside (see steering)
@@ -309,9 +333,9 @@ export default function Vehicle(p: Props) {
         const surfKind = surfaceKindAt(car.state.x, car.state.z);
         const weatherF = surfKind === "asphalt" ? 1 - 0.32 * G.rainAmt : surfKind === "dirt" ? 1 - 0.18 * G.rainAmt : 1;
         const grip = surfaceGripBase(car.state.x, car.state.z) * weatherF;
-        const stepped = physicsRef.current.stepVehicleV3(car.state, throttle, steering, k.has(" "), grip, delta);
+        const stepped = physicsRef.current.stepVehicleV3(car.state, throttle, steering, k.has(" "), grip, dt);
         next = stepped.state;
-        slipNow.current = { slip: stepped.slip, kind: surfKind };
+        slipNow.current.slip = stepped.slip; slipNow.current.kind = surfKind; // Phase 12: mutate (was a fresh object per step)
         // ---- Phase 10: per-wheel suspension + body dynamics (C++
         // vehicle_body): ground heights sampled under each wheel
         // (bridge ramps, the parking deck, kerbs of altitude) drive
@@ -320,11 +344,14 @@ export default function Vehicle(p: Props) {
         const sh = Math.sin(car.state.heading), ch = Math.cos(car.state.heading);
         const baseY = groundYAt(car.state.x, car.state.z);
         const wz = dims[1] - 0.72;
-        const wheelH = ([[-dims[0], wz], [dims[0], wz], [-dims[0], -wz], [dims[0], -wz]] as const).map(([ox, oz]) => {
-          const wx = car.state.x + ch * ox + sh * oz;
-          const wzz = car.state.z - sh * ox + ch * oz;
-          return groundYAt(wx, wzz) - baseY;
-        }) as [number, number, number, number];
+        // Phase 12: corner heights computed directly into a reused
+        // tuple (was a .map over a literal array, per step)
+        const wheelH = wheelHScratch;
+        for (let w = 0; w < 4; w++) {
+          const ox = w % 2 === 0 ? -dims[0] : dims[0];
+          const oz = w < 2 ? wz : -wz;
+          wheelH[w] = groundYAt(car.state.x + ch * ox + sh * oz, car.state.z - sh * ox + ch * oz) - baseY;
+        }
         const vb = physicsRef.current.vehicleBody(wheelH, (next.speed - prevSpeed) / Math.max(dt, 0.001), steering, next.speed,
           { pitch: car.pitch, roll: car.roll, heave: car.bodyHeave ?? 0, pitchVel: car.pitchVel ?? 0, rollVel: car.rollVel ?? 0, heaveVel: car.bodyHeaveVel ?? 0 }, dt);
         car.pitch = vb.pitch; car.roll = vb.roll; car.pitchVel = vb.pitchVel; car.rollVel = vb.rollVel;
@@ -412,7 +439,17 @@ export default function Vehicle(p: Props) {
       vehiclePositionRef.current.set(next.x, gy + altY, next.z);
       G.followPos.set(next.x, gy + altY, next.z);
       G.speedKph = Math.round(Math.abs(next.speed) * 3.6);
-    } else if (!G.driving) G.speedKph = 0;
+    }
+    // Phase 12 fixed-step driver (60 Hz, max 3 substeps, debt dropped)
+    if (G.driving && !paused && !G.dialogueActive && G.activeCarId >= 0 && G.enterAnimT <= 0) {
+      driveAcc.current = Math.min(driveAcc.current + delta, SIM_STEP * SIM_MAX_SUBSTEPS);
+      let nSteps = 0;
+      while (driveAcc.current >= SIM_STEP && nSteps < SIM_MAX_SUBSTEPS) {
+        driveAcc.current -= SIM_STEP; nSteps += 1;
+        stepDrive(SIM_STEP);
+      }
+      if (nSteps === SIM_MAX_SUBSTEPS) driveAcc.current = 0;
+    } else { driveAcc.current = 0; if (!G.driving) G.speedKph = 0; }
     // ---- Phase 4: break-in hold progress (E held near a locked car) ----
     if (breakIn.current && !paused) {
       if (!eHeld.current) { breakIn.current = null; G.hold = null; }

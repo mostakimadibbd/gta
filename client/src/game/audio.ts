@@ -38,6 +38,9 @@ export const sfx = {
   fail() { blip(220, 0.35, "sawtooth", 0.1, 0, -110); },
   crime() { blip(196, 0.18, "square", 0.07); },
   door() { blip(160, 0.09, "square", 0.08, 0, -60); },
+  // Phase 13: the Sable Line's two-tone station chime (doors opening /
+  // closing) — a soft railway ding-ding, sine so it never grates.
+  chime() { blip(1318, 0.16, "sine", 0.12); blip(988, 0.22, "sine", 0.11, 0.14); },
   crash() { noiseBurst(0.28, 0.32, 900); blip(90, 0.25, "sawtooth", 0.12, 0, -40); },
   thud() { noiseBurst(0.12, 0.18, 500); },
   horn() { blip(370, 0.38, "square", 0.07); blip(466, 0.38, "square", 0.07); },

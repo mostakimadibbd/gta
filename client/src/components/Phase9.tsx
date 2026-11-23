@@ -31,6 +31,8 @@ import {
 } from "../game/phase9";
 
 const SCAFFOLD_KEY = "harborfall-scaffold";
+// Phase 12: scratch array for the per-frame wreck-smoke selection
+const wreckScratch: Array<(typeof G.traffic)[number]> = [];
 const HAIR_LOOKS: Array<{ s: number; c: number }> = [
   { s: 0, c: 0 }, { s: 1, c: 1 }, { s: 2, c: 2 }, { s: 3, c: 3 },
   { s: 0, c: 4 }, { s: 1, c: 5 }, { s: 4, c: 0 }, { s: 3, c: 0 },
@@ -217,12 +219,17 @@ export default function Phase9() {
         if (!isW && wreckKnown.current.has(i)) { wreckKnown.current.delete(i); changed = true; }
       });
       if (changed) saveDaySet(WRECK_KEY, [...wreckKnown.current]);
-      // smoke: the four nearest wrecks smoulder
-      const wrecks = [...wreckKnown.current]
-        .map((i) => G.traffic[i])
-        .filter((c) => c && (c.x - px) ** 2 + (c.z - pz) ** 2 < 130 ** 2)
-        .sort((a, b) => ((a.x - px) ** 2 + (a.z - pz) ** 2) - ((b.x - px) ** 2 + (b.z - pz) ** 2))
-        .slice(0, 4);
+      // smoke: the four nearest wrecks smoulder (Phase 12: filled
+      // into a scratch array, and only while wrecks exist — the old
+      // spread/map/filter/slice chain allocated four arrays per frame
+      // even on a wreck-free day)
+      wreckScratch.length = 0;
+      if (wreckKnown.current.size > 0) {
+        for (const i of wreckKnown.current) { const c = G.traffic[i]; if (c && (c.x - px) ** 2 + (c.z - pz) ** 2 < 130 ** 2) wreckScratch.push(c); }
+        wreckScratch.sort((a, b) => ((a.x - px) ** 2 + (a.z - pz) ** 2) - ((b.x - px) ** 2 + (b.z - pz) ** 2));
+        if (wreckScratch.length > 4) wreckScratch.length = 4;
+      }
+      const wrecks = wreckScratch;
       smokeRefs.current.forEach((sp, i) => {
         if (!sp) return;
         const c = wrecks[i];

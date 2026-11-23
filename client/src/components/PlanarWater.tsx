@@ -23,11 +23,15 @@
 // possible without forking the scene graph, and the full skyline is
 // the point. Cost control: half the drawing buffer (so it follows the
 // Phase 8 DPR ladder), High tier only, player override in Settings.
+// Phase 12: when the camera is >60u from the bay centre the mirrored
+// render also drops to half rate (every 2nd frame, reusing the last
+// target + texture matrix as a consistent pair).
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { WATER_Z } from "../world";
 import { G } from "../game/store";
+import { seasonWaterHSL } from "../game/season";
 import { sandNormal } from "../textures";
 import type { GameTheme } from "../themes";
 
@@ -38,6 +42,7 @@ export default function PlanarWater({ theme, night }: { theme: GameTheme; night:
   const scene = useThree((s) => s.scene);
   const camera = useThree((s) => s.camera);
   const meshRef = useRef<THREE.Mesh>(null);
+  const frameNo = useRef(0); // Phase 12: half-rate reflection throttle
 
   const rt = useMemo(() => new THREE.WebGLRenderTarget(1024, 512, {
     type: THREE.HalfFloatType, samples: 0, depthBuffer: true,
@@ -153,7 +158,8 @@ export default function PlanarWater({ theme, night }: { theme: GameTheme; night:
     u.uTime.value = t;
     u.uRain.value = G.rainAmt;
     u.uNight.value = night;
-    (u.uDeep.value as THREE.Color).set(theme.water);
+    const wsl = seasonWaterHSL(); // Phase 13: seasonal bay tint, same as the shader water
+    (u.uDeep.value as THREE.Color).set(theme.water).offsetHSL(wsl[0], wsl[1], wsl[2]);
     (u.uSunColor.value as THREE.Color).set(theme.sunColor);
     const ang = G.dayTime * Math.PI * 2 - Math.PI / 2;
     s.sunDir.set(Math.cos(ang) * 172, Math.max(4, Math.sin(ang) * 148), 46).normalize();
@@ -163,6 +169,15 @@ export default function PlanarWater({ theme, night }: { theme: GameTheme; night:
       u.uFogNear.value = scene.fog.near;
       u.uFogFar.value = scene.fog.far;
     }
+
+    // ---- Phase 12: half-rate refresh when the camera is >60u from
+    // the bay centre — the surface keeps sampling the last target
+    // with the last texture matrix (a consistent pair, so the mirror
+    // is at most one frame stale and never shears). Near the water
+    // (boating, swimming, the beach) it stays full-rate.
+    frameNo.current += 1;
+    const camD2 = camera.position.x ** 2 + (camera.position.z - (WATER_Z + 118)) ** 2;
+    if (camD2 > 60 ** 2 && frameNo.current % 2 === 1) return;
 
     // ---- half-resolution target, following the DPR ladder
     gl.getDrawingBufferSize(s.dbSize);

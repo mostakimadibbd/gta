@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type RefObject } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type RefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation, SSAO, ChromaticAberration, SSR } from "@react-three/postprocessing";
@@ -12,7 +12,10 @@ import Vehicle from "./components/Vehicle";
 import World from "./components/World";
 import { isInteractiveTarget } from "./keyboard";
 import { fallbackPhysics, loadPhysicsEngine, type PhysicsEngine, type VehicleState } from "./physics/GamePhysics";
-import { G, resetAfterArrest, resetAfterWasted, windLabel } from "./game/store";
+import { G, resetAfterArrest, resetAfterWasted, windLabel, LASTCAR } from "./game/store";
+import Tram from "./components/Tram";
+import { TRAM, TRAM_MAP_LINE, TRAM_STOPS } from "./game/tram";
+import { currentSeason } from "./game/season";
 import { M, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission, altActive } from "./game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
 import Phase7Systems from "./components/Phase7";
@@ -33,14 +36,19 @@ import Weather from "./components/Weather";
 import Combat from "./components/Combat";
 import Interiors from "./components/Interiors";
 import Interactions from "./components/Interactions";
-import GaragePanel from "./components/GaragePanel";
-import ModMenu from "./components/ModMenu";
+// Phase 12 code-splitting: the four heavy DOM overlays (garage panel,
+// mod menu, character select, phone) are lazy chunks, latch-mounted on
+// first open below so their internal state survives close/reopen
+// exactly as the static mounts did. Interiors/Phase7-9 stay static:
+// they own always-running world logic, not just UI.
+const GaragePanel = lazy(() => import("./components/GaragePanel"));
+const ModMenu = lazy(() => import("./components/ModMenu"));
 import { setCc0Deferred } from "./cc0Textures";
 import { nowS } from "./game/store";
 import { inNorth, onIsland, NORTH_ROAD_X, NORTH_ROAD_Z } from "./world";
-import CharacterSelect from "./components/CharacterSelect";
+const CharacterSelect = lazy(() => import("./components/CharacterSelect"));
 import { POSTER_PANELS } from "./posterData";
-import Phone from "./components/Phone";
+const Phone = lazy(() => import("./components/Phone"));
 import { loadCharacterChoice, persistCharacterChoice, presetById } from "./game/characters";
 import { gyroYawTrim } from "./game/gyro";
 import { stashTotal, persistSettings, toast as gameToast, syncWeaponMirrors } from "./game/store";
@@ -484,6 +492,13 @@ export default function App() {
   const [loadStage, setLoadStage] = useState(0);
   const [physicsReady, setPhysicsReady] = useState(false);
   const [modOpen, setModOpen] = useState(false);
+  // Phase 12: lazy-overlay latches — once first opened, the phone and
+  // mod menu stay mounted (they hide themselves when closed), so
+  // their internal state survives close/reopen as with static mounts
+  const [phoneMounted, setPhoneMounted] = useState(false);
+  const [modMounted, setModMounted] = useState(false);
+  useEffect(() => { if (phoneOpen) setPhoneMounted(true); }, [phoneOpen]);
+  useEffect(() => { if (modOpen) setModMounted(true); }, [modOpen]);
   const [areaCard, setAreaCard] = useState<{ title: string; sub: string } | null>(null);
   const [respawnScreen, setRespawnScreen] = useState<"hospital" | "patrol" | null>(null);
   const [fadeOn, setFadeOn] = useState(false);
@@ -739,6 +754,24 @@ export default function App() {
       g.strokeStyle = "#d9d4c5"; g.lineWidth = Math.max(1.5, 4 * S);
       g.beginPath(); g.moveTo(mx(60), mz(112)); g.lineTo(mx(60), mz(214)); g.stroke();
       g.beginPath(); g.moveTo(mx(-20), mz(-196)); g.lineTo(mx(-20), mz(-110)); g.stroke();
+      // Phase 13: the Sable Line loop (teal) + its stations; the big
+      // map also gets the LIVE tram dot and your last car's ring
+      g.strokeStyle = "#2ee6c8"; g.lineWidth = Math.max(1.2, 2.4 * S);
+      g.beginPath();
+      TRAM_MAP_LINE.forEach(([x, z], i) => { if (i === 0) g.moveTo(mx(x), mz(z)); else g.lineTo(mx(x), mz(z)); });
+      g.closePath(); g.stroke();
+      for (const st of TRAM_STOPS) { g.fillStyle = "#0f2c38"; g.beginPath(); g.arc(mx(st.x), mz(st.z), Math.max(2, 3.4 * S), 0, 7); g.fill(); g.strokeStyle = "#2ee6c8"; g.lineWidth = 1.2; g.stroke(); }
+      if (size > 300) {
+        g.fillStyle = "#2ee6c8"; g.beginPath(); g.arc(mx(TRAM.x), mz(TRAM.z), Math.max(2.5, 4.4 * S), 0, 7); g.fill();
+        g.fillStyle = "#0f2c38"; g.beginPath(); g.arc(mx(TRAM.x), mz(TRAM.z), Math.max(1.2, 2 * S), 0, 7); g.fill();
+        if (LASTCAR.save && !G.driving) {
+          const cxp = mx(LASTCAR.save.x), czp = mz(LASTCAR.save.z);
+          g.strokeStyle = "#ffb340"; g.lineWidth = 2;
+          g.beginPath(); g.arc(cxp, czp, Math.max(5, 7 * S), 0, 7); g.stroke();
+          g.fillStyle = "#ffb340"; g.font = `bold ${Math.max(9, 11 * S)}px sans-serif`; g.textAlign = "center";
+          g.fillText("YOUR CAR", cxp, czp - Math.max(8, 10 * S));
+        }
+      }
       const dot = (x: number, z: number, col: string, r: number) => { g.fillStyle = col; g.beginPath(); g.arc(mx(x), mz(z), Math.max(1.4, r * S * 2.2), 0, 7); g.fill(); };
       for (const st of FUEL_STATIONS) dot(st.x, st.z, "#ffb703", 3); // fuel pumps
       for (const c of G.cars) if (!c.storedAway) dot(c.state.x, c.state.z, mm.car, 2.4);
@@ -1051,6 +1084,11 @@ export default function App() {
           <Phase7Systems />
           <Phase8Systems />
           <Phase9Systems />
+          {/* Phase 13: the Sable Line mounts LAST of the world systems
+              on purpose — while the player rides, its prompt claim
+              must win over every street-level interaction below the
+              guideway (the prompt slot is last-writer-wins) */}
+          <Tram />
           <PerfGovernor active={started && !paused && flow === "game"} />
           <PhotoCapture shotRef={photoShotRef} />
           <FirstFrame onReady={() => setSceneReady(true)} />
@@ -1199,9 +1237,15 @@ export default function App() {
       )}
 
       {garageZoneId && (
-        <GaragePanel zoneId={garageZoneId} onClose={() => setGarageZoneId(null)} />
+        <Suspense fallback={null}>
+          <GaragePanel zoneId={garageZoneId} onClose={() => setGarageZoneId(null)} />
+        </Suspense>
       )}
-      <ModMenu open={modOpen} onClose={() => setModOpen(false)} />
+      {modMounted && (
+        <Suspense fallback={null}>
+          <ModMenu open={modOpen} onClose={() => setModOpen(false)} />
+        </Suspense>
+      )}
 
       {/* ======== Phase 6 screen flow overlays ======== */}
       {flow === "splash" && (
@@ -1241,9 +1285,11 @@ export default function App() {
         </div>
       )}
       {charOpen && (
-        <CharacterSelect selectedId={charChoice.id} variant={charChoice.variant} started={started}
-          onSelect={pickCharacter} onVariant={pickVariant}
-          onDone={() => { if (started) closeCharSelect(); else { closeCharSelect(); startLoad(true); } }} />
+        <Suspense fallback={null}>
+          <CharacterSelect selectedId={charChoice.id} variant={charChoice.variant} started={started}
+            onSelect={pickCharacter} onVariant={pickVariant}
+            onDone={() => { if (started) closeCharSelect(); else { closeCharSelect(); startLoad(true); } }} />
+        </Suspense>
       )}
 
       <aside className={`game-panel ${panelOpen ? "open" : ""}`} aria-label="Game panel">
@@ -1290,6 +1336,8 @@ export default function App() {
 
       <TouchControls driving={driving} onPause={() => setPaused((v) => !v)} />
 
+      {phoneMounted && (
+      <Suspense fallback={null}>
       <Phone open={phoneOpen && started} onClose={() => setPhoneOpen(false)} theme={theme} applyTheme={applyTheme}
         onOpenMap={() => { setPhoneOpen(false); setBigMap(true); }}
         onPhotoMode={enterPhotoMode}
@@ -1314,6 +1362,8 @@ export default function App() {
           }
           beginDialogue([{ who: name, text: line }, { who: name, text: hint }], () => {});
         }} />
+      </Suspense>
+      )}
 
       <Phase9Ui />
 
@@ -1465,6 +1515,13 @@ export default function App() {
               <label><span>Reflections</span><b>{REFLECTION_LABEL[reflectionMode()]}</b></label>
               <label><span>Ray-traced reflections (High tier)</span><input type="checkbox" checked={reflFx} onChange={(e) => { setReflFx(e.target.checked); setReflFxState(e.target.checked); showPopup(`Ray-traced-style reflections ${e.target.checked ? "on" : "off"}`); }} /></label>
             </div>
+            <h3 className="settings-head">Season · now {currentSeason()}</h3>
+            <div className="seg-row" role="group" aria-label="Season">
+              {(["auto", "Spring", "Summer", "Autumn", "Winter"] as const).map((s) => (
+                <button key={s} type="button" className={`seg-btn ${G.settings.season === s ? "active" : ""}`} onClick={() => { G.settings.season = s; persistSettings(); showPopup(s === "auto" ? "Season: auto — the 7-day calendar rules" : `Season pinned: ${s}`); }}>{s === "auto" ? "Auto" : s}</button>
+              ))}
+            </div>
+            <p className="settings-note">Seasons turn every 7 game-days: the sun's arc and the day's length, the sky / fog / water tints, the street trees (palms stay green — this is the subtropics) and the weather odds all shift with it. Winter here is cool, grey and dry: Port Sable has never seen snow, and won't.</p>
             <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + SSAO, stronger bloom, CC0 at full size — and ray-traced-style reflections (screen-space reflections + mirrored bay water; a browser has no hardware ray tracing, this is the real-time reflection stack every web game uses). Turn them off above if High stutters; the tier governor also drops them automatically when it steps the tier down. Resolution adapts automatically for smoothness; picking a tier here turns the auto tier-drop off for this session.</p>
             <h3 className="settings-head">Subtitles</h3>
             <div className="seg-row" role="group" aria-label="Subtitle size">
@@ -1512,6 +1569,9 @@ export default function App() {
               <div><dt>E at a bench / table</dt><dd>Sit down — E or any movement key stands up</dd></div>
               <div><dt>Space at a water edge</dt><dd>Dive in (deep water ahead) instead of jumping</dd></div>
               <div><dt>E at home</dt><dd>Sleep at the villa / Coral apartment — morning, full heal, businesses pay out</dd></div>
+              <div><dt>E at a Sable Line station</dt><dd>Board the tram when it stops (Docks · Market Row · Northgate · Coral Shores) — ride the elevated loop free, E again to step off at a stop. The patrol won't board, but riding never cools your stars</dd></div>
+              <div><dt>Sable Motors showroom</dt><dd>Through the glass front on the Northgate forecourt — the exotics on turntables, same stock and hours as outside: tap E to browse, hold E to buy</dd></div>
+              <div><dt>Café Coral (Docks strip)</dt><dd>Coffee ($8, stamina) or a harbour pastry ($12, +35 health) — and chairs you can actually sit in</dd></div>
               <div><dt>G</dt><dd>Garage car select (villa garage / Lina's)</dd></div>
               <div><dt>R (in car, at garage)</dt><dd>Repair damage + broken windows for cash</dd></div>
               <div><dt>V</dt><dd>First-person camera (drag to look) — works in cars too</dd></div>
@@ -1546,6 +1606,8 @@ export default function App() {
               <div><dt>Reputation</dt><dd>Port Sable remembers: witnesses recognise repeat offenders, pickpocket victims avoid you for a day, friendly faces wave back</dd></div>
               <div><dt>The Harbour Heist</dt><dd>After Chapter 4, call Old Elias from Contacts — a two-night job: prep, then the strongroom</dd></div>
               <div><dt>Y</dt><dd>Change the weather</dd></div>
+              <div><dt>Seasons</dt><dd>A season every 7 game-days — sun angle, day length, light, foliage and weather odds all turn. Pin one in Pause → Season or Phone → Settings. No snow: subtropical harbour, honestly</dd></div>
+              <div><dt>Your last car</dt><dd>The car you last drove waits where you left it — across sessions too (amber YOUR CAR ring on the big map). Wrecked, impounded (busted) or garage-stored cars are the exceptions</dd></div>
               <div><dt>⛽ Fuel</dt><dd>Cars burn fuel — park at a red FUEL canopy to refill for cash</dd></div>
               <div><dt>🔧 Damage</dt><dd>Crashes damage your car; 100% = wrecked</dd></div>
               <div><dt>Enter</dt><dd>Confirm dialogue</dd></div><div><dt>Mouse drag / wheel</dt><dd>Orbit / zoom camera</dd></div>

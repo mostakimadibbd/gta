@@ -4,12 +4,13 @@ import * as THREE from "three";
 import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, persistSkills, persistZoneRep, bark, toast } from "../game/store";
 import { M, currentTarget, endMission, persist, effectivePayout, recordBest, altActive } from "../game/missionState";
 import { gates, type QualityTier } from "../game/quality";
-import { perf } from "../game/perf";
+import { perf, SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
 import { pushPhoneMsg } from "../game/phone";
 import { pushNews } from "../game/feed";
 import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, NORTH_ROAD_X, NORTH_ROAD_Z, BUS_STOPS, REGISTERS, PAWN_SHOP, DEALERSHIP, VENDOR, districtAt, isBlocked, inNorth, onIsland, MANSION_DRIVE, groundYAt, CAR_MODELS, buildings, props as WORLD_PROPS } from "../world";
 import { lightAllows } from "../game/lights";
 import { ECO } from "../game/economy";
+import { seasonSun, tickSeasonVisuals, seasonWatcher, seasonTint, type SunWarp } from "../game/season";
 import { nudgeStock } from "../game/invest";
 import { glowTexture } from "../textures";
 import { fallbackPhysics, type PhysicsEngine } from "../physics/GamePhysics";
@@ -17,6 +18,9 @@ import type { GameTheme } from "../themes";
 import { sfx } from "../game/audio";
 import CarBody, { type CarKind } from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
+
+// Phase 13: seasonal sun-warp scratch (written by seasonSun each frame)
+const _sunWarp: SunWarp = { elev: 0, ang: 0 };
 
 const TRAFFIC_KINDS: CarKind[] = ["sedan", "suv", "muscle", "sedan", "supercar", "classic", "pickup", "hatch", "coupe", "suv", "muscle", "sedan", "gt", "sedan", "hatch", "wedge"]; // Phase 8: Marlowe GT in rotation; ONE Vantara wedge (rare)
 // Mood-board pedestrian variety: 10 outfit combos (male + female, tees,
@@ -48,6 +52,17 @@ export interface SysCallbacks {
 const TRAFFIC_COLORS = ["#e2574c", "#3d8bfd", "#f2b134", "#39b56a", "#e8e8e8", "#7a4fd0", "#ff7f50", "#2ec4b6", "#c0c6cc", "#8a5a2b", "#4a6b8a", "#d6336c"];
 const PED_COLORS = ["#e2574c", "#f2b134", "#39b56a", "#3d8bfd", "#ff7f50", "#2ec4b6", "#e8e8e8", "#946b2d"];
 const rndRoad = () => ROAD_COORDS[Math.floor(Math.random() * ROAD_COORDS.length)];
+// Phase 12 allocation audit: reusable scratch buffers for the two
+// per-step neighbour collections (ped separation + LOS building
+// shortlist). Both are consumed synchronously by the physics mirror
+// inside the same step, so sharing one buffer is safe — the old code
+// allocated a fresh array (and fresh entry objects for LOS) per ped
+// per step.
+const nearScratch: { x: number; z: number }[] = [];
+const losScratch: { x: number; z: number; hw: number; hd: number }[] = [
+  { x: 0, z: 0, hw: 0, hd: 0 }, { x: 0, z: 0, hw: 0, hd: 0 },
+  { x: 0, z: 0, hw: 0, hd: 0 }, { x: 0, z: 0, hw: 0, hd: 0 },
+];
 const headingFor = (axis: "x" | "z", dir: number) => (axis === "x" ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : dir > 0 ? 0 : Math.PI);
 
 // ---- Phase 6: pedestrian destinations per area (A4). Benches and bus
@@ -303,6 +318,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   const amb = useRef<THREE.AmbientLight>(null);
   const hemi = useRef<THREE.HemisphereLight>(null);
   const scene = useThree((s) => s.scene);
+  const gl = useThree((s) => s.gl);
   const hitCooldown = useRef(0);
   const bg = useMemo(() => new THREE.Color(theme.sky), [theme.sky]);
   const fogC = useMemo(() => new THREE.Color(theme.fog), [theme.fog]);
@@ -311,6 +327,18 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     scene.background = bg;
     scene.fog = new THREE.Fog(fogC.getHex(), theme.fogNear, theme.fogFar);
   }, [scene, bg, fogC, theme]);
+
+  // Phase 12 shadow cost control: the shadow map no longer re-renders
+  // on every render() call — the sun block in useFrame sets
+  // needsUpdate only when the SNAPPED light transform changes, the
+  // shadow settings/tier change, or every 2nd frame (moving casters).
+  // On High, the composer + planar water meant up to 3 full depth
+  // passes per frame before this. Revert = delete this effect and the
+  // snapping in the sun block (restore continuous follow + autoUpdate).
+  useEffect(() => {
+    gl.shadowMap.autoUpdate = false;
+    return () => { gl.shadowMap.autoUpdate = true; };
+  }, [gl]);
 
   const garageSave = useRef({ timer: 0, lastKey: "" });
   // Phase 4: per-car steering refs (front-wheel visuals) + traffic honks +
@@ -324,6 +352,15 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   const honkCd = useRef(0);
   const frameNo = useRef(0);
   const crashCd = useRef(0);
+  // Phase 12: fixed-step accumulator + sim tick (AI staggering slices)
+  const simAcc = useRef(0);
+  const simTick = useRef(0);
+  // Phase 12: last snapped shadow-light state (cell / angle bucket /
+  // settings / map-size key) + refresh parity counter
+  const shadowKey = useRef({ cx: Infinity, cz: Infinity, bucket: Infinity, on: false, sizeKey: "" });
+  const shadowTick = useRef(0);
+  // Phase 12: the dog's owner never changes after world init
+  const dogOwnerIdx = useMemo(() => G.peds.findIndex((p) => p.hasDog), []);
 
   useFrame(({ clock }, delta) => {
     const dt = Math.min(delta, 0.05);
@@ -332,34 +369,80 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     // ---- day cycle (5-minute full cycle; L pauses/resumes it from App) ----
     if (!paused && !G.dayPaused) G.dayTime = (G.dayTime + dt / 300) % 1;
     const sunAng = G.dayTime * Math.PI * 2 - Math.PI / 2;
-    const elev = Math.sin(sunAng);
+    // Phase 13 SEASONS: the sun's arc is warped by the season (summer
+    // rides high + long, winter low + short) — `elev` everywhere below
+    // (night factor, ped density, phone glow, heli lights) is the
+    // SEASONAL elevation, so the whole city's day length turns with
+    // the calendar. The Phase 12 shadow snapping is untouched: the
+    // bucket now quantises the warped angle instead of the raw one.
+    tickSeasonVisuals(dt);
+    seasonWatcher();
+    seasonSun(sunAng, _sunWarp);
+    const elev = _sunWarp.elev;
     const night = THREE.MathUtils.clamp(-elev * 1.4 + 0.35, 0, 1);
     G.nightFactor = night;
     if (sun.current) {
       sun.current.castShadow = G.settings.shadows; // Settings toggle (PDF delta C)
-      // shadow camera FOLLOWS the player (tight ±55u, 2048 map) — real shadows
-      // everywhere on the map, not just near the origin
-      sun.current.position.set(G.followPos.x + Math.cos(sunAng) * 70, Math.max(10, elev * 75), G.followPos.z + 30);
-      sun.current.target.position.set(G.followPos.x, 0, G.followPos.z);
-      sun.current.target.updateMatrixWorld();
       sun.current.intensity = theme.sunIntensity * THREE.MathUtils.clamp(elev + 0.45, 0.12, 1);
       sun.current.color.set(theme.sunColor);
+      // Phase 12 shadow cost control (the shadow camera still FOLLOWS
+      // the player — tight ±55u, 2048 map — but on a SNAPPED grid):
+      // the light target snaps to 8u cells and the sun angle to 1°
+      // buckets, and the shadow map re-renders only when that snapped
+      // transform changes, when the shadow toggle / tier / map size
+      // changes, or every 2nd frame — the every-2nd-frame floor keeps
+      // MOVING casters (traffic, peds, the player) shadowed live: the
+      // worst case is a shadow one extra frame old (~33 ms, ≈0.3u of
+      // traffic travel), and snapping removes the classic follow-cam
+      // shadow swimming the continuous version had. Intensity/colour
+      // above stay per-frame (uniforms, no shadow re-render needed).
+      const cellX = Math.round(G.followPos.x / 8) * 8;
+      const cellZ = Math.round(G.followPos.z / 8) * 8;
+      const bucket = Math.round(_sunWarp.ang / (Math.PI / 180));
+      const sizeKey = `${quality}:${quality === "medium" && perf.dpr > 0 && perf.dpr <= 1.25 ? "s" : "n"}`;
+      const sk = shadowKey.current;
+      shadowTick.current += 1;
+      const moved = cellX !== sk.cx || cellZ !== sk.cz || bucket !== sk.bucket || G.settings.shadows !== sk.on || sizeKey !== sk.sizeKey;
+      if (moved) {
+        const bAng = bucket * (Math.PI / 180);
+        sun.current.position.set(cellX + Math.cos(bAng) * 70, Math.max(10, Math.sin(bAng) * 75), cellZ + 30);
+        sun.current.target.position.set(cellX, 0, cellZ);
+        sun.current.target.updateMatrixWorld();
+        sk.cx = cellX; sk.cz = cellZ; sk.bucket = bucket; sk.on = G.settings.shadows; sk.sizeKey = sizeKey;
+      }
+      if (G.settings.shadows && (moved || shadowTick.current % 2 === 0)) gl.shadowMap.needsUpdate = true;
     }
     if (amb.current) amb.current.intensity = theme.ambient * (1 - night * 0.45) + G.lightning * 1.7;
     if (hemi.current) hemi.current.intensity = 1.05 * (1 - night * 0.5);
-    if (scene.background instanceof THREE.Color) scene.background.copy(bg).multiplyScalar((1 - night * 0.55) * (1 - G.rainAmt * 0.22) + G.lightning * 0.35);
+    if (scene.background instanceof THREE.Color) scene.background.copy(bg).multiply(seasonTint()).multiplyScalar((1 - night * 0.55) * (1 - G.rainAmt * 0.22) + G.lightning * 0.35);
     // Phase 10: fog colour rides the SAME day-cycle curve as the sky
     // background — distance haze now darkens into night and greys with
     // rain instead of staying at the theme's noon tint (Weather.tsx
     // still owns the near/far distances; the water shader reads this
     // colour every frame, so the bay haze matches too)
     if (scene.fog instanceof THREE.Fog) {
-      scene.fog.color.copy(fogC).multiplyScalar(Math.max(0.05, (1 - night * 0.55) * (1 - G.rainAmt * 0.22) + G.lightning * 0.35));
+      scene.fog.color.copy(fogC).multiply(seasonTint()).multiplyScalar(Math.max(0.05, (1 - night * 0.55) * (1 - G.rainAmt * 0.22) + G.lightning * 0.35));
     }
     if (paused || G.dialogueActive || G.status) {
       // still render positions below? No: freeze gameplay while paused/dialogue/status.
+      simAcc.current = 0;
       syncMeshes(t); return;
     }
+    // ---- Phase 12: FIXED-TIMESTEP driver — the entire simulation
+    // body below runs inside stepSim at 60 Hz (max 3 substeps, debt
+    // dropped; see game/perf.ts). Mesh sync runs ONCE per frame after
+    // the substeps, exactly as it ran per frame before. ----
+    simAcc.current = Math.min(simAcc.current + delta, SIM_STEP * SIM_MAX_SUBSTEPS);
+    let simSteps = 0;
+    while (simAcc.current >= SIM_STEP && simSteps < SIM_MAX_SUBSTEPS) {
+      simAcc.current -= SIM_STEP; simSteps += 1;
+      stepSim(SIM_STEP);
+    }
+    if (simSteps === SIM_MAX_SUBSTEPS) simAcc.current = 0;
+    syncMeshes(t);
+
+    function stepSim(dt: number) {
+    simTick.current += 1;
     hitCooldown.current = Math.max(0, hitCooldown.current - dt);
     rbHitCd.current = Math.max(0, rbHitCd.current - dt);
     G.crimeCooldown = Math.max(0, G.crimeCooldown - dt);
@@ -378,8 +461,8 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     crashCd.current = Math.max(0, crashCd.current - dt);
     const hourNow = (G.dayTime * 24 + 6) % 24;
     const rush = (hourNow >= 7 && hourNow < 9.5) || (hourNow >= 16.5 && hourNow < 19);
-    for (const car of G.traffic) {
-      const ti = G.traffic.indexOf(car);
+    for (let ti = 0; ti < G.traffic.length; ti++) {
+      const car = G.traffic[ti];
       const distP = Math.hypot(car.x - px, car.z - pz);
       // streaming dormancy (hysteresis 165 / 140)
       if (!car.dormant && distP > 165) car.dormant = true;
@@ -438,9 +521,21 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // measured here; wantStop survives for the horn/blocked logic and
       // the hard-stop cases (damage stop, player in the lane)
       let wantStop = false;
-      let stopDist = Number.POSITIVE_INFINITY; // distance to a red/amber line
-      let queueGap = Number.POSITIVE_INFINITY; // gap to the same-lane car ahead
+      // Phase 12 AI staggering: the two SCANS below (signal stop-lines
+      // + the same-lane queue) are the expensive part of the decision.
+      // Near cars (≤60u — anything the player can interact with)
+      // rescan every step; far cars rescan on a 1-in-3 slice (sim tick
+      // + index) and reuse the cached stop distance / queue gap in
+      // between. Speed integration further down still runs EVERY step
+      // for every car, so far traffic never visibly stutters.
+      let stopDist = car.scanStop ?? Number.POSITIVE_INFINITY; // distance to a red/amber line
+      let queueGap = car.scanQueue ?? Number.POSITIVE_INFINITY; // gap to the same-lane car ahead
       if (car.stopped > 0) { car.stopped -= dt; wantStop = true; }
+      const doScan = distP <= 60 || (simTick.current + ti) % 3 === 0;
+      if (doScan) {
+        stopDist = Number.POSITIVE_INFINITY;
+        queueGap = Number.POSITIVE_INFINITY;
+        let scanStop = false;
       // signal obedience on the signalled Port Sable grid (reckless runs reds)
       if (car.side === "main" && !car.reckless && car.fleeing <= 0) {
         const fx = car.axis === "z" ? Math.sin(car.heading) : 0, fz = car.axis === "x" ? Math.cos(car.heading) : 0;
@@ -450,7 +545,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           const rel = c * car.dir - fwd; // distance to the stop line along travel
           if (rel > 0.5 && rel < 16) {
             const ix = car.axis === "x" ? c : (car.fixed ?? 0), iz = car.axis === "x" ? (car.fixed ?? 0) : c;
-            if (!lightAllows(ix, iz, car.axis, t)) { wantStop = true; stopDist = Math.min(stopDist, rel); break; }
+            if (!lightAllows(ix, iz, car.axis, t)) { scanStop = true; stopDist = Math.min(stopDist, rel); break; }
           }
         }
       }
@@ -460,8 +555,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         const odx = other.x - car.x, odz = other.z - car.z;
         const alongQ = car.axis === "x" ? odx * car.dir : odz * car.dir;
         const sideQ = car.axis === "x" ? Math.abs(odz) : Math.abs(odx);
-        if (alongQ > 1 && alongQ < 8.5 && sideQ < 2.6 && other.speed < car.speed + 0.5) { wantStop = true; queueGap = Math.min(queueGap, alongQ); }
+        if (alongQ > 1 && alongQ < 8.5 && sideQ < 2.6 && other.speed < car.speed + 0.5) { scanStop = true; queueGap = Math.min(queueGap, alongQ); }
       }
+        car.scanStop = stopDist; car.scanQueue = queueGap; car.scanWant = scanStop;
+      }
+      if (car.scanWant) wantStop = true;
       // player ahead: brake; blocked >3 s in your lane → lean on the horn
       const dx = px - car.x, dz = pz - car.z;
       const aheadP = car.axis === "x" ? Math.sign(dx) === car.dir && Math.abs(dz) < 6 && Math.abs(dx) < 9
@@ -496,7 +594,8 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const crossRoads = car.side === "coral" ? (car.axis === "x" ? CORAL_ROAD_X : CORAL_ROAD_Z)
         : car.side === "north" ? (car.axis === "x" ? NORTH_ROAD_X : NORTH_ROAD_Z) : ROAD_COORDS;
       const alongNow = car.axis === "x" ? car.x : car.z;
-      const nearRoad = crossRoads.find((c) => Math.abs(alongNow - c) < 1.2);
+      let nearRoad: number | undefined; // Phase 12: plain loop (was a .find closure per car per step)
+      for (const c of crossRoads) if (Math.abs(alongNow - c) < 1.2) { nearRoad = c; break; }
       if (nearRoad !== undefined && Math.random() < 0.012 && car.speed > 1) {
         const along = car.axis === "x" ? car.x : car.z;
         car.axis = car.axis === "x" ? "z" : "x";
@@ -537,7 +636,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     // downtown/Market Row crowds thin out late at night; the beach peaks at
     // dusk. Phase 6 (A2/A4): rush hours pack the pavements; at night the
     // survivors drift toward the club strip; in rain everyone hurries.
-    const elevNow = Math.sin(G.dayTime * Math.PI * 2 - Math.PI / 2);
+    const elevNow = elev; // Phase 13: seasonal elevation (frame scope)
     const raining = G.rainAmt > 0.25;
     G.peds.forEach((ped, i) => {
       let frac = elevNow > 0.05 ? 1 : 0.45; // deep night: under half the walkers
@@ -546,7 +645,8 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       ped.active = ((i * 7) % G.peds.length) / G.peds.length < frac;
     });
     const phys = physicsRef.current ?? fallbackPhysics;
-    for (const ped of G.peds) {
+    for (let pi = 0; pi < G.peds.length; pi++) {
+      const ped = G.peds[pi];
       if (!ped.active) { ped.speed = 0; continue; }
       // Phase 10: car-hit knock slide — the impact's momentum carries
       // the ped (even while down) and bleeds off fast; walls stop it
@@ -563,6 +663,16 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const threatD2 = (ped.x - px) ** 2 + (ped.z - pz) ** 2;
       // streaming: beyond 170u a ped holds position (mesh still poses cheaply)
       if (threatD2 > 170 ** 2) { ped.speed = 0; continue; }
+      // Phase 12 AI staggering: peds beyond 60u steer on alternating
+      // steps with a doubled step length — same average speed, and out
+      // there the steering target is just a pavement destination, so
+      // behaviour is indistinguishable. Near peds always step fully.
+      // (Knock slide + down state above still run every step.)
+      let sdt = dt;
+      if (threatD2 > 60 ** 2) {
+        if ((simTick.current + pi) % 2 === 1) continue;
+        sdt = dt * 2;
+      }
       // Phase 8 memory: a ped you pickpocketed TODAY gives you a wide
       // berth — they back away whenever you close in, all game-day long
       const robbedShy = ped.memRobbedDay === ECO.daySerial && threatD2 < 8 ** 2;
@@ -582,7 +692,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           } else if (G.wanted > 0) {
             const copNear = G.cops.some((cp) => cp.active && (cp.x - ped.x) ** 2 + (cp.z - ped.z) ** 2 < 24 ** 2);
             if (copNear) {
-              G.reportingPed = G.peds.indexOf(ped); G.witnessUntil = Math.max(G.witnessUntil, performance.now() / 1000 + 1.6);
+              G.reportingPed = pi; G.witnessUntil = Math.max(G.witnessUntil, performance.now() / 1000 + 1.6);
               lastKnown.current = { x: px, z: pz };
               bark("Bystander", "Officer — THERE! That's him, right there!");
             } else bark("Bystander", `Hey — that's the guy from ${ped.zone}! I seen you!`);
@@ -632,21 +742,21 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // separation neighbours first (Phase 8): the Harborfall Core's
       // step_pedestrian_v2 folds steering + separation into ONE step,
       // replacing the old step-then-separate two-call pattern
-      const near: { x: number; z: number }[] = [];
+      nearScratch.length = 0; // Phase 12: shared scratch (was a fresh array per ped per step)
       for (const other of G.peds) {
         if (other === ped || !other.active) continue;
         const d2 = (other.x - ped.x) ** 2 + (other.z - ped.z) ** 2;
-        if (d2 < 1.2 ** 2) near.push(other);
-        if (near.length >= 3) break;
+        if (d2 < 1.2 ** 2) nearScratch.push(other);
+        if (nearScratch.length >= 3) break;
       }
-      const next = phys.stepPedestrianV2(ped, tx, tz, px, pz, flee, walkBase, near, 0.95, dt);
+      const next = phys.stepPedestrianV2(ped, tx, tz, px, pz, flee, walkBase, nearScratch, 0.95, sdt);
       const arrived = ped.mode !== "phone" && Math.hypot(tx - ped.x, tz - ped.z) < arriveR;
       if (!isBlocked(next.x, next.z, 0.4)) { ped.x = next.x; ped.z = next.z; }
       ped.heading = ped.mode === "phone" || ped.mode === "sit" ? ped.heading : next.heading;
       ped.speed = (ped.mode === "phone" || ped.mode === "sit" || arrived) ? 0 : next.speed;
       // Phase 8 stride matching: phase rate ∝ actual speed (stride
       // length ≈ 1.08u per π of phase) so feet plant instead of skating
-      ped.swing += dt * ped.speed * 2.9;
+      ped.swing += sdt * ped.speed * 2.9;
       if (ped.area === "coral") {
         if (ped.x < 31 || ped.x > 109 || ped.z < 200 || ped.z > 320) ped.dir = (ped.dir * -1) as 1 | -1;
       } else if (ped.area === "north") {
@@ -678,12 +788,15 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // the first four buildings near the sight line (the dominant
       // blockers); a mostly-walled segment is blocked right here
       const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
-      const nearB: { x: number; z: number; hw: number; hd: number }[] = [];
+      // Phase 12: shared scratch shortlist (was a fresh array + fresh
+      // entry objects per LOS call — up to 6 calls per step)
+      let nb = 0;
       for (const b of buildings) {
         const d2 = (b.x - mx) ** 2 + (b.z - mz) ** 2;
-        if (d2 < 45 ** 2) { nearB.push({ x: b.x, z: b.z, hw: b.width / 2, hd: b.depth / 2 }); if (nearB.length >= 4) break; }
+        if (d2 < 45 ** 2) { const s = losScratch[nb]; s.x = b.x; s.z = b.z; s.hw = b.width / 2; s.hd = b.depth / 2; nb += 1; if (nb >= 4) break; }
       }
-      if (nearB.length && (physicsRef.current ?? fallbackPhysics).losSampled(x1, z1, x2, z2, nearB) <= 0.5) return false;
+      losScratch.length = nb;
+      if (nb && (physicsRef.current ?? fallbackPhysics).losSampled(x1, z1, x2, z2, losScratch) <= 0.5) return false;
       // backstop: props / static blockers via the point sampler
       for (const f of [0.3, 0.55, 0.8]) {
         if (isBlocked(x1 + (x2 - x1) * f, z1 + (z2 - z1) * f, 0.3)) return false;
@@ -861,15 +974,20 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       }
     });
     if (want > 0) {
-      const nearestCop = Math.min(...G.cops.filter((c) => c.active).map((c) => Math.hypot(c.x - px, c.z - pz)), 999);
+      // Phase 12: manual min loop (was filter+map+spread = 3 arrays per step)
+      let nearestCop = 999;
+      for (const c of G.cops) if (c.active) { const d = Math.hypot(c.x - px, c.z - pz); if (d < nearestCop) nearestCop = d; }
       // disguise-lite (A5): while seen, remember the car + district; while
       // UNSEEN, heat bleeds faster if you've swapped either since
       if (seen) disguise.current = { carId: G.activeCarId, district: districtAt(px, pz) };
       const disguised = disguise.current.carId !== -2 && (G.activeCarId !== disguise.current.carId || districtAt(px, pz) !== disguise.current.district);
-      if (!seen) { G.wantedCooldown += dt * (disguised ? 1.6 : 1); if (G.wantedCooldown > 11) { G.wanted -= 1; G.starHeat = 0; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup(disguised ? "New wheels, new district — heat lost faster" : "Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
+      // Phase 13: riding the Sable Line never bleeds heat (the tram is
+      // not a hiding place) — the cooldown simply doesn't run up there
+      if (!seen && G.tramRide < 0) { G.wantedCooldown += dt * (disguised ? 1.6 : 1); if (G.wantedCooldown > 11) { G.wanted -= 1; G.starHeat = 0; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup(disguised ? "New wheels, new district — heat lost faster" : "Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
       // busted: cop close + player slow (unchanged rule, cleaner condition;
-      // crouched in cover slows the grab — A6)
-      if (nearestCop < 7.5 && pSpeed < 2.5) {
+      // crouched in cover slows the grab — A6). Phase 13: the patrol
+      // never boards the tram — no bust while riding, they wait below.
+      if (nearestCop < 7.5 && pSpeed < 2.5 && G.tramRide < 0) {
         G.bustTimer += dt * (G.inCover ? 0.6 : 1);
         if (G.bustTimer > 3) { G.status = "busted"; G.statusTimer = 0; sfx.busted(); bark("Harbour Patrol", "Suspect in custody. Repeat — suspect in custody."); }
       } else G.bustTimer = Math.max(0, G.bustTimer - dt * 1.5);
@@ -1080,7 +1198,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         }
       }
     }
-    syncMeshes(t);
+    }
     function failMission(reason: string) {
       if (!M.active) return;
       G.missionResult = { ok: false, title: M.active.title, reward: 0, items: 0, timeLeft: 0, reason, at: t };
@@ -1152,13 +1270,15 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         // the first second on the ground (procedural, no solver)
         g.rotation.set(down ? -Math.PI / 2 * 0.92 : 0, pd.heading, flailing ? Math.sin(tt * 24) * 0.4 : 0);
         const rig = pedRigs[i];
-        // Visual V7: far peds (>120u) animate every 3rd frame
-        const far = (pd.x - G.followPos.x) ** 2 + (pd.z - G.followPos.z) ** 2 > 120 ** 2;
-        if (rig && flailing && (!far || (frameNo.current + i) % 3 === 0)) {
+        // Visual V7: far peds (>120u) animate every 3rd frame.
+        // Phase 12: mid band added — 60–120u animates every 2nd frame.
+        const pd2 = (pd.x - G.followPos.x) ** 2 + (pd.z - G.followPos.z) ** 2;
+        const animTick = pd2 > 120 ** 2 ? (frameNo.current + i) % 3 === 0 : pd2 > 60 ** 2 ? (frameNo.current + i) % 2 === 0 : true;
+        if (rig && flailing && animTick) {
           animateHumanoid(rig, tt * 21, 1, tt); // limbs cycle hard = flail
           rig.group.position.y = 0.1 + Math.abs(Math.sin(tt * 12)) * 0.08;
         } else if (rig && down) rig.group.position.y = 0;
-        if (rig && !down && (!far || (frameNo.current + i) % 3 === 0)) {
+        if (rig && !down && animTick) {
           animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
           // ---- Phase 6 life poses (A4/A6) ----
           if (pd.mode === "sit") {
@@ -1181,7 +1301,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         // phone screen glow — visible at night while a ped is scrolling
         const glow = phoneGlowRefs.current[i];
         if (glow) {
-          const nightF = 1 - THREE.MathUtils.clamp(Math.sin(G.dayTime * Math.PI * 2 - Math.PI / 2) * 1.6 + 0.35, 0, 1);
+          const nightF = 1 - THREE.MathUtils.clamp(elev * 1.6 + 0.35, 0, 1);
           glow.visible = pd.active && !down && pd.mode === "phone" && nightF > 0.25;
           if (glow.visible) glow.position.set(pd.x + Math.sin(pd.heading) * 0.34, 1.18, pd.z + Math.cos(pd.heading) * 0.34);
         }
@@ -1190,7 +1310,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       });
       // the dog trots beside its owner (A4)
       if (dogRef.current) {
-        const owner = G.peds.find((p) => p.hasDog);
+        const owner = dogOwnerIdx >= 0 ? G.peds[dogOwnerIdx] : undefined; // Phase 12: cached at init (was a .find per frame)
         if (owner && owner.active && tt >= owner.downUntil) {
           dogRef.current.visible = true;
           const ox = owner.x + Math.cos(owner.heading) * 0.85, oz = owner.z - Math.sin(owner.heading) * 0.85;
@@ -1255,7 +1375,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // police helicopter: slow orbit above the player at high heat; at
       // night from 3★ its SEARCHLIGHT cone sweeps the ground (A5)
       if (heliRef.current) {
-        const nightNow = Math.sin(G.dayTime * Math.PI * 2 - Math.PI / 2) < -0.15;
+        const nightNow = elev < -0.15;
         const show = G.wanted >= 4 || (G.wanted >= 3 && nightNow);
         heliRef.current.visible = show;
         if (show) {

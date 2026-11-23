@@ -672,3 +672,309 @@ Build: `tsc --noEmit && vite build` PASS. Not live-playtested
 (this environment cannot run the game) — the smoke list is in
 the Phase 11 handoff: wet night street, glass towers at dusk,
 bay at golden hour, car paint close-up.
+
+## Phase 12 — optimization pass (2026-11-23)
+
+A pure optimization phase (user order: "enhance it, make smooth,
+optimized") — no new features, no behaviour changes visible to the
+player except smoother pacing. Everything below is in the code;
+bundle numbers are from the actual production build output.
+
+**1. Fixed-timestep simulation — LANDED.** The three movement/
+physics integrators previously ran on the raw variable frame dt
+(clamped to 0.05): the world step in `GameSystems.tsx` (traffic,
+peds, cops, wanted), the player step in `Player.tsx`, and the
+driven-car step in `Vehicle.tsx` (which also passed the RAW,
+unclamped `delta` into the C++ `step_vehicle_v3` — an inconsistency
+now fixed). All three now run at a fixed 60 Hz from a per-component
+accumulator (`SIM_STEP` / `SIM_MAX_SUBSTEPS` in `game/perf.ts`):
+the accumulator is pre-clamped to 3 steps and leftover debt is
+dropped, so gameplay speed/feel is identical at 30/60/120 Hz and a
+frame spike can neither tunnel a collision nor spiral. Mesh sync
+still runs once per rendered frame after the substeps. Rendering
+interpolation was deliberately NOT added: it would require
+duplicating every entity's transform state per frame, and at a
+60 Hz sim the worst-case visual step on a 120 Hz display is one
+sim tick — the cadence the game always shipped at on 60 Hz
+screens. Auxiliary systems (weapon presentation, jobs, Phase 9's
+arcade movers) keep clamped variable dt: they integrate no
+positions that can tunnel at their speeds.
+
+**2. AI update staggering — LANDED.** In the GameSystems world
+step: traffic's two expensive scans (signal stop-lines + same-lane
+queue) now run every step for cars within 60u of the player and on
+a 1-in-3 slice (sim tick + index) beyond that, reusing cached
+results (`NpcCar.scanStop/scanQueue/scanWant` in `game/store.ts`);
+speed/position integration still runs every step for every car, so
+far traffic never stutters. Peds beyond 60u steer on alternating
+steps with a doubled step length (same average speed; knock slide
+and down state still run every step); near peds are untouched.
+Cops are never staggered (only 6, gameplay-critical). Ped
+animation in mesh sync gained a mid band: 60–120u animates every
+2nd frame (the >120u every-3rd-frame rule from V7 is unchanged).
+
+**3. Reflection cost control — LANDED (planar) / DOCUMENTED SKIP
+(SSR distance).** `PlanarWater.tsx`: when the camera is >60u from
+the bay centre the mirrored render runs at half rate (every 2nd
+frame), reusing the last render target AND the last texture
+matrix as a consistent pair — the mirror is at most one frame
+stale and can never shear; near the water it stays full-rate.
+SSR's shipped knobs were re-verified (half-res targets,
+20 steps, glossy-only roughness gate). A DPR-tied SSR ray-distance
+fade was NOT added: the vendored SSREffect's distance is a
+constructor-time uniform — changing it live means remounting the
+composer, which hitches; SSR cost already scales with DPR because
+its targets follow the canvas size through the Phase 8 ladder.
+
+**4. Code-splitting / load — LANDED.** The CC0 texture data
+(~1.24 MB of base64) moved from `cc0Textures.ts` into
+`cc0Data.ts`, loaded via dynamic `import()` on first CC0 request:
+it no longer ships in the initial bundle, and Low tier — which
+never requests a CC0 texture — never downloads it at all. The
+decode contract is unchanged (shared texture objects fill in when
+their image lands, exactly as the Phase 6 deferred loader already
+behaved). Four heavy DOM overlays are now `React.lazy` chunks,
+latch-mounted on first open so their state survives close/reopen
+as the static mounts did: Phone, GaragePanel, ModMenu,
+CharacterSelect. NOT split, deliberately: `posterData.ts` (it IS
+the first-frame start-screen content), Interiors and the
+Phase 7–9 systems (they own always-running world logic, not just
+UI), PlanarWater (small, and a risky seam). The staged loading
+screen still reflects real construction stages — the lazy chunks
+load on first use, outside the staged sequence, and no stage
+claims otherwise.
+
+**5. Draw calls + allocations — LANDED.** Draw calls were
+estimated STATICALLY (this environment cannot run the game, so
+`renderer.info` is unavailable): renderables counted by category
+from the world data arrays — buildings ~720, street lamps ~600,
+palms ~1,330, trees ~375, houses ~81, cars ~970, ped rigs ~550,
+props/roads/decals/misc ~770 → **≈5,400 calls/frame** on the main
+pass (×2–3 passes on High with the planar mirror + SSR). Four
+instancing wins, all replicating the original transforms/materials
+exactly: street lamps → 2 instanced meshes (was ~2/lamp); palm
+trunks → 4 (crowns stay per-palm, fronds sway); pine trees → 6
+(the old component's deterministic jitter/bush functions
+replicated exactly); benches + hydrants → 2. Estimated saving
+**≈1,430 calls/frame → ~3,950**. Per-frame/step allocations
+removed (file:line at time of writing):
+- `GameSystems.tsx:732` — ped separation neighbour array per ped
+  per step → shared scratch buffer.
+- `GameSystems.tsx:785` — LOS building shortlist array + entry
+  objects per call (up to 6 calls/step) → pre-allocated scratch.
+- `GameSystems.tsx:965` — wanted-level nearest-cop
+  `filter+map+spread` (3 arrays/step) → manual min loop.
+- `GameSystems.tsx:584` — traffic intersection `.find` closure per
+  car per step → plain loop.
+- `GameSystems.tsx:1297` — dog-owner `G.peds.find` per frame →
+  cached index at init.
+- `GameSystems.tsx` traffic/ped loops — `indexOf` per entity per
+  step → indexed loops.
+- `Vehicle.tsx:335` — per-wheel ground heights `.map` over a
+  literal array per step → reused tuple.
+- `Vehicle.tsx:324` — slip-state object allocated per step →
+  field mutation.
+- `Phase7.tsx:138` — taxi hail-point `.filter` per frame while
+  idling in a taxi → scratch fill.
+- `Phase9.tsx:226` — wreck-smoke `spread/map/filter/slice` chain
+  (4 arrays/frame even with zero wrecks) → scratch, computed only
+  while wrecks exist.
+Accepted and documented, not changed: the physics mirror's
+per-call result objects (`GamePhysics.ts`) — they are the C++
+mirror's API shape (WASM parity), bounded to ~30 small objects
+per step; and the driven car's `{...car.state}` spread, which the
+physics step's immutable-state contract requires (Phase 8).
+
+**6. Shadow cost — LANDED, modified from the original sketch.**
+A pure on-change `needsUpdate` is unsafe here: the shadow camera
+follows the player continuously and moving casters (traffic,
+peds) would freeze their shadows for up to a second. What shipped
+(`GameSystems.tsx` sun block): `renderer.shadowMap.autoUpdate =
+false` globally, the light transform SNAPPED (target to 8u cells,
+sun angle to 1° buckets — snapping also removes the follow-cam
+shadow swimming the continuous version had), and `needsUpdate`
+set when the snapped transform changes, when the shadow toggle /
+tier / map size changes, or every 2nd frame regardless — so a
+moving caster's shadow is at most one extra frame old (~33 ms,
+≈0.3u of traffic travel). On High this removes up to 2 of the 3
+per-frame depth passes (composer + planar mirror already reused
+shadow maps; the main pass was the remaining full-price one).
+REVERT: delete the `autoUpdate` effect in GameSystems and restore
+the continuous-follow sun block (one `position.set` +
+`target.position.set` + `updateMatrixWorld` per frame).
+
+**7. Bundle — measured from `npm run build` output:**
+
+| Chunk | Phase 11 | Phase 12 | Notes |
+|---|---|---|---|
+| index | 2,146.65 kB / gzip 1,365.01 | **840.46 kB / gzip 395.71** | initial |
+| three | 689.88 / 178.23 | 689.88 / 178.23 | initial |
+| react-three | 525.82 / 185.24 | 526.96 / 185.77 | initial |
+| CSS | 51.24 / 10.32 | 51.24 / 10.32 | initial |
+| cc0Data | — (in index) | 1,274.15 / 959.18 | async: first CC0 request; never on Low |
+| Phone | — (in index) | 28.21 / 7.50 | async: first phone open |
+| GaragePanel | — (in index) | 4.36 / 1.61 | async: first garage entry |
+| ModMenu | — (in index) | 2.95 / 1.26 | async: first mod-menu open |
+| CharacterSelect | — (in index) | 1.87 / 0.73 | async: first open |
+
+**Initial-load JS gzip: 1,728.48 → 759.71 kB (−56.0%).** Total JS
+across all chunks is essentially unchanged (~1,730 kB gzip) —
+code and data moved out of the critical path, not removed.
+Build: `tsc --noEmit && vite build` PASS. Not live-playtested
+(this environment cannot run the game) — the Phase 12 smoke list
+is in the handoff: drive at a frame spike (tab switch), far
+traffic flow on the causeway, ped crowds at mid distance, shadow
+behaviour while driving (watch for swimming/lag), bay reflections
+from the beach vs from downtown, first phone/garage/mod opens.
+
+## Phase 13 — the Sable Line, seasons, two interiors, last-car persistence (2026-11-23)
+
+The "remaining features" round: the last two ⬜ topics in the
+§15 ledger (trains, seasons/snow) plus two 🟡 growths (enterable
+buildings 6 → 8, persistent world). Built ON the Phase 12
+structure — nothing below touches the fixed-timestep drivers, the
+AI staggering, the snapped shadows or the lazy-chunk layout.
+
+**1. The Sable Line tram — guideway choice: ELEVATED, over the
+road centres.** Street-level track was rejected: the traffic AI
+drives fixed lanes on the same roads, and a rail vehicle that
+cannot steer would need its own collision regime against ~40
+traffic cars. Elevated on the road CENTRES, the guideway is above
+every conflict: beam top at y 6.55, beam underside ≈ 6.0 — the
+tallest traffic (bus ≈ 3.4) passes with ~2.6u to spare. Pillars
+(0.9u square, every ~16u on the median) are deliberately NOT in
+the collision set — the palm-tree precedent (`world.ts` excludes
+palms from `isBlocked` so thin median furniture never traps the
+player); traffic lanes run either side of the median line and
+never meet a pillar either. Route (closed loop, ~1.6 km): up the
+Docks road (x=20), across Market Row (z=−20), up the causeway
+(x=−20), around the Northgate ring (z=−248 / x=−84 / z=−216),
+back down the causeway, across Market Row to the bay bridge
+(x=60), and a Coral Shores lollipop (in on x=72, out on x=40,
+stop on z=264). The causeway and bridge trunks are shared both
+ways — there is one tram, so no passing logic exists or is
+needed. **Bridge contract:** over the bay bridge the road deck
+itself is 5.5u up, so the guideway carries a height profile —
+deck = max(6.55, groundYAt + 4.05), smoothed — climbing the
+bridge ramps with the deck and settling down the far side; bus
+clearance underneath holds there too. Pillars are omitted on
+the bridge span (the beam cantilevers the corridor rather than
+piercing the deck) and scaled to their local deck height on the
+ramps. Path math: polyline + quadratic-Bezier corner fillets
+(radius ≤ 8u — Catmull-Rom was rejected, its ~10u corner cut
+could clip buildings), pre-sampled at ~1u into flat arrays with
+cumulative lengths; all lookups write into a shared scratch
+object (zero per-frame allocation). Motion: cruise 11.5 u/s,
+corner slowdown via the fillet flag, station approach on a
+linear braking profile the 3.4 u/s² decel can track, 6 s dwell,
+door chime (`sfx.chime`) on arrival and departure, sliding doors
+on the platform side only. Stations: platform deck at beam
+height on a uniform platform side (perp = (−tz, tx)), canopy,
+stair/lift shaft to a street sign point with a canvas name board
++ timetable board (loop minutes computed from the real loop
+length). Boarding is a fade-free prompt interaction at the street
+point while the tram dwells (it is 6u up — you board via the
+station, like the interior doors' teleport logic, minus the
+fade); **alighting is stations-only** — there is no mid-route
+drop, documented in Help. While riding, `Tram.tsx` owns the
+prompt slot (it mounts after Phase9Systems precisely so
+street-level interactions under the guideway cannot fire through
+the car floor), the player renders seated at deck height in
+`Player.tsx` (groundYAt bypassed), and GameSystems gates the two
+wanted rules: heat never bleeds while riding, and the bust check
+never fires (the patrol does not board). Rendering: 4 instanced
+meshes total for beam + 2 rails + pillars (~460 instances), 2
+tram car groups, 4 station groups — no per-frame allocation in
+the loop.
+
+**2. Seasons — a climate system, not a palette swap.** Season =
+7 game-days off the persisted economy day serial (or a Settings
+pin, persisted in `harborfall-settings`). The core move is the
+SUN WARP in `game/season.ts`: elevation' = sin(sunAng) × amp +
+bias, angle' = atan2(elevation', cos(sunAng)). Summer (amp 1.06,
+bias +0.14) lifts the arc and widens the daylight window in
+dayTime to ≈54% of the cycle; winter (0.60, −0.12) drops it to
+≈44% with a low, dim arc. Because GameSystems' `elev` is now the
+warped value, the night factor, ped density bands, phone glow
+and heli rules all inherit the day length for free — and the
+Phase 12 shadow bucket quantises the warped angle (snapping
+untouched). Around it: sky/fog tint multipliers (applied where
+GameSystems already multiplies the theme colours), a seasonal
+offsetHSL on all three water paths (standard material, shader
+uDeep, planar mirror), foliage re-tints copied per frame into
+the instanced TreeSet's five foliage materials (trunk excluded;
+**palms are not in that set and stay green**), and weather
+weights per season in `rollWeather()` (summer Storm ×1.8 extra
+on 13:00–18:00 rolls; winter Fog-weighted). All visual state
+lerps over ~2 s (`tickSeasonVisuals`) so a season turn is a
+drift, not a pop; turns announce via toast + Harbour Wire +
+SableSocial. **Snow: none, by climate.** Port Sable is a
+subtropical harbour city — palms, open water, fishing skiffs.
+The season system is fully simulated; the absence of snow is a
+property of the place, documented on the BLUEPRINT line itself.
+
+**3. Interiors 7 + 8 (pocket system, unchanged mechanics).**
+Showroom (pocket cx 244, 22×15): three rotating turntables
+(wedge/hyper/gt — the DEALER_CARS exotics), a dealer counter
+that replicates the forecourt sale exactly (tap E browses the
+same stock, hold E 0.9 s buys into the garage, same hours via
+`shopsClosed()`), and a glass front whose exterior was added to
+the Northgate forecourt in World.tsx (the pocket has no real
+outside, so from inside the glass carries the street's warm
+glow — stated plainly, not faked as a view). Its hold label is
+"Purchasing…" on purpose: Interactions' generic hold-clear only
+recognises "Buying…", so the indoor counter can never be
+cancelled by the outdoor system's per-frame cleanup. Café Coral
+(pocket cx 282, 16×12; new Docks-strip frontage at (8, 106.5)
+with a STATIC_BLOCKER): counter that sells by need (pastry $12 /
++35 health when hurt, coffee $8 / stamina + boost otherwise),
+two sit-able tables (the restaurant's sit system), and two
+static seated regular rigs with a head-bob life loop. Player
+room-clamping needed no changes — it reads INTERIORS generically.
+
+**4. Last-car persistence.** Snapshot (`harborfall-lastcar`) on
+car entry, ~2.5 s refresh at the wheel, finalised on exit:
+kind/colour/model/owned/stolen/position/heading/damage/fuel/
+window/tune/brakes/flat tyre. Restored at store init: world cars
+in place by spawn id; garage/dynamic cars un-stored if a matching
+put-away instance exists, else re-created from the snapshot.
+Cleared on: 100% damage (checked inside `noteLastCar` itself),
+bust (`resetAfterArrest` — the patrol impounds it), garage store
+(GaragePanel checks the tracked index on both store paths). The
+big map draws an amber ring + "YOUR CAR" label; the minimap
+keeps the plain fleet dots. Known accepted overlap: the mansion
+garage-save (`harborfall-garage-car`) is a separate older system
+— a car that is both garage-saved and last-driven can exist as
+the garage copy plus the street copy, the same tolerance the
+garage system already had.
+
+**5. Phase 12 non-regression + bundle — measured:**
+
+| Chunk | Phase 12 | Phase 13 | Notes |
+|---|---|---|---|
+| index | 840.46 kB / gzip 395.71 | **873.76 / 406.16** | initial |
+| three | 689.88 / 178.23 | 689.88 / 178.23 | initial |
+| react-three | 526.96 / 185.77 | 526.96 / 185.77 | initial |
+| CSS | 51.24 / 10.32 | 51.24 / 10.32 | initial |
+| cc0Data | 1,274.15 / 959.18 | 1,274.15 / 959.18 | async |
+| Phone | 28.21 / 7.50 | 29.24 / 7.74 | async (season UI) |
+| GaragePanel | 4.36 / 1.61 | 4.45 / 1.65 | async |
+
+**Initial-load JS gzip: 759.71 → 770.16 kB (+1.4%).** The growth
+is the tram + season world logic, which is static for the same
+reason Interiors/Phase 7–9 are static (always-running world
+systems, not open-on-demand UI — the App mount comment says so
+at the Tram mount). No new lazy chunks were needed and none of
+Phase 12's were merged back. Draw calls: +~10 (guideway
+instancing, tram cars, station dressing, two pocket rooms —
+rooms only render their contents when visited, as before).
+
+Build: `tsc --noEmit && vite build` PASS. Not live-playtested
+(this environment cannot run the game) — the Phase 13 smoke list
+is in the handoff: ride the full loop end-to-end (board at Docks,
+stay on through Northgate and Coral, step off back at Docks),
+watch a bus pass under the guideway on the bridge, switch season
+at dusk from the pause menu (foliage + light drift), enter the
+showroom at night and buy from the indoor counter, sit in Café
+Coral, and leave a car somewhere odd, reload, and find the amber
+ring on the big map.

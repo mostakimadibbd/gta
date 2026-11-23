@@ -65,6 +65,9 @@ export function rollSocialPost() {
     `Harbour Wraps queue is out the door. worth it. always worth it`,
     `the lighthouse keeper swears the light waved at him. sure, leo`,
     `bus driver just waited for a running kid at the stop. port sable still has manners`,
+    `rode the Sable Line over the whole city at golden hour. the tram is the best seat in port sable and it costs nothing`,
+    `the tram driver waved at me from the guideway. we're basically friends now`,
+    `Sable Line was packed at Market Row this morning — the loop is actually FASTER than the causeway traffic`,
     `ferris-side sunsets > everything. fight me`,
     `Northgate car wash line is six deep. rich people dirt is still dirt`,
   ];

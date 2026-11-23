@@ -74,3 +74,24 @@ export function setShowFps(on: boolean) {
   persistSettings();
 }
 export const showFps = () => !!(G.settings as { showFps?: boolean }).showFps;
+
+/** Phase 12: FIXED-TIMESTEP SIMULATION. The three movement/physics
+ * integrators — the player step (Player.tsx), the driven-car step
+ * (Vehicle.tsx) and the world step for traffic/peds/cops
+ * (GameSystems.tsx) — run at a fixed 60 Hz from a per-component
+ * accumulator instead of on the raw variable frame dt:
+ *   - gameplay speed/feel is identical at 30/60/120 Hz displays,
+ *   - a frame spike can no longer tunnel a collision (each substep
+ *     integrates at most 1/60 s of motion),
+ *   - the accumulator is pre-clamped to MAX_SUBSTEPS steps and any
+ *     leftover debt is dropped, so a hitch costs a slow-motion beat,
+ *     never a spiral of death.
+ * Rendering interpolation is deliberately NOT layered on top: it
+ * would require duplicating every entity's transform state per
+ * frame. At a 60 Hz sim on a 120 Hz display the worst-case visual
+ * step is one sim tick (~16 ms) — the same cadence the game shipped
+ * with on 60 Hz screens. Auxiliary systems (weapons presentation,
+ * jobs, phone) keep their clamped variable dt: they integrate no
+ * positions that can tunnel. */
+export const SIM_STEP = 1 / 60;
+export const SIM_MAX_SUBSTEPS = 3;

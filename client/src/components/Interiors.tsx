@@ -4,13 +4,14 @@
 // movement to the room while G.interior is set. This component also runs
 // ALL proximity interactions (doors + the mansion gate) and publishes
 // the HUD prompt through G.promptText / G.interact.
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { G, toast, nowS, bark } from "../game/store";
+import { G, toast, nowS, bark, persistStoredCars } from "../game/store";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
-import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, type InteriorKind } from "../world";
+import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
+import { shopsClosed } from "./Interactions";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 import { neonSignTexture } from "../textures";
@@ -57,6 +58,12 @@ const FLOOR_R = new THREE.MeshStandardMaterial({ color: "#2b2019", roughness: 0.
 // Phase 9: hangar — corrugated steel + oil-stained concrete
 const WALL_H = new THREE.MeshStandardMaterial({ color: "#5d6a72", roughness: 0.7, metalness: 0.35 });
 const FLOOR_H = new THREE.MeshStandardMaterial({ color: "#43484d", roughness: 0.5, metalness: 0.2 });
+// Phase 13: showroom — slate walls over polished dark stone; café —
+// warm cream over terracotta tile
+const WALL_S = new THREE.MeshStandardMaterial({ color: "#26303a", roughness: 0.6, metalness: 0.2 });
+const FLOOR_S = new THREE.MeshStandardMaterial({ color: "#191d21", roughness: 0.22, metalness: 0.35 });
+const WALL_CF = new THREE.MeshStandardMaterial({ color: "#e6d9bf", roughness: 0.9 });
+const FLOOR_CF = new THREE.MeshStandardMaterial({ color: "#8a5a3c", roughness: 0.8 });
 
 /** Wanted-poster wall art (canvas): three harbour faces, drawn not copied. */
 function posterTexture(): THREE.CanvasTexture {
@@ -83,6 +90,54 @@ export default function Interiors() {
   const policeSign = useMemo(() => signTexture("HARBOUR PATROL", "#1c2f4a", "#cfe0f2"), []);
   const clinicSign = useMemo(() => signTexture("SABLE CLINIC", "#eef2f0", "#c22e2e"), []);
   const restSign = useMemo(() => signTexture("MARINA TABLE", "#241a12", "#ffca7a"), []);
+  const showroomSign = useMemo(() => signTexture("SABLE MOTORS", "#0f2c38", "#ffca7a"), []);
+  const cafeSign = useMemo(() => signTexture("CAFÉ CORAL", "#2b1c10", "#ffca7a"), []);
+  // Phase 13: showroom turntables (rotated in useFrame) + the café's
+  // two regulars — static seated rigs, posed once (they're mid-chat
+  // and in no hurry; a slow head-bob in useFrame keeps them alive)
+  const turnRefs = useRef<Array<THREE.Group | null>>([]);
+  const cafeGuests = useMemo<HumanoidRig[]>(() => {
+    const mk = (o: Parameters<typeof buildHumanoid>[0]) => {
+      const rig = buildHumanoid(o);
+      rig.group.position.y = -0.42;
+      rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.45;
+      rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
+      rig.lArm.rotation.x = -0.55; rig.rArm.rotation.x = -0.7;
+      rig.rFore.rotation.x = -0.5;
+      return rig;
+    };
+    return [
+      mk({ top: "#e8e4da", bottom: "#40342a", skin: "#c68863", hair: "#4a2f1a", topStyle: "tee", gender: "f", hairStyle: "bun" }),
+      mk({ top: "#31556e", bottom: "#232c38", skin: "#8d5524", hair: "#14100e", topStyle: "hoodie", gender: "m", hairStyle: "flat" }),
+    ];
+  }, []);
+  // Phase 13: the showroom counter works like the forecourt's — tap E
+  // browses the stock, HOLD E (0.9 s) buys. Its own e-down clock so
+  // the indoor counter never fights the outdoor one in Interactions
+  // (whose "Buying…" hold-clear can't see this "Purchasing…" label).
+  const srEDown = useRef(-1);
+  const srIdx = useRef(0);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key.toLowerCase() === "e" && !e.repeat) srEDown.current = performance.now() / 1000; };
+    const up = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "e") return;
+      const held = srEDown.current > 0 ? performance.now() / 1000 - srEDown.current : 9;
+      srEDown.current = -1;
+      if (G.hold?.label.startsWith("Purchasing")) G.hold = null;
+      if (held < 0.35 && G.interior === "showroom" && !shopsClosed()) {
+        const S = INTERIORS.showroom;
+        const d2 = (G.playerPos.x - S.cx) ** 2 + (G.playerPos.z - (S.cz - 4.4)) ** 2;
+        if (d2 < 2.6 ** 2) {
+          srIdx.current = (srIdx.current + 1) % DEALER_CARS.length;
+          const dc = DEALER_CARS[srIdx.current];
+          toast(`Sable Motors — ${CAR_MODELS[dc.kind].name} · $${dc.price.toLocaleString()} (hold E to buy)`);
+          sfx.click();
+        }
+      }
+    };
+    window.addEventListener("keydown", down); window.addEventListener("keyup", up);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+  }, []);
   const posters = useMemo(() => posterTexture(), []);
   const clubNeon = useMemo(() => neonSignTexture("SOLACE", "#2ee6c8"), []);
   const beamMatA = useMemo(() => new THREE.MeshBasicMaterial({ color: "#2ee6c8", transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }), []);
@@ -110,6 +165,10 @@ export default function Interiors() {
       G.interior = pg.interior;
     }
     if (beams.current) beams.current.rotation.y = t * 0.35;
+    // Phase 13: showroom turntables turn at a stately pace; the café
+    // regulars nod along to a conversation you're not part of
+    turnRefs.current.forEach((g, i) => { if (g) g.rotation.y = t * (0.22 + i * 0.045); });
+    cafeGuests.forEach((rig, i) => { rig.head.rotation.y = Math.sin(t * 0.4 + i * 2.1) * 0.24; rig.head.rotation.x = 0.08 + Math.sin(t * 0.9 + i) * 0.05; });
     dancers.forEach((rig, i) => {
       animateHumanoid(rig, t * 2.2 + i * 1.7, 0.22, t + i);
       // arms up, swaying to the groove
@@ -194,6 +253,61 @@ export default function Interiors() {
         const [x, z] = INTERIORS.hangar.exitDoor;
         if (near(x, z, 2.2)) { prompt = "Press E — leave the hangar"; act = go(AIRPORT_DOOR.x, AIRPORT_DOOR.z - 1.2, ""); }
         else prompt = "";
+      } else if (G.interior === "showroom") {
+        // ---- Phase 13: SABLE MOTORS SHOWROOM — the exotics indoors
+        // on turntables; the counter sells the same stock as the
+        // forecourt (tap E browses, hold E buys, same hours) ----
+        const [x, z] = INTERIORS.showroom.exitDoor;
+        const S = INTERIORS.showroom;
+        if (near(x, z, 2.2)) { prompt = "Press E — leave the showroom"; act = go(SHOWROOM_EXT_DOOR.x, SHOWROOM_EXT_DOOR.z - 1.2, ""); }
+        else if (near(S.cx, S.cz - 4.4, 2.6)) {
+          if (shopsClosed()) { prompt = "Sable Motors is closed (07:00–23:00) — the turntables keep turning under the lights."; warn = true; }
+          else {
+            const dc = DEALER_CARS[srIdx.current];
+            const name = CAR_MODELS[dc.kind].name;
+            prompt = `Sable Motors — ${name} · $${dc.price.toLocaleString()} (tap E to browse · hold E to buy)`;
+            if (srEDown.current > 0) {
+              const progress = (performance.now() / 1000 - srEDown.current) / 0.9;
+              G.hold = { label: `Purchasing ${name} — $${dc.price.toLocaleString()}…`, progress: Math.min(1, progress) };
+              if (progress >= 1) {
+                srEDown.current = -1; G.hold = null;
+                if (G.cash < dc.price) { toast(`${name} costs $${dc.price.toLocaleString()} — not enough cash.`); sfx.dryFire(); }
+                else if (G.storedCars.length >= 6) toast("Your garage is full (6) — store or sell a car first.");
+                else {
+                  G.cash -= dc.price;
+                  G.storedCars.push({ kind: dc.kind, color: dc.color, name, damage: 0, fuel: 90, brokenWindow: false });
+                  persistStoredCars();
+                  pushPhoneMsg("Sable Motors", `🚗 ${name} delivered to your garage. Press G at a garage to take it out.`);
+                  toast(`${name} bought — delivered to your garage`);
+                  sfx.cash();
+                }
+              }
+            }
+          }
+        }
+      } else if (G.interior === "cafe") {
+        // ---- Phase 13: CAFÉ CORAL — coffee for the road, a pastry
+        // when you're hurt, and chairs that are actually for sitting --
+        const [x, z] = INTERIORS.cafe.exitDoor;
+        const CF = INTERIORS.cafe;
+        if (near(x, z, 2.2)) { prompt = "Press E — leave Café Coral"; act = go(CAFE_EXT_DOOR.x, CAFE_EXT_DOOR.z - 1.2, ""); }
+        else if (near(CF.cx - 2.9, CF.cz + 0.6, 2) || near(CF.cx + 2.9, CF.cz + 0.6, 2)) {
+          if (G.sitting) { prompt = "Press E — stand up"; act = () => { G.sitting = false; G.sitSpot = null; }; }
+          else {
+            prompt = "Press E — sit with a coffee";
+            act = () => { G.sitting = true; G.sitSpot = { x: px, z: pz, heading: G.playerHeading }; sfx.click(); };
+          }
+        } else if (near(CF.cx, CF.cz - 2.2, 2.3)) {
+          if (G.health < 70) {
+            if (G.cash >= 12) {
+              prompt = "Press E — harbour pastry ($12 — restores 35 health)";
+              act = () => { G.cash -= 12; G.health = Math.min(100, G.health + 35); G.eatingUntil = G.timeS + 2.2; sfx.eat(); toast("Flaky, warm, gone in four bites — you feel human again (+35 health)."); };
+            } else { prompt = "The harbour pastry is $12 — you're short."; warn = true; }
+          } else if (G.cash >= 8) {
+            prompt = "Press E — Café Coral coffee ($8 — full stamina, steady hands for 2 min)";
+            act = () => { G.cash -= 8; G.stamina = 100; G.staminaBoostUntil = G.timeS + 120; G.eatingUntil = G.timeS + 2.2; sfx.eat(); toast("Harbour-roast coffee — stamina full, and it drains at half rate for a while."); };
+          } else { prompt = "Coffee is $8 — you're short."; warn = true; }
+        }
       } else if (near(GARAGE_EXT_DOOR.x, GARAGE_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Lina's Garage";
         act = go(INTERIORS.garage.spawnIn[0], INTERIORS.garage.spawnIn[1], "garage");
@@ -212,6 +326,12 @@ export default function Interiors() {
       } else if (near(AIRPORT_DOOR.x, AIRPORT_DOOR.z, 2.8)) {
         prompt = "Press E — enter the airport hangar";
         act = go(INTERIORS.hangar.spawnIn[0], INTERIORS.hangar.spawnIn[1], "hangar");
+      } else if (near(SHOWROOM_EXT_DOOR.x, SHOWROOM_EXT_DOOR.z, 2.8)) {
+        prompt = "Press E — enter the Sable Motors showroom";
+        act = go(INTERIORS.showroom.spawnIn[0], INTERIORS.showroom.spawnIn[1], "showroom");
+      } else if (near(CAFE_EXT_DOOR.x, CAFE_EXT_DOOR.z, 2.8)) {
+        prompt = "Press E — enter Café Coral";
+        act = go(INTERIORS.cafe.spawnIn[0], INTERIORS.cafe.spawnIn[1], "cafe");
       } else if (near(MANSION_GATE.x, MANSION_GATE.z, 3.2)) {
         if (G.ownsMansion) prompt = "🏠 Sable Heights Villa — your home. Park in the drive to garage-save a car.";
         else if (G.cash >= MANSION_PRICE) {
@@ -233,6 +353,7 @@ export default function Interiors() {
   const G0 = INTERIORS.garage, C0 = INTERIORS.club;
   const P0 = INTERIORS.police, CL0 = INTERIORS.clinic, R0 = INTERIORS.restaurant;
   const H0 = INTERIORS.hangar;
+  const S0 = INTERIORS.showroom, CF0 = INTERIORS.cafe;
   return (
     <group>
       {/* ================= LINA'S GARAGE — interior ================= */}
@@ -443,6 +564,81 @@ export default function Interiors() {
         {/* painted floor markings + exit door */}
         <mesh position={[-2.5, 0.06, -1.5]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[4.6, 4.85, 28]} /><meshBasicMaterial color="#d99a3d" transparent opacity={0.5} /></mesh>
         <mesh position={[0, 1.4, H0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#20242a" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
+      </group>
+
+      {/* ================= Phase 13: SABLE MOTORS — showroom ============ */}
+      <RoomShell cx={S0.cx} cz={S0.cz} w={S0.w} d={S0.d} h={4.8} wall={WALL_S} floor={FLOOR_S} ceiling />
+      <group position={[S0.cx, 0, S0.cz]}>
+        <pointLight position={[0, 4.2, 0]} intensity={34} distance={24} decay={1.7} color="#ffe2b8" />
+        <mesh position={[0, 3.4, -S0.d / 2 + 0.2]}>
+          <planeGeometry args={[7.4, 1.35]} />
+          <meshStandardMaterial map={showroomSign} emissive="#ffffff" emissiveMap={showroomSign} emissiveIntensity={1} />
+        </mesh>
+        {/* the glass front, from inside: a teal sheet with the street's
+            warm glow behind it (the pocket has no outside to show) */}
+        <mesh position={[0, 1.75, S0.d / 2 - 0.32]}><boxGeometry args={[17, 2.7, 0.04]} /><meshStandardMaterial color="#ffd9a0" emissive="#ffca7a" emissiveIntensity={0.28} /></mesh>
+        <mesh position={[0, 1.75, S0.d / 2 - 0.26]}><boxGeometry args={[17, 2.7, 0.03]} /><meshStandardMaterial color="#a8ccd4" roughness={0.1} metalness={0.4} transparent opacity={0.35} /></mesh>
+        {[-5.6, 0, 5.6].map((x) => <mesh key={x} position={[x, 1.75, S0.d / 2 - 0.24]}><boxGeometry args={[0.18, 3.1, 0.05]} /><meshStandardMaterial color="#10161e" metalness={0.5} roughness={0.4} /></mesh>)}
+        {/* three turntables with the exotics (spin in useFrame) */}
+        {([["wedge", "#d99a3d", -6.8], ["hyper", "#e8ecef", 0], ["gt", "#31556e", 6.8]] as const).map(([kind, color, x], i) => (
+          <group key={kind} position={[x, 0, -1.6]}>
+            <mesh position={[0, 0.09, 0]} receiveShadow><cylinderGeometry args={[2.7, 2.85, 0.18, 24]} /><meshStandardMaterial color="#2c3644" roughness={0.35} metalness={0.5} /></mesh>
+            <mesh position={[0, 0.19, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[2.45, 2.62, 24]} /><meshBasicMaterial color="#d99a3d" transparent opacity={0.65} /></mesh>
+            <group ref={(g) => { turnRefs.current[i] = g; }} position={[0, 0.18, 0]}>
+              <CarBody kind={kind} color={color} />
+            </group>
+          </group>
+        ))}
+        {/* dealer counter (the buy point) + desk glow */}
+        <mesh position={[0, 0.55, -5.6]} castShadow><boxGeometry args={[5.6, 1.1, 0.9]} /><meshStandardMaterial color="#141c24" roughness={0.3} metalness={0.3} /></mesh>
+        <mesh position={[0, 1.14, -5.6]}><boxGeometry args={[5.8, 0.07, 1.05]} /><meshStandardMaterial color="#d99a3d" roughness={0.35} metalness={0.4} /></mesh>
+        <mesh position={[1.9, 1.32, -5.6]}><sphereGeometry args={[0.09, 10, 8]} /><meshStandardMaterial color="#ffe9a8" emissive="#ffca7a" emissiveIntensity={1.6} /></mesh>
+        <mesh position={[-8.9, 0.5, 3.4]} castShadow><boxGeometry args={[1.4, 1, 0.7]} /><meshStandardMaterial color="#1f4c34" roughness={1} /></mesh>
+        <mesh position={[8.9, 0.5, 3.4]} castShadow><boxGeometry args={[1.4, 1, 0.7]} /><meshStandardMaterial color="#1f4c34" roughness={1} /></mesh>
+        {/* exit door on the glass line */}
+        <mesh position={[0, 1.4, S0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#0b0f14" emissive="#7fd8e8" emissiveIntensity={0.3} /></mesh>
+      </group>
+
+      {/* ================= Phase 13: CAFÉ CORAL ========================= */}
+      <RoomShell cx={CF0.cx} cz={CF0.cz} w={CF0.w} d={CF0.d} h={3.4} wall={WALL_CF} floor={FLOOR_CF} ceiling />
+      <group position={[CF0.cx, 0, CF0.cz]}>
+        <pointLight position={[0, 2.85, 0]} intensity={21} distance={16} decay={1.7} color="#ffca7a" />
+        <mesh position={[0, 2.5, -CF0.d / 2 + 0.2]}>
+          <planeGeometry args={[5.6, 1.05]} />
+          <meshStandardMaterial map={cafeSign} emissive="#ffffff" emissiveMap={cafeSign} emissiveIntensity={0.9} />
+        </mesh>
+        {/* counter + pastry case + the machine that pays the rent */}
+        <mesh position={[0, 0.55, -3.4]} castShadow><boxGeometry args={[6.6, 1.1, 0.9]} /><primitive object={WOOD} attach="material" /></mesh>
+        <mesh position={[0, 1.14, -3.4]}><boxGeometry args={[6.8, 0.07, 1.05]} /><meshStandardMaterial color="#e8e0d0" roughness={0.3} /></mesh>
+        <group position={[1.7, 1.18, -3.4]}>
+          <mesh position={[0, 0.26, 0]}><boxGeometry args={[2.3, 0.52, 0.72]} /><meshStandardMaterial color="#cfe0e4" roughness={0.08} metalness={0.3} transparent opacity={0.4} /></mesh>
+          {[-0.7, 0, 0.7].map((x, i) => (
+            <mesh key={i} position={[x, 0.1, 0]}><sphereGeometry args={[0.17, 10, 8]} /><meshStandardMaterial color={["#e8c88a", "#b3542e", "#7a4a2b"][i]} roughness={0.6} /></mesh>
+          ))}
+        </group>
+        <mesh position={[-2.3, 1.5, -3.55]} castShadow><boxGeometry args={[0.9, 0.65, 0.6]} /><meshStandardMaterial color="#22262b" metalness={0.55} roughness={0.35} /></mesh>
+        <mesh position={[-2.3, 1.9, -3.55]}><boxGeometry args={[0.5, 0.14, 0.4]} /><meshStandardMaterial color="#c8ccd0" metalness={0.7} roughness={0.3} /></mesh>
+        {/* two café tables with chairs (sit points) + cups */}
+        {[-2.9, 2.9].map((tx) => (
+          <group key={tx} position={[tx, 0, 0.6]}>
+            <mesh position={[0, 0.73, 0]} castShadow><cylinderGeometry args={[0.78, 0.78, 0.06, 16]} /><meshStandardMaterial color="#e8e0d0" roughness={0.4} /></mesh>
+            <mesh position={[0, 0.36, 0]}><cylinderGeometry args={[0.06, 0.06, 0.73, 8]} /><primitive object={METAL} attach="material" /></mesh>
+            {[0, Math.PI].map((a, i) => (
+              <group key={i} position={[Math.sin(a) * 1.15, 0, Math.cos(a) * 1.15]} rotation={[0, a + Math.PI, 0]}>
+                <mesh position={[0, 0.46, 0]} castShadow><boxGeometry args={[0.48, 0.07, 0.44]} /><primitive object={WOOD} attach="material" /></mesh>
+                <mesh position={[0, 0.78, -0.21]}><boxGeometry args={[0.48, 0.66, 0.07]} /><primitive object={WOOD} attach="material" /></mesh>
+              </group>
+            ))}
+            <mesh position={[0.25, 0.82, 0.15]}><cylinderGeometry args={[0.07, 0.05, 0.1, 10]} /><meshStandardMaterial color="#ffffff" roughness={0.35} /></mesh>
+            <mesh position={[-0.2, 0.82, -0.2]}><cylinderGeometry args={[0.07, 0.05, 0.1, 10]} /><meshStandardMaterial color="#b3542e" roughness={0.35} /></mesh>
+          </group>
+        ))}
+        {/* the regulars, mid-conversation at the east table */}
+        <group position={[CF0.w / 2 - 5.1, 0, 1.75]} rotation={[0, Math.PI, 0]}><primitive object={cafeGuests[0].group} /></group>
+        <group position={[CF0.w / 2 - 5.1, 0, -0.55]} rotation={[0, 0, 0]}><primitive object={cafeGuests[1].group} /></group>
+        {/* warm window strip + exit */}
+        <mesh position={[0, 2, CF0.d / 2 - 0.16]}><boxGeometry args={[9, 1.3, 0.03]} /><meshStandardMaterial color="#ffd9a0" emissive="#ffca7a" emissiveIntensity={0.35} transparent opacity={0.85} /></mesh>
+        <mesh position={[0, 1.4, CF0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#2b1c10" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
       </group>
     </group>
   );

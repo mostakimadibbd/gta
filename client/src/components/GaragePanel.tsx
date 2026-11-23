@@ -2,7 +2,7 @@
 // stored-cars list: pick a stored car and it rolls out of the garage exit;
 // park a car in a garage zone and store it from here (max 6, persisted).
 import { useEffect, useState } from "react";
-import { G, persistStoredCars, type StoredCar } from "../game/store";
+import { G, persistStoredCars, clearLastCar, LASTCAR, type StoredCar } from "../game/store";
 import { GARAGE_ZONES, CAR_MODELS } from "../world";
 import { sfx } from "../game/audio";
 
@@ -51,6 +51,9 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
 
   const storeCurrent = () => {
     if (!current || G.storedCars.length >= 6) return;
+    // Phase 13: a car put away in the garage stops being the "last
+    // car" — it lives in the garage system now, not on the street
+    if (LASTCAR.carIndex === G.cars.indexOf(current)) clearLastCar();
     G.storedCars.push({ kind: current.kind, color: current.color, name: CAR_MODELS[current.kind].name, damage: Math.round(current.damage), fuel: Math.round(current.fuel), brokenWindow: current.brokenWindow, tuneLvl: current.tuneLvl ?? 0, brakeLvl: current.brakeLvl ?? 0, flatTyre: current.flatTyre ?? false });
     persistStoredCars();
     current.storedAway = true;
@@ -65,6 +68,7 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
     if (!stored) return;
     // swap: the car you're sitting in goes into storage in its place
     if (current && G.storedCars.length <= 6) {
+      if (LASTCAR.carIndex === G.cars.indexOf(current)) clearLastCar(); // Phase 13: stored = no longer the street last-car
       G.storedCars[idx] = { kind: current.kind, color: current.color, name: CAR_MODELS[current.kind].name, damage: Math.round(current.damage), fuel: Math.round(current.fuel), brokenWindow: current.brokenWindow, tuneLvl: current.tuneLvl ?? 0, brakeLvl: current.brakeLvl ?? 0, flatTyre: current.flatTyre ?? false };
       current.storedAway = true;
       current.state = { x: 0, z: -500, heading: 0, speed: 0 };

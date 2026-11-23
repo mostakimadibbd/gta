@@ -11,6 +11,7 @@ import type { CharacterPreset } from "../game/characters";
 import { CLOTH } from "../game/phase8";
 import { LOOK } from "../game/phase9";
 import { padKeys, padMove } from "../game/gamepad";
+import { SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
 import { touchMove } from "../game/touch";
 
 type AnimationState = "Idle" | "Walk" | "Run" | "Driving";
@@ -140,12 +141,27 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
   }, [driving]);
 
   const collapseT = useRef(0); // Phase 9: wasted collapse progress
+  const simAcc = useRef(0); // Phase 12: fixed-step accumulator
 
+  // Phase 12: the player step runs at a FIXED 60 Hz (accumulator
+  // driver; max 3 substeps, leftover debt dropped — see game/perf.ts)
+  // so movement, swimming and the wasted collapse advance identically
+  // at 30/60/120 Hz. stepPlayer is the old per-frame body, unchanged.
   useFrame((_, delta) => {
     // Phase 9: the frame keeps running through a WASTED status so the
     // collapse can play under the respawn screen
-    if (!root.current || (paused && !showcase && !G.status)) return;
-    const dt = Math.min(delta, 0.05);
+    if (!root.current || (paused && !showcase && !G.status)) { simAcc.current = 0; return; }
+    simAcc.current = Math.min(simAcc.current + delta, SIM_STEP * SIM_MAX_SUBSTEPS);
+    let nSteps = 0;
+    while (simAcc.current >= SIM_STEP && nSteps < SIM_MAX_SUBSTEPS) {
+      simAcc.current -= SIM_STEP; nSteps += 1;
+      stepPlayer(SIM_STEP);
+    }
+    if (nSteps === SIM_MAX_SUBSTEPS) simAcc.current = 0;
+  });
+
+  function stepPlayer(dt: number) {
+    if (!root.current) return;
     const tNow = performance.now() / 1000;
     if (G.status === "wasted" && !driving) {
       // ---- Phase 9 ragdoll-LITE: a procedural limp collapse (there is
@@ -165,6 +181,26 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     }
     if (G.status !== "wasted") collapseT.current = 0;
     if (paused && !showcase) return; // BUSTED: freeze (hands-up is pre-status)
+    // ---- Phase 13: riding the Sable Line — Tram.tsx owns the
+    // position (it writes G.playerPos / G.followPos every frame);
+    // here we only render the seated pose at deck height, bypassing
+    // groundYAt entirely (the ground 6u below is traffic's problem) --
+    if (G.tramRide >= 0) {
+      G.swimming = false;
+      root.current.visible = true;
+      jumpRequested.current = false;
+      intensity.current = 0;
+      root.current.position.set(positionRef.current.x, G.tramSeatY, positionRef.current.z);
+      root.current.rotation.set(0, G.playerHeading, 0);
+      rotationRef.current.set(0, root.current.rotation.y, 0);
+      animateHumanoid(rig, phase.current, 0, tNow);
+      rig.group.position.y = -0.42; // the bench-seat drop, same as sitting
+      rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.45;
+      rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
+      rig.lArm.rotation.x = -0.3; rig.rArm.rotation.x = -0.3;
+      if (animation.current !== "Idle") { animation.current = "Idle"; setAnimationLabel("Idle"); }
+      return;
+    }
     // Phase 8: one merged view of keyboard ∪ gamepad keys (analog
     // stick/touch vectors are consulted separately below)
     const pressed = pressedView;
@@ -580,7 +616,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         rig.head.rotation.x = -0.2 * bustAmt;
       }
     }
-  });
+  }
 
   return (
     <group ref={root}>

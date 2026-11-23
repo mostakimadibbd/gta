@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { CONTACTS, phoneMsgs, onPhoneMsgs } from "../game/phone";
 import { G, persistSettings, stashTotal, windLabel } from "../game/store";
+import { currentSeason, seasonMeta } from "../game/season";
 import { CAR_MODELS, DEALER_CARS } from "../world";
 import { M } from "../game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
@@ -116,7 +117,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
         {app === "home" && (
           <div className="phone-home">
             <div className="phone-clock">{gameClock()}</div>
-            <div className="phone-date">Port Sable · {M.storyDone ? "Story complete" : `Chapter ${Math.min(6, M.storyIndex + 1)} of 6`} · {G.weather} · wind {windLabel(G.wind).toLowerCase()}</div>
+            <div className="phone-date">Port Sable · {M.storyDone ? "Story complete" : `Chapter ${Math.min(6, M.storyIndex + 1)} of 6`} · {currentSeason()} · {G.weather} · wind {windLabel(G.wind).toLowerCase()}</div>
             <div className="phone-apps">
               {APPS.map((a) => (
                 <button key={a.label} type="button" className="phone-app" onClick={() => go(a.id)}>
@@ -304,7 +305,9 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
               <>
                 <h3 className="phone-subhead">harbourweather.ps</h3>
                 <div className="bank-row"><span>Now over Port Sable</span><b>{G.weather}</b></div>
+                <div className="bank-row"><span>Season</span><b>{currentSeason()}{G.settings.season !== "auto" ? " (pinned)" : ""}</b></div>
                 <div className="bank-row"><span>Wind</span><b>{windLabel(G.wind)}</b></div>
+                <div className="phone-msg"><b>The season in Port Sable</b><p>{seasonMeta().blurb}</p></div>
                 <div className="bank-row"><span>Next change</span><b>~{Math.max(1, Math.round(G.weatherIn / 60))} min</b></div>
                 <div className="phone-msg"><b>Harbourmaster's note</b><p>{G.weather === "Storm" ? "Storm over the bay — small craft stay in, and the fishing's off. The Sparrow stays hangared too, if you value it." : G.weather === "Rain" ? "Rain on the water. Roads are slick, the fish don't care, and Tomas is still on the pier." : G.weather === "Fog" ? "Fog in the harbour. Drive slow, boat slower — the patrol boat is out there somewhere." : "Fair harbour weather. The regatta lights are calling and the Downs dirt loop is dry."}</p></div>
               </>
@@ -448,6 +451,15 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>Ray-traced reflections (High tier)</span>
               <button type="button" className="phone-toggle" onClick={() => setSetting({ reflFx: !G.settings.reflFx })}>{G.settings.reflFx ? "On" : "Off"}</button></div>
             <p className="phone-tip">On High, reflections are ray-traced-style: screen-space reflections on wet streets, glass and paint, plus a mirrored bay. A browser has no hardware ray tracing — this is the real-time stack web games use instead.</p>
+            <h3 className="phone-subhead">Season</h3>
+            <div className="bank-row"><span>Season now</span><b>{currentSeason()}</b></div>
+            <div className="bank-row"><span>Season turns</span>
+              <span className="phone-seg">
+                {(["auto", "Spring", "Summer", "Autumn", "Winter"] as const).map((s) => (
+                  <button key={s} type="button" className={`phone-seg-btn ${G.settings.season === s ? "active" : ""}`} onClick={() => setSetting({ season: s })}>{s === "auto" ? "Auto" : s}</button>
+                ))}
+              </span></div>
+            <p className="phone-tip">Auto turns every 7 game-days: sun angle, day length, light, foliage and weather odds all shift. Winter is cool and dry — no snow in the subtropics.</p>
             <h3 className="phone-subhead">Subtitles</h3>
             <div className="bank-row"><span>Subtitle size</span>
               <span className="phone-seg">

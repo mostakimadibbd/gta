@@ -357,6 +357,7 @@ export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[]
   // ---- Phase 7 frontages (World.tsx Phase7Frontages) ----
   { x: -64, z: 106.5, hw: 6.1, hd: 4.1 },  // Harbour Patrol HQ (police interior door)
   { x: 88, z: 106.5, hw: 6.1, hd: 4.1 },   // Sable Clinic (clinic interior door)
+  { x: 8, z: 106.5, hw: 5, hd: 4.1 },      // Phase 13: Café Coral (Docks strip, cafe interior door)
   { x: 64, z: 218, hw: 5, hd: 3.4 },       // Marina Table restaurant (Coral)
   { x: 36, z: 218, hw: 4, hd: 3.4 },       // Coral Shores Apartment block
   { x: -44, z: -218.5, hw: 4.5, hd: 2.6 }, // Northgate Car Wash back wall
@@ -397,6 +398,11 @@ export const CAR_WASH = { x: -44, z: -210 };             // Northgate Car Wash (
 export const CLUB_SHARE_POINT = { x: 54, z: 112 };       // Club Solace share buy point
 // ---- Phase 9: airport hangar door (terminal front, apron side) ----
 export const AIRPORT_DOOR = { x: 114.5, z: 40.6 };
+// ---- Phase 13 exterior doors: the showroom's glass front faces the
+// Northgate forecourt (building face z=-230.5, prompt on the apron);
+// Café Coral joins the Docks strip at z=106.5 like HQ / the clinic ----
+export const SHOWROOM_EXT_DOOR = { x: -36, z: -233 };
+export const CAFE_EXT_DOOR = { x: 8, z: 100.6 };
 
 // ---- Phase 7 world sweep: toll booth on the Coral causeway (bridge
 // deck at x = 60; the booth sits in the corridor, the barrier arm is a
@@ -457,7 +463,7 @@ export const MANSION_DRIVE = { x: MANSION.x + 4.4, z: MANSION.z + 4.4, hw: 3.6, 
 // ---- Phase 3: enterable interiors live in an offset pocket (z ≈ -175),
 // far outside the city grid. Player movement clamps to the room while
 // G.interior is set, so city collision never applies there.
-export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar";
+export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe";
 export interface InteriorDef { cx: number; cz: number; w: number; d: number; spawnIn: [number, number]; exitDoor: [number, number]; }
 export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   garage: { cx: 0, cz: -175, w: 18, d: 13, spawnIn: [0, -171.2], exitDoor: [0, -169.4] },
@@ -468,6 +474,9 @@ export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   restaurant: { cx: 172, cz: -175, w: 18, d: 13, spawnIn: [172, -171.6], exitDoor: [172, -169.6] },
   // ---- Phase 9: airport hangar (sixth pocket interior) ----
   hangar: { cx: 208, cz: -175, w: 20, d: 14, spawnIn: [208, -171.4], exitDoor: [208, -169.2] },
+  // ---- Phase 13: Sable Motors showroom + Café Coral (pockets 7 + 8) ----
+  showroom: { cx: 244, cz: -175, w: 22, d: 15, spawnIn: [244, -171.2], exitDoor: [244, -168.4] },
+  cafe: { cx: 282, cz: -175, w: 16, d: 12, spawnIn: [282, -171.2], exitDoor: [282, -169.9] },
 };
 
 export function isBlocked(x: number, z: number, radius: number): boolean {

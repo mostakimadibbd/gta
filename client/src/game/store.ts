@@ -2,7 +2,7 @@
 // frame by the 3D systems; the HUD polls it at 8 Hz and copies to React state.
 import * as THREE from "three";
 import { sfx } from "./audio";
-import { CAR_SPAWNS, PIER_SPAWN, MANSION, districtAt } from "../world";
+import { CAR_SPAWNS, CAR_MODELS, PIER_SPAWN, MANSION, districtAt } from "../world";
 import type { CarSpawn } from "../world";
 import type { VehicleState } from "../physics/GamePhysics";
 
@@ -15,6 +15,11 @@ export interface NpcCar extends VehicleState {
   kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
   rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
   busRoute?: boolean; wp?: number; stopT?: number;
+  // ---- Phase 12 AI staggering: cached results of the two expensive
+  // traffic scans (signal stop-line distance + same-lane queue gap).
+  // Far cars rescan on a 1-in-3 slice and reuse these between scans;
+  // near cars rescan every step. ----
+  scanStop?: number; scanQueue?: number; scanWant?: boolean;
 }
 export interface Ped {
   x: number; z: number; heading: number; speed: number; axis: "x" | "z"; dir: 1 | -1; side: number; color: string;
@@ -97,10 +102,15 @@ export const G = {
   timeS: 0, // elapsed game clock (set by GameSystems every frame)
   firstPerson: false,
   swimming: false,
-  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar",
+  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe",
   // ---- Phase 7: wind, sitting, replay requests, camera flash, boosts ----
   wind: 0.5, // 0..1 slow gust value — palm sway, boat bob, HUD/phone label
   sitting: false, // player parked on a bench / chair (Player pose + lock)
+  // ---- Phase 13: the Sable Line — station index while riding the
+  // tram (-1 = not riding). While riding, Player renders the seated
+  // pose at tramSeatY and GameSystems never busts / bleeds heat. ----
+  tramRide: -1,
+  tramSeatY: 6.62,
   sitSpot: null as null | { x: number; z: number; heading: number },
   requestReplayId: "", // phone Story app → App starts a chapter replay
   camFlashAt: -9, // nowS() of the last speed-camera flash (App overlay)
@@ -151,6 +161,9 @@ export const G = {
     // ---- Phase 11: player override for the High-tier dynamic reflection
     // stack (SSR + planar water). Off = Standard reflections at any tier.
     reflFx: true,
+    // ---- Phase 13: season pin — "auto" follows the 7-day calendar
+    // (game/season.ts); a season name pins it until set back to auto.
+    season: "auto",
     // ---- Phase 5: quality tier + subtitles (game/quality.ts owns detection) ----
     quality: "medium" as "low" | "medium" | "high",
     subSize: "M" as "S" | "M" | "L", // subtitle text size
@@ -209,6 +222,76 @@ try {
       brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
     });
     G.savedCarId = G.cars.length - 1;
+  }
+} catch { /* storage unavailable */ }
+
+// ---- Phase 13: LAST-USED VEHICLE persistence (harborfall-lastcar) ----
+// The car you last drove is saved when you get in, refreshed while you
+// drive, and finalised when you get out — kind, colour, position,
+// heading, damage, fuel and mods. On the next session it is restored
+// where you left it (phone Map draws an amber "YOUR CAR" ring there).
+// THE RULES (documented in BLUEPRINT §15): the snapshot is CLEARED
+// when the car is wrecked (damage 100), when you are busted (the
+// patrol impounds it — resetAfterArrest), and when the car is put
+// away into a garage (GaragePanel). A world-spawn car is restored in
+// place by spawn id; a garage/dynamic car is re-created from the
+// snapshot (or un-stored if a matching put-away instance exists).
+export interface LastCarSave {
+  spawnId: number; // CAR_SPAWNS id for world cars, -1 for dynamic cars
+  kind: string; color: string; model: string; owned: boolean; stolen: boolean;
+  x: number; z: number; heading: number; damage: number; fuel: number;
+  brokenWindow: boolean; tuneLvl: number; brakeLvl: number; flatTyre: boolean;
+}
+export const LASTCAR = { save: null as LastCarSave | null, carIndex: -1 };
+export function noteLastCar(car: PlayerCar) {
+  if (car.storedAway || car.damage >= 100) { clearLastCar(); return; }
+  const spawnId = car.id >= 0 && car.id < CAR_SPAWNS.length && CAR_SPAWNS[car.id].kind === car.kind ? car.id : -1;
+  LASTCAR.save = {
+    spawnId, kind: car.kind, color: car.color, model: car.model, owned: car.owned, stolen: car.stolen,
+    x: car.state.x, z: car.state.z, heading: car.state.heading,
+    damage: Math.round(car.damage), fuel: Math.round(car.fuel), brokenWindow: car.brokenWindow,
+    tuneLvl: car.tuneLvl ?? 0, brakeLvl: car.brakeLvl ?? 0, flatTyre: car.flatTyre ?? false,
+  };
+  LASTCAR.carIndex = G.cars.indexOf(car);
+  try { localStorage.setItem("harborfall-lastcar", JSON.stringify(LASTCAR.save)); } catch { /* ignore */ }
+}
+export function clearLastCar() {
+  LASTCAR.save = null; LASTCAR.carIndex = -1;
+  try { localStorage.removeItem("harborfall-lastcar"); } catch { /* ignore */ }
+}
+try {
+  const raw = localStorage.getItem("harborfall-lastcar");
+  if (raw) {
+    const s = JSON.parse(raw) as LastCarSave;
+    if (s && s.damage < 100) {
+      LASTCAR.save = s;
+      const apply = (c: PlayerCar) => {
+        c.state = { x: s.x, z: s.z, heading: s.heading, speed: 0 };
+        c.x = s.x; c.z = s.z; c.heading = s.heading;
+        c.damage = s.damage; c.fuel = s.fuel; c.brokenWindow = s.brokenWindow;
+        c.tuneLvl = s.tuneLvl; c.brakeLvl = s.brakeLvl; c.flatTyre = s.flatTyre;
+        c.storedAway = false;
+      };
+      if (s.spawnId >= 0) {
+        const idx = G.cars.findIndex((c) => c.id === s.spawnId);
+        if (idx >= 0) { apply(G.cars[idx]); LASTCAR.carIndex = idx; }
+      } else {
+        // dynamic car: un-store a matching put-away instance if one
+        // exists, else re-create it from the snapshot
+        const idx = G.cars.findIndex((c) => c.storedAway && c.kind === s.kind && c.color === s.color);
+        if (idx >= 0) { apply(G.cars[idx]); LASTCAR.carIndex = idx; }
+        else {
+          G.cars.push({
+            id: 1000 + G.cars.length, x: s.x, z: s.z, heading: s.heading, color: s.color,
+            model: s.model || CAR_MODELS[s.kind as PlayerCar["kind"]]?.name || "Car", kind: s.kind as PlayerCar["kind"], owned: s.owned,
+            state: { x: s.x, z: s.z, heading: s.heading, speed: 0 }, stolen: s.stolen, damage: s.damage, fuel: s.fuel,
+            brokenWindow: s.brokenWindow, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
+            flatTyre: s.flatTyre, tuneLvl: s.tuneLvl, brakeLvl: s.brakeLvl, pitchVel: 0, rollVel: 0,
+          });
+          LASTCAR.carIndex = G.cars.length - 1;
+        }
+      }
+    }
   }
 } catch { /* storage unavailable */ }
 
@@ -305,8 +388,10 @@ function respawnPoint() {
   else if (G.ownsMansion) G.playerPos.set(MANSION.x + 9, 0, MANSION.z + 9);
   else G.playerPos.set(-100, 0, 100);
   G.interior = "";
+  G.tramRide = -1; // Phase 13: a respawn always steps off the tram
 }
 export function resetAfterArrest(fine: number) {
+  clearLastCar(); // Phase 13: busted = the patrol impounds your last car
   G.finesPaid += Math.min(fine, G.cash);
   G.cash = Math.max(0, G.cash - fine);
   if (G.inventory.length) { G.inventory = []; persistInventory(); toast("Busted — your stash was confiscated"); }

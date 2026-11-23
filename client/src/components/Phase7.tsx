@@ -31,6 +31,9 @@ import { buildHumanoid, animateHumanoid } from "../humanoid";
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
+// Phase 12: scratch buffer for the per-frame hail-point scan (was a
+// .filter allocation every frame while idling in a taxi)
+const hailScratch: Poi[] = [];
 const BENCHES = props.filter((p) => p.kind === "bench");
 const DROPS: Poi[] = [...PICKUP_POINTS.slice(1), DEST_POINTS[0], DEST_POINTS[8], DEST_POINTS[4], DEST_POINTS[11]];
 
@@ -132,9 +135,10 @@ export default function Phase7Systems() {
       }
     }
     if (J.taxiPhase === "idle" && !jobBusy() && drivingKind() === "taxi" && G.wanted === 0 && t > J.taxiCooldownUntil && !G.status) {
-      const near = HAIL_POINTS.filter((h) => (h.x - px) ** 2 + (h.z - pz) ** 2 < 130 ** 2);
-      if (near.length > 0 && Math.random() < dt * 0.25) {
-        J.fare = pick(near);
+      hailScratch.length = 0;
+      for (const h of HAIL_POINTS) if ((h.x - px) ** 2 + (h.z - pz) ** 2 < 130 ** 2) hailScratch.push(h);
+      if (hailScratch.length > 0 && Math.random() < dt * 0.25) {
+        J.fare = pick(hailScratch);
         J.taxiPhase = "pickup";
         bark("Sable Cabs", "Fare waiting — follow the amber marker and stop beside them.");
         toast("🚕 Sable Cabs: a fare is hailing — amber marker on your map.");

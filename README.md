@@ -131,6 +131,23 @@ corrupt harbour boss's debt ledger.
   topics — the two remaining ⬜ are trains (no rail network in the
   city plan) and seasons/snow (a subtropical harbour city with no
   winter art set), each with its reason stated in the ledger.
+- **Phase 13 — "Remaining Features"** — the ledger closes. **The
+  Sable Line**: a two-car light-rail tram on an elevated guideway
+  loop above the traffic (Docks · Market Row · Northgate · Coral
+  Shores, 4 stations, door chimes, full ride mode — the patrol
+  won't board, and riding never cools your stars). **Seasons**: a
+  season every 7 game-days turns the sun's arc and the day's
+  length, the light, the water, the street trees and the weather
+  odds (summer afternoon storms, winter fog) — pinnable in
+  Settings, and **no snow, ever**: this is a subtropical harbour,
+  and the ledger says so on the line. **Two more interiors**: the
+  Sable Motors **showroom** (exotics on turntables, the dealer
+  counter works indoors) and **Café Coral** on the Docks strip
+  (coffee, pastries, chairs, regulars). And your **last-used car
+  now persists across sessions**, waiting where you left it with
+  an amber YOUR CAR ring on the big map — unless you wrecked it,
+  got busted in it (impounded), or garaged it. Ledger: **84 ✅ ·
+  9 🟡 · 0 ⬜** of 93 topics.
 - **Phase 10 — realism + physics pass** (no new features): the
   post chain gains **radial chromatic aberration** and a stricter
   bloom threshold; **fog colour follows the day cycle**; **stars**
@@ -172,7 +189,7 @@ saved in `localStorage` and applies identically on web and desktop.
 | WASD / Arrow keys | Move · drive + steer |
 | Shift | Sprint (on foot) |
 | Space | Jump (foot) · handbrake/drift (car) |
-| E / F | Enter/exit car · advance dialogue |
+| E / F | Enter/exit car · advance dialogue · board/step off the Sable Line tram at a station |
 | Enter | Confirm dialogue |
 | Esc / P | Pause |
 | H / ? | Shortcuts help |
@@ -256,6 +273,20 @@ are High-only, both switch off automatically when the smoothness
 governor steps the tier down, and a **Ray-traced reflections**
 toggle in the same two settings screens disables them on their
 own if High stutters on your phone.
+
+**Smoothness (Phase 12)** — the simulation (player, driven car,
+traffic, peds, police) runs on a **fixed 60 Hz timestep**, so game
+speed and feel are identical on 30/60/120 Hz screens and frame
+spikes can't tunnel collisions. Far-away traffic and pedestrians
+make their decisions on staggered slices while near ones update
+every step; street lamps, palm trunks, pine trees and street props
+are GPU-instanced (roughly 1,400 fewer draw calls per frame); the
+sun's shadow map refreshes on a snapped grid instead of every
+frame; and the initial download is much lighter — the photo
+textures and the phone/garage/mod/character screens now load on
+first use instead of up front (**initial JS ≈ 760 KB gzipped,
+down from ≈ 1,730 KB**). Low tier never downloads the photo
+textures at all.
 Dialogue is fully subtitled (cinematic letterbox + typewriter);
 subtitle size/background, ambient barks and the letterbox bars are
 adjustable in the same two places.
