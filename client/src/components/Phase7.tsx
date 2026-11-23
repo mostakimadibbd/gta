@@ -20,6 +20,7 @@ import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, setHomePref, pe
 import { pushNews, rollSocialPost, socialCrimePost } from "../game/feed";
 import { nudgeStock } from "../game/invest";
 import { postRaceResult } from "../game/leaderboard";
+import { loadDaySet, saveDaySet, DESTRUCT_KEY } from "../game/phase9";
 import { fallbackPhysics } from "../physics/GamePhysics";
 import {
   TOLL, SPEED_CAMERAS, SPEED_LIMIT_U, DESTRUCTIBLES,
@@ -44,7 +45,8 @@ export default function Phase7Systems() {
   const oppRefs = useRef<Array<THREE.Group | null>>([]);
   // ---------- destructibles + debris ----------
   const destRefs = useRef<Array<THREE.Group | null>>([]);
-  const broken = useRef<Set<number>>(new Set());
+  // Phase 9: the broken set persists across reloads within the game-day
+  const broken = useRef<Set<number>>(new Set(loadDaySet(DESTRUCT_KEY)));
   const debris = useRef<Debris[]>(Array.from({ length: 36 }, () => ({ active: false, x: 0, y: -20, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, rz: 0, life: 0, color: "#a3764f" })));
   const debrisRefs = useRef<Array<THREE.Mesh | null>>([]);
   const debrisCursor = useRef(0);
@@ -109,6 +111,7 @@ export default function Phase7Systems() {
     if (G.dayTime < prevDay.current - 0.5) {
       advanceDay();
       broken.current.clear(); // destructibles are repaired overnight
+      saveDaySet(DESTRUCT_KEY, []);
       destRefs.current.forEach((g) => { if (g) g.visible = true; });
     }
     prevDay.current = G.dayTime;
@@ -352,11 +355,17 @@ export default function Phase7Systems() {
     }
 
     // ================= DESTRUCTIBLES + DEBRIS =================
+    // Phase 9: restored-broken props stay hidden from the first frame
+    for (const i of broken.current) {
+      const g = destRefs.current[i];
+      if (g && g.visible) g.visible = false;
+    }
     if (car && speed > 6) {
       DESTRUCTIBLES.forEach((d, i) => {
         if (broken.current.has(i)) return;
         if ((car.state.x - d.x) ** 2 + (car.state.z - d.z) ** 2 < 2.3 ** 2) {
           broken.current.add(i);
+          saveDaySet(DESTRUCT_KEY, [...broken.current]);
           const g = destRefs.current[i];
           if (g) g.visible = false;
           spawnDebris(d.x, groundYAt(d.x, d.z), d.z, d.kind === "barrel" ? "#b3402e" : d.kind === "fence" ? "#6d4c33" : "#a3764f", d.kind === "fence" ? 8 : 6);

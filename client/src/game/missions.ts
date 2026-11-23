@@ -6,7 +6,7 @@ export interface MissionChoice {
   options: { label: string; flag: string; reply: DialogueLine[] }[];
 }
 export interface MissionDef {
-  id: string; story?: boolean; side?: "lina" | "voss" | "heist"; title: string; giver: string;
+  id: string; story?: boolean; side?: "lina" | "voss" | "heist" | "after"; title: string; giver: string;
   intro: DialogueLine[]; outro: DialogueLine[];
   objectiveText: string; kind: "goto" | "delivery" | "collect" | "escape" | "checkpoints" | "tokens";
   targets: [number, number][]; timeLimit: number; payout: number;
@@ -14,6 +14,10 @@ export interface MissionDef {
   /** Phase 5: branching choice after the intro (Ch.5) + Ch.6 variants. */
   choice?: MissionChoice;
   introAlt?: DialogueLine[]; outroAlt?: DialogueLine[]; payoutAlt?: number;
+  /** Phase 9: for post-story pack missions, the choice flag that selects
+   * the ALT intro/outro/payout (Ch.5 hard-codes "elias" via M.choice;
+   * pack missions store theirs in M.packChoice — see altActive()). */
+  altFlag?: string;
 }
 const L = (who: string, text: string): DialogueLine => ({ who, text });
 
@@ -228,10 +232,71 @@ export const SIDE_MISSIONS: MissionDef[] = [
       L("Old Elias", "Your father would've said the same. The harbour provides, Kade. Tonight, so did you."),
     ],
     objectiveText: "Drill the strongroom (hold position 6s), then escape to the safehouse — lose your heat first", kind: "escape", targets: [[100, 28], [-92, -92]], timeLimit: 360, payout: 1600 },
+  // ---- Phase 9: AFTER THE FALL — the post-story mission pack. Offered
+  // by phone once the campaign is finished (M.storyDone): Lina, then
+  // Voss (with the pack's own branching choice), then Elias.
+  { id: "after1", side: "after", title: "After the Fall I — Tamim's First Shift", giver: "Lina Park",
+    intro: [
+      L("Lina Park", "He's out, Rayan. Parole granted, papers signed — Tamim walks out of the harbour patrol's custody office this morning a free man."),
+      L("Rayan Kade", "Five years I pictured this. Tell me he's really—"),
+      L("Lina Park", "He's really. But free men still need a first shift, and my parts run won't drive itself. Pick him up at the HQ steps and bring him to the garage. Let him ride home in style."),
+      L("Rayan Kade", "First thing he's done in five years is ride shotgun with me. The harbour has a sense of humour after all."),
+    ],
+    outro: [
+      L("Tamim Kade", "You drive better than you write letters, brother. Five years of my cooking in there — your turn to feed me."),
+      L("Lina Park", "Boys. There's work, there's food, and for once — nobody's chasing either of you. Get used to it."),
+      L("Rayan Kade", "One day at a time, Lina. One day at a time."),
+    ],
+    objectiveText: "Pick Tamim up at the Patrol HQ steps, then drive him to Lina's garage", kind: "delivery", targets: [[-64, 100], [-40, -28]], timeLimit: 240, payout: 400 },
+  { id: "after2", side: "after", title: "After the Fall II — The Ledger's Ashes", giver: "Detective Mara Voss",
+    intro: [
+      L("Det. Mara Voss", "One loose end, Kade. Copies of Solano's ledger still sit in the counting house strongroom annex — the originals convicted him, but copies in the wrong hands start the whole machine again."),
+      L("Rayan Kade", "And you can't be seen taking them. Officially they don't exist."),
+      L("Det. Mara Voss", "Officially. So: you go to the counting house and decide what Port Sable deserves. The Harbour Wire would print them — every name, every bribe, harbour-wide. Or they burn, and this city gets to forget."),
+      L("Rayan Kade", "Truth or peace. You've gotten philosophical since the trial, Detective."),
+    ],
+    choice: { options: [
+      { label: "Publish them — the whole harbour reads the names", flag: "publish", reply: [
+        L("Rayan Kade", "Sunlight, then. Every name in print. Let the harbour judge its own."),
+        L("Det. Mara Voss", "The Wire will need the copies by morning. Go."),
+      ] },
+      { label: "Burn them — let Port Sable forget", flag: "burn", reply: [
+        L("Rayan Kade", "Some pages only ever hurt the people trying to live past them. They burn."),
+        L("Det. Mara Voss", "Then burn them properly, Kade. Ashes don't testify."),
+      ] },
+    ] },
+    introAlt: [
+      L("Det. Mara Voss", "One loose end, Kade. Copies of Solano's ledger still sit in the counting house strongroom annex — the originals convicted him, but copies in the wrong hands start the whole machine again."),
+      L("Rayan Kade", "And you can't be seen taking them. Officially they don't exist."),
+      L("Det. Mara Voss", "Officially. So: you go to the counting house and decide what Port Sable deserves. The Harbour Wire would print them — every name, every bribe, harbour-wide. Or they burn, and this city gets to forget."),
+      L("Rayan Kade", "Truth or peace. You've gotten philosophical since the trial, Detective."),
+    ],
+    outro: [
+      L("Harbour Wire (headline)", "THE LEDGER, IN FULL: every name Solano owned, printed on page one. By noon, three harbour officials had resigned."),
+      L("Det. Mara Voss", "You chose the loud road, Kade. Half the docks are furious — and the other half are finally sleeping. The Wire sends its thanks, and its cheque."),
+    ],
+    outroAlt: [
+      L("Rayan Kade", "It's done. The annex smells of smoke and old paper. Nobody will ever read those names again."),
+      L("Det. Mara Voss", "And the districts will forget your face a little faster now, too — ash has a way of settling reputations. The harbour owes you quiet, Kade. Collect it slowly."),
+    ],
+    objectiveText: "Reach the counting house at the East Yards and settle the ledger copies", kind: "goto", targets: [[100, 28]], timeLimit: 240, payout: 900, payoutAlt: 500, altFlag: "burn" },
+  { id: "after3", side: "after", title: "After the Fall III — Harbour Lights", giver: "Old Elias",
+    intro: [
+      L("Old Elias", "The regatta committee's short a safety boat, and I've gone and volunteered yours truly's favourite nephew-by-harbour-law."),
+      L("Rayan Kade", "I'm not your nephew, Elias."),
+      L("Old Elias", "Harbour law says otherwise. Run the lights: pier, the west channel, the island dock, and home. Show the young ones how a Kade crosses water."),
+      L("Rayan Kade", "A race with no one chasing me. Novel. Where do I sign?"),
+    ],
+    outro: [
+      L("Old Elias", "Clean water, clean lines. Tamim watched from the pier — laughed the whole way, boy. First time I've heard that in five years."),
+      L("Rayan Kade", "Then it was worth more than the purse. Same time next year, old man."),
+      L("Old Elias", "Same time every year. The harbour provides, Kade. Now — so do you."),
+    ],
+    objectiveText: "Run the regatta lights BY BOAT: pier → west channel → island dock → home", kind: "checkpoints", targets: [[4, 140], [-40, 152], [-64, 168], [12, 124]], timeLimit: 300, payout: 700 },
 ];
 
 /** Next unplayed part of a side arc, or null when the arc is finished. */
-export function nextSideMission(side: "lina" | "voss" | "heist", progress: number): MissionDef | null {
+export function nextSideMission(side: "lina" | "voss" | "heist" | "after", progress: number): MissionDef | null {
   const parts = SIDE_MISSIONS.filter((m) => m.side === side);
   return parts[progress] ?? null;
 }

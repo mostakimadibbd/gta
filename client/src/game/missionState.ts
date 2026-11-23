@@ -13,8 +13,10 @@ export const M = {
   collected: new Set<number>(),
   failedReason: "",
   // ---- Phase 5: side-arc progress + the Ch.5 choice (persisted) ----
-  side: { lina: 0, voss: 0, heist: 0 } as Record<"lina" | "voss" | "heist", number>,
+  side: { lina: 0, voss: 0, heist: 0, after: 0 } as Record<"lina" | "voss" | "heist" | "after", number>,
   choice: "" as "" | "voss" | "elias",
+  // ---- Phase 9: the post-story pack's own branching choice ----
+  packChoice: "" as string,
   // ---- Phase 7: checkpoints, replay, per-mission stats, heist prep ----
   checkpointStep: 0, // furthest step reached this attempt (retry point)
   lastFailed: null as null | { def: MissionDef; step: number }, // R = retry from checkpoint
@@ -26,7 +28,8 @@ try {
   M.storyIndex = Math.min(6, Number(localStorage.getItem("harborfall-story") ?? 0) || 0);
   M.storyDone = localStorage.getItem("harborfall-story-done") === "1";
   const sideRaw = localStorage.getItem("harborfall-side");
-  if (sideRaw) { const s = JSON.parse(sideRaw) as Partial<typeof M.side>; M.side.lina = Math.min(3, s.lina ?? 0); M.side.voss = Math.min(3, s.voss ?? 0); M.side.heist = Math.min(2, s.heist ?? 0); }
+  if (sideRaw) { const s = JSON.parse(sideRaw) as Partial<typeof M.side>; M.side.lina = Math.min(3, s.lina ?? 0); M.side.voss = Math.min(3, s.voss ?? 0); M.side.heist = Math.min(2, s.heist ?? 0); M.side.after = Math.min(3, s.after ?? 0); }
+  M.packChoice = localStorage.getItem("harborfall-packchoice") ?? "";
   M.heistClean = localStorage.getItem("harborfall-heistclean") === "1";
   const mstats = localStorage.getItem("harborfall-mstats");
   if (mstats) M.stats = JSON.parse(mstats) as typeof M.stats;
@@ -48,12 +51,19 @@ export function persist() {
     localStorage.setItem("harborfall-heistclean", M.heistClean ? "1" : "0");
     localStorage.setItem("harborfall-mstats", JSON.stringify(M.stats));
     if (M.choice) localStorage.setItem("harborfall-choice", M.choice);
+    if (M.packChoice) localStorage.setItem("harborfall-packchoice", M.packChoice);
   } catch { /* ignore */ }
+}
+/** Phase 9: is this mission's ALT branch active? Ch.5 keys off M.choice;
+ * post-story pack missions key off M.packChoice via def.altFlag. */
+export function altActive(def: MissionDef): boolean {
+  if (def.id === "s5" || def.id === "s6") return M.choice === "elias";
+  return !!def.altFlag && M.packChoice === def.altFlag;
 }
 /** Ch.6 pays out differently when Rayan warned Elias (Ch.5 choice).
  * Phase 7: replays pay 40%; the heist pays prep-quality bonuses. */
 export function effectivePayout(def: MissionDef): number {
-  let pay = def.payoutAlt && M.choice === "elias" ? def.payoutAlt : def.payout;
+  let pay = def.payoutAlt && altActive(def) ? def.payoutAlt : def.payout;
   if (def.id === "heist1" && G.wanted === 0) pay += 150; // unseen prep bonus
   if (def.id === "heist2" && M.heistClean) pay += 400; // clean prep pays off
   if (M.replayId === def.id) pay = Math.round(pay * 0.4);

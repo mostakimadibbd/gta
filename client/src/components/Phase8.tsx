@@ -15,7 +15,7 @@ import { postEconomy } from "../game/leaderboard";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
 import { groundYAt, GARAGE_ZONES } from "../world";
-import { gameHour } from "./Interactions";
+import { gameHour, shopsClosed } from "./Interactions";
 import {
   F, FISHING_SPOTS, rollCatch, GYM, GYM_STATIONS, persistGym,
   CLOTHING_ITEMS, CLOTHING_SHOP, CLOTH, persistClothing,
@@ -218,6 +218,12 @@ export default function Phase8Systems() {
     if (atShop.current && !prompt) {
       const item = CLOTHING_ITEMS[clothIdx.current];
       const wearing = CLOTH.current?.id === item.id;
+      // Phase 9: Thread & Tide keeps the posted shop hours like the rest
+      // of Market Row (07:00–23:00; the Wraps vendor is the 24h exception)
+      if (shopsClosed()) {
+        prompt = "Thread & Tide — closed (opens 07:00)";
+        if (G.hold?.label.startsWith("Buying")) G.hold = null;
+      } else {
       prompt = wearing
         ? `Thread & Tide — you're wearing the ${item.label} (tap E browse)`
         : `E — Thread & Tide: ${item.label} $${item.price} (tap E browse · hold E buy)`;
@@ -236,6 +242,7 @@ export default function Phase8Systems() {
           }
         }
       } else if (G.hold?.label.startsWith("Buying")) G.hold = null;
+      }
     }
 
     // ================= TOW WORK =================

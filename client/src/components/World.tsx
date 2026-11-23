@@ -438,6 +438,7 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
   const hillTex = useMemo(makeHillSignTexture, []);
   const skyTex = useMemo(makeSkyTexture, []);
   const gantryTex = useMemo(() => makeSignTexture("Downtown · Lantern Beach · PS Airport →", "#14532d", "#ffffff", 1024), []);
+  const signSableDowns = useMemo(() => makeSignTexture("SABLE DOWNS · DIRT LOOP", "#3a2a18", "#ffd9a0", 512), []);
   const clubTex = useMemo(() => makeSignTexture("CLUB SOLACE", "#12081f", "#c9a7ff", 512), []);
   const neonTex = useMemo(() => [
     neonSignTexture("HOTEL SABLE", "#2ee6c8"), neonSignTexture("PALMS", "#ffb340"), neonSignTexture("CAFE", "#ff5347"),
@@ -1306,8 +1307,33 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
           <cylinderGeometry args={[0.8, 0.8, 1.25, 10]} /><meshStandardMaterial color="#d9b45c" roughness={1} flatShading />
         </mesh>
       ))}
+      {/* Phase 9: SABLE DOWNS dirt loop — the countryside corner becomes a
+          drivable dirt track (flat soil ring + marker posts + sign) */}
+      <group>
+        <mesh position={[-78, 0.045, -78]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <ringGeometry args={[13.5, 19.5, 40]} /><meshStandardMaterial color="#6e5136" roughness={1} />
+        </mesh>
+        <mesh position={[-78, 0.05, -78]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <ringGeometry args={[15.8, 17.2, 40]} /><meshStandardMaterial color="#7d5c3d" roughness={1} />
+        </mesh>
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+          const a = (i / 8) * Math.PI * 2;
+          return (
+            <mesh key={i} position={[-78 + Math.cos(a) * 19.9, 0.5, -78 + Math.sin(a) * 19.9]} castShadow>
+              <cylinderGeometry args={[0.09, 0.09, 1, 6]} /><meshStandardMaterial color="#e8e2d2" roughness={0.8} />
+            </mesh>
+          );
+        })}
+        <group position={[-59, 0, -64]} rotation={[0, -0.5, 0]}>
+          <mesh position={[0, 1.1, 0]} castShadow><boxGeometry args={[0.14, 2.2, 0.14]} /><meshStandardMaterial color="#5d4a38" roughness={0.9} /></mesh>
+          <mesh position={[0, 2, 0.1]}><planeGeometry args={[3.4, 0.85]} /><meshStandardMaterial map={signSableDowns} side={THREE.DoubleSide} roughness={0.85} /></mesh>
+        </group>
+      </group>
 
-      {/* ======== AIRPORT (east edge, scenery only): runway, plane, tower, terminal ======== */}
+      {/* ======== AIRPORT (east edge): runway, parked airliner, tower, terminal.
+          Phase 9: the apron is a PLAYABLE area — solid terminal/tower/
+          airliner, a hangar door on the terminal front, and the flyable
+          Sable Sparrow parked on the strip (Vehicle/CarBody). ======== */}
       <group>
         <mesh position={[124, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[15, 212]} /><primitive object={mats.asphaltV} attach="material" />

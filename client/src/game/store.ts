@@ -11,7 +11,7 @@ export interface NpcCar extends VehicleState {
   side: "main" | "coral" | "north"; steerVis: number; pitch: number; damage: number;
   svc?: "ambulance" | "fire"; // Phase 7: emergency-service traffic variants
   // ---- Phase 6: per-car kind + traffic-light / rush-hour / bus state ----
-  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
+  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
   rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
   busRoute?: boolean; wp?: number; stopT?: number;
 }
@@ -26,6 +26,7 @@ export interface Ped {
   // remembered for the rest of the game-day (ECO day serial). ----
   memWitnessUntil?: number; memRobbedDay?: number; memHelpedUntil?: number;
   recogCd?: number; // next G.timeS this ped may bark a recognition line
+  flailUntil?: number; // Phase 9 ragdoll-lite: car-hit flail window
 }
 export interface Cop extends VehicleState { active: boolean; lightPhase: number; pitch: number; roll: number; }
 export type WeatherKind = "Clear" | "Cloudy" | "Rain" | "Storm" | "Fog";
@@ -41,7 +42,7 @@ export interface PlayerCar {
   pitch: number; roll: number; steerVis: number; storedAway: boolean;
   flatTyre?: boolean; tuneLvl?: number; brakeLvl?: number; pitchVel?: number; rollVel?: number;
 }
-export type WeaponKind = "pistol" | "smg" | "shotgun" | "bat";
+export type WeaponKind = "pistol" | "smg" | "shotgun" | "bat" | "bottle";
 export interface MissionResult { ok: boolean; title: string; reward: number; items: number; timeLeft: number; reason: string; at: number; }
 export interface PendingCrime { kind: CrimeKind; due: number; }
 export const nowS = () => (typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000);
@@ -91,7 +92,7 @@ export const G = {
   timeS: 0, // elapsed game clock (set by GameSystems every frame)
   firstPerson: false,
   swimming: false,
-  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant",
+  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar",
   // ---- Phase 7: wind, sitting, replay requests, camera flash, boosts ----
   wind: 0.5, // 0..1 slow gust value — palm sway, boat bob, HUD/phone label
   sitting: false, // player parked on a bench / chair (Player pose + lock)
@@ -106,8 +107,11 @@ export const G = {
   exhausted: false, // latched at 0 until stamina recovers past 20
   skills: { driving: 0, shooting: 0, stamina: 0, strength: 0 }, // 0..100, persisted (strength: Phase 8 gym)
   skillShootAcc: 0, // shots fired toward the next Shooting point
-  weaponOwned: { pistol: false, smg: false, shotgun: false, bat: false } as Record<WeaponKind, boolean>,
-  weaponAmmo: { pistol: 0, smg: 0, shotgun: 0, bat: 0 } as Record<WeaponKind, number>,
+  weaponOwned: { pistol: false, smg: false, shotgun: false, bat: false, bottle: false } as Record<WeaponKind, boolean>,
+  weaponAmmo: { pistol: 0, smg: 0, shotgun: 0, bat: 0, bottle: 0 } as Record<WeaponKind, number>,
+  // ---- Phase 9: free-aim (hold RMB / gamepad LT on foot) + 6th star ----
+  aiming: false, // over-shoulder aim mode: slower move, camera-ray fire
+  starHeat: 0, // serious crimes committed WHILE at 5★; 3 of them call in the Harbour Guard (6★)
   // ---- Phase 8: per-district reputation (NPC memory). 0 = stranger;
   // crimes witnessed in a district raise it; it decays on the daily tick.
   // High rep: witnesses report faster and locals start recognising you. ----
@@ -204,10 +208,22 @@ function applyCrime(kind: CrimeKind) {
   if (G.crimeCooldown > 0 && kind !== "ped" && kind !== "shoot") return;
   G.crimeCooldown = 4;
   const before = G.wanted;
-  if (kind === "shoot") G.wanted = Math.min(5, Math.max(G.wanted + 1, 2)); // gunfire: 2★ minimum
-  else if (kind === "robbery") G.wanted = Math.min(5, Math.max(G.wanted + 1, 2)); // shop alarm: 2★ minimum
-  else G.wanted = Math.min(5, G.wanted + (kind === "ped" ? 2 : 1));
-  if (G.wanted > before) sfx.star();
+  // Phase 9: the 6th star is earned, not given — serious crimes (gunfire,
+  // robbery, running a ped down) committed WHILE already at 5★ build
+  // Harbour Guard heat; three of them escalate to 6★. Ordinary play
+  // still effectively caps at 5★.
+  if (G.wanted >= 5 && (kind === "shoot" || kind === "robbery" || kind === "ped")) {
+    G.starHeat += 1;
+    if (G.starHeat >= 3 && G.wanted < 6) {
+      G.wanted = 6; G.starHeat = 0;
+      bark("Dispatch", "All units — the Harbour Guard is rolling. Repeat, Guard is rolling.");
+      sfx.star();
+    }
+  }
+  if (kind === "shoot") G.wanted = Math.min(6, Math.max(G.wanted + 1, 2)); // gunfire: 2★ minimum
+  else if (kind === "robbery") G.wanted = Math.min(6, Math.max(G.wanted + 1, 2)); // shop alarm: 2★ minimum
+  else G.wanted = Math.min(6, G.wanted + (kind === "ped" ? 2 : 1));
+  if (G.wanted > before && G.wanted <= 5) sfx.star();
   G.wantedCooldown = 0;
   if (kind === "ped") G.health = Math.max(0, G.health - 4);
   if (kind === "hit") G.health = Math.max(0, G.health - 3);
@@ -220,7 +236,7 @@ function applyCrime(kind: CrimeKind) {
  * processPendingCrimes() applies it). Hitting a pedestrian is witnessed by
  * the victim, so it applies immediately. No witness = no report.
  */
-export function addCrime(kind: CrimeKind) {
+export function addCrime(kind: CrimeKind, soft = false) {
   // Phase 8 memory: EVERY ped within earshot (30u) remembers seeing this,
   // and the district's reputation ticks up — whether or not the crime is
   // one of the instantly-known kinds. Robbery victims are flagged by the
@@ -236,7 +252,9 @@ export function addCrime(kind: CrimeKind) {
     G.zoneRep[zone] = Math.min(100, (G.zoneRep[zone] ?? 0) + (kind === "assault" || kind === "robbery" ? 14 : 8));
     persistZoneRep();
   }
-  if (kind === "ped" || kind === "shoot" || kind === "robbery") { applyCrime(kind); return; } // victim/gunfire/alarm: known at once
+  // Phase 9: a SUPPRESSED shot (soft) is not instantly known — it goes
+  // through the witness pipeline below like any other quiet crime.
+  if (!soft && (kind === "ped" || kind === "shoot" || kind === "robbery")) { applyCrime(kind); return; } // victim/gunfire/alarm: known at once
   const px = G.followPos.x, pz = G.followPos.z;
   let wi = -1; let wd = 26 ** 2; let wiHelped = -1;
   G.peds.forEach((p, i) => {
@@ -284,7 +302,7 @@ export function resetAfterArrest(fine: number) {
   G.finesPaid += Math.min(fine, G.cash);
   G.cash = Math.max(0, G.cash - fine);
   if (G.inventory.length) { G.inventory = []; persistInventory(); toast("Busted — your stash was confiscated"); }
-  G.wanted = 0; G.bustTimer = 0; G.health = Math.max(60, G.health);
+  G.wanted = 0; G.starHeat = 0; G.bustTimer = 0; G.health = Math.max(60, G.health);
   G.driving = false; G.activeCarId = -1;
   respawnPoint();
   for (const c of G.cops) c.active = false;
@@ -292,7 +310,7 @@ export function resetAfterArrest(fine: number) {
 export function resetAfterWasted() {
   G.finesPaid += Math.min(100, G.cash);
   G.cash = Math.max(0, G.cash - 100);
-  G.wanted = 0; G.health = 100; G.driving = false; G.activeCarId = -1;
+  G.wanted = 0; G.starHeat = 0; G.health = 100; G.driving = false; G.activeCarId = -1;
   respawnPoint();
   for (const c of G.cops) c.active = false;
 }

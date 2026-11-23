@@ -13,7 +13,7 @@ import { glowTexture, tyreTexture, shatteredTexture, carDirtTexture } from "../t
 import { G } from "../game/store";
 import { gates, tier } from "../game/quality";
 
-export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow";
+export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane";
 
 const GLASS = new THREE.MeshStandardMaterial({ color: "#141f28", metalness: 0.5, roughness: 0.08, envMapIntensity: 1.3 });
 const CHROME = new THREE.MeshStandardMaterial({ color: "#d7dce2", metalness: 0.95, roughness: 0.16, envMapIntensity: 1.4 });
@@ -323,6 +323,79 @@ function CarFx({ kind, carIndex, brakeRef, beams, spotLights }: {
  * shut in traffic and while driving. No real marque's shape, name or
  * badge is used anywhere — the wedge is drawn from Harborfall's own
  * design language (Port Sable teal-era concept cars). */
+/** Phase 9: the Harbour Fisher 180 — a working fishing skiff: smaller,
+ * canopied, crates + rod holders aboard. Second boat class. */
+export function SkiffBody({ color }: { color: string }) {
+  const paint = useMemo(() => paintMaterial(color, 0.25, 0.45), [color]);
+  const teak = useMemo(() => new THREE.MeshStandardMaterial({ color: "#6d4c33", roughness: 0.85 }), []);
+  return (
+    <group>
+      <RB args={[1.7, 0.55, 3.6]} radius={0.14} mat={paint} pos={[0, 0.3, -0.15]} />
+      <mesh position={[0, 0.38, 1.65]} scale={[1.05, 0.5, 1]} rotation={[0, Math.PI / 4, 0]} castShadow>
+        <coneGeometry args={[1.1, 1.2, 4]} /><primitive object={paint} attach="material" />
+      </mesh>
+      <RB args={[1.45, 0.26, 2.1]} radius={0.07} mat={teak} pos={[0, 0.56, -0.4]} />
+      {/* canopy on four posts */}
+      {([[-0.62, 0.35], [0.62, 0.35], [-0.62, -1.05], [0.62, -1.05]] as const).map(([x, z], i) => (
+        <mesh key={i} position={[x, 1.05, z]}><boxGeometry args={[0.06, 0.85, 0.06]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+      ))}
+      <RB args={[1.5, 0.07, 1.7]} radius={0.03} mat={paint} pos={[0, 1.5, -0.35]} />
+      {/* fish crates + coiled gear aft */}
+      <RB args={[0.55, 0.34, 0.55]} radius={0.04} mat={teak} pos={[-0.4, 0.72, -1.45]} />
+      <RB args={[0.5, 0.28, 0.5]} radius={0.04} mat={DARKTRIM} pos={[0.42, 0.7, -1.4]} />
+      <mesh position={[0.68, 0.95, -0.9]} rotation={[0.5, 0, 0.15]}><cylinderGeometry args={[0.02, 0.02, 1.1, 5]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+      <RB args={[0.38, 0.55, 0.26]} radius={0.07} mat={DARKTRIM} pos={[0, 0.38, -2.05]} />
+      <sprite position={[0, 0.55, 2.2]} scale={[0.7, 0.7, 1]}><primitive object={HEADGLOW} attach="material" /></sprite>
+    </group>
+  );
+}
+
+/** Phase 9: the Sable Sparrow — a single-prop harbour plane (original
+ * design). The propeller spins with the engine state of the player's
+ * plane (carIndex) — parked display copies idle still. */
+export function PlaneBody({ color, carIndex }: { color: string; carIndex?: number }) {
+  const paint = useMemo(() => paintMaterial(color, 0.3, 0.3), [color]);
+  const prop = useRef<THREE.Group>(null);
+  const spin = useRef(0);
+  useFrame((_, delta) => {
+    const spd = carIndex !== undefined && G.cars[carIndex] ? Math.abs(G.cars[carIndex].state.speed) : 0;
+    spin.current += delta * (2 + spd * 6);
+    if (prop.current) prop.current.rotation.z = spin.current;
+  });
+  return (
+    <group>
+      {/* fuselage + tapered tail */}
+      <RB args={[1.15, 1.05, 5.6]} radius={0.3} mat={paint} pos={[0, 1.15, 0]} />
+      <RB args={[0.6, 0.55, 2.2]} radius={0.2} mat={paint} pos={[0, 1.35, -3.6]} />
+      {/* glass canopy */}
+      <mesh position={[0, 1.62, 0.55]} scale={[0.52, 0.42, 1.05]} castShadow><sphereGeometry args={[1, 14, 10]} /><primitive object={GLASS} attach="material" /></mesh>
+      {/* main wing + tailplane + fin */}
+      <RB args={[7.6, 0.12, 1.35]} radius={0.05} mat={paint} pos={[0, 0.92, 0.5]} />
+      <RB args={[2.6, 0.1, 0.9]} radius={0.04} mat={paint} pos={[0, 1.5, -4.55]} />
+      <RB args={[0.1, 1.15, 0.95]} radius={0.04} mat={paint} pos={[0, 1.95, -4.55]} />
+      <mesh position={[0, 1.28, -4.55]}><boxGeometry args={[0.72, 0.16, 0.06]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+      {/* engine cowling + spinning prop (faces +Z) */}
+      <RB args={[1.0, 0.95, 0.7]} radius={0.24} mat={DARKTRIM} pos={[0, 1.15, 2.95]} />
+      <group ref={prop} position={[0, 1.15, 3.38]}>
+        <mesh rotation={[0, 0, 0]}><boxGeometry args={[0.16, 2.5, 0.05]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <mesh><sphereGeometry args={[0.17, 10, 8]} /><primitive object={CHROME} attach="material" /></mesh>
+      </group>
+      {/* fixed gear: two mains + tail wheel, with struts */}
+      {([-0.85, 0.85] as const).map((x, i) => (
+        <group key={i}>
+          <mesh position={[x, 0.55, 0.9]} rotation={[0, 0, x > 0 ? -0.25 : 0.25]}><cylinderGeometry args={[0.05, 0.05, 0.85, 6]} /><primitive object={CHROME} attach="material" /></mesh>
+          <mesh position={[x * 1.12, 0.24, 0.9]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.24, 0.24, 0.14, 12]} /><primitive object={TYRE} attach="material" /></mesh>
+        </group>
+      ))}
+      <mesh position={[0, 0.62, -4.3]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.13, 0.13, 0.1, 10]} /><primitive object={TYRE} attach="material" /></mesh>
+      {/* nav lights: teal port-side harbour convention is fiction — use
+          standard aviation red/green tips */}
+      <sprite position={[-3.85, 0.95, 0.5]} scale={[0.5, 0.5, 1]}><primitive object={TAILGLOW} attach="material" /></sprite>
+      <sprite position={[3.85, 0.95, 0.5]} scale={[0.5, 0.5, 1]}><spriteMaterial map={glowTexture()} color="#39d353" transparent opacity={0.3} depthWrite={false} blending={THREE.AdditiveBlending} /></sprite>
+    </group>
+  );
+}
+
 export function WedgeBody({ color, carIndex, steerRef, liveDamage, brakeRef, beams, spotLights }: {
   color: string; carIndex?: number; steerRef?: MutableRefObject<number>;
   liveDamage?: () => number; brakeRef?: MutableRefObject<boolean>; beams?: boolean; spotLights?: boolean;
@@ -433,6 +506,8 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
   if (kind === "motorcycle") return <MotorcycleBody color={color} />;
   if (kind === "bicycle") return <BicycleBody color={color} />;
   if (kind === "boat") return <BoatBody color={color} />;
+  if (kind === "skiff") return <SkiffBody color={color} />;
+  if (kind === "plane") return <PlaneBody color={color} carIndex={carIndex} />;
   if (kind === "wedge") return <WedgeBody color={color} carIndex={carIndex} steerRef={steerRef} liveDamage={liveDamage} brakeRef={brakeRef} beams={beams} spotLights={spotLights} />;
   if (kind === "hyper") return <HyperBody color={color} carIndex={carIndex} steerRef={steerRef} liveDamage={liveDamage} brakeRef={brakeRef} beams={beams} spotLights={spotLights} />;
   const classic = kind === "classic";

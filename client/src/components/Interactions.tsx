@@ -11,6 +11,7 @@ import { giveCash, giveItem, rollLootItem, sellStash } from "../game/theft";
 import { pushPhoneMsg } from "../game/phone";
 import { ECO } from "../game/economy";
 import { F, creelValue } from "../game/phase8";
+import { WMOD, persistWmod } from "../game/phase9";
 import { jobStats, persistJobStats } from "../game/jobs";
 
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -19,7 +20,7 @@ export const gameHour = () => Math.floor((G.dayTime * 24 + 6) % 24);
 /** Market Row shops + the pawn keep hours (B3): closed 23:00–07:00. */
 export const shopsClosed = () => { const h = gameHour(); return h >= 23 || h < 7; };
 
-interface GunItem { label: string; price: number; apply: () => void; }
+interface GunItem { label: string; price: number; apply: () => void; owned?: () => boolean; }
 const GUN_ITEMS: GunItem[] = [
   { label: "Baseball bat", price: 150, apply: () => { G.weaponOwned.bat = true; G.weaponSel = "bat"; } },
   { label: "SMG", price: 650, apply: () => { G.weaponOwned.smg = true; G.weaponAmmo.smg = Math.min(240, G.weaponAmmo.smg + 60); G.weaponSel = "smg"; } },
@@ -27,6 +28,13 @@ const GUN_ITEMS: GunItem[] = [
   { label: "Pistol ammo ×24", price: 60, apply: () => { G.weaponAmmo.pistol = Math.min(240, G.weaponAmmo.pistol + 24); } },
   { label: "SMG ammo ×60", price: 90, apply: () => { G.weaponAmmo.smg = Math.min(240, G.weaponAmmo.smg + 60); } },
   { label: "Shotgun shells ×12", price: 70, apply: () => { G.weaponAmmo.shotgun = Math.min(240, G.weaponAmmo.shotgun + 12); } },
+  // ---- Phase 9 weapon mods: bought once, fitted forever (persisted).
+  // Effects are real and applied in Combat's spec builder. ----
+  { label: "Pistol suppressor — quiet shots, witnesses only", price: 300, owned: () => WMOD.suppPistol, apply: () => { WMOD.suppPistol = true; persistWmod(); } },
+  { label: "SMG suppressor — quiet shots, witnesses only", price: 380, owned: () => WMOD.suppSmg, apply: () => { WMOD.suppSmg = true; persistWmod(); } },
+  { label: "Pistol match sights — tighter, longer reach", price: 220, owned: () => WMOD.sightsPistol, apply: () => { WMOD.sightsPistol = true; persistWmod(); } },
+  { label: "SMG extended mag + match barrel — faster, tighter", price: 350, owned: () => WMOD.magSmg, apply: () => { WMOD.magSmg = true; persistWmod(); } },
+  { label: "Shotgun choke — tighter spread, longer reach", price: 260, owned: () => WMOD.chokeShotgun, apply: () => { WMOD.chokeShotgun = true; persistWmod(); } },
 ];
 
 export default function Interactions() {
@@ -136,7 +144,7 @@ export default function Interactions() {
         const atHospital = (HOSPITAL_DOOR.x - px) ** 2 + (HOSPITAL_DOOR.z - pz) ** 2 < 3 ** 2;
         const ev = G.eventNow;
         const atPerformer = !!ev && ev.kind === "performer" && !ev.tipped && (ev.x - px) ** 2 + (ev.z - pz) ** 2 < 3 ** 2;
-        browseCtx.current = atDealer ? "dealer" : atGun ? "gun" : atPawn && !closed && stashTotal() <= 0 ? "pawn" : "";
+        browseCtx.current = atDealer && !closed ? "dealer" : atGun && !closed ? "gun" : atPawn && !closed && stashTotal() <= 0 ? "pawn" : "";
         // hold E at a counter = buy the browsed item (0.9 s)
         if (browseCtx.current && eDownAt.current > 0) {
           const isDealer = browseCtx.current === "dealer";
@@ -158,6 +166,9 @@ export default function Interactions() {
                 toast(`${CAR_MODELS[dc.kind].name} bought — delivered to your garage`);
                 sfx.cash();
               }
+            } else if (GUN_ITEMS[gunIdx.current].owned?.()) {
+              toast(`${label} — already fitted. No charge.`);
+              sfx.click();
             } else {
               G.cash -= price;
               GUN_ITEMS[gunIdx.current].apply();
@@ -225,11 +236,17 @@ export default function Interactions() {
             prompt = `E — Pawn counter: ${gi.label} $${gi.price} (tap E browse · hold E buy)`;
           }
         } else if (atDealer) {
-          const dc = DEALER_CARS[dealerIdx.current];
-          prompt = `E — ${CAR_MODELS[dc.kind].name} $${dc.price.toLocaleString()} at Sable Motors (tap E browse · hold E buy)`;
+          if (closed) { prompt = "Sable Motors — closed (opens 07:00)"; warn = true; }
+          else {
+            const dc = DEALER_CARS[dealerIdx.current];
+            prompt = `E — ${CAR_MODELS[dc.kind].name} $${dc.price.toLocaleString()} at Sable Motors (tap E browse · hold E buy)`;
+          }
         } else if (atGun) {
-          const gi = GUN_ITEMS[gunIdx.current];
-          prompt = `E — Sable Arms: ${gi.label} $${gi.price} (tap E browse · hold E buy)`;
+          if (closed) { prompt = "Sable Arms — closed (opens 07:00)"; warn = true; }
+          else {
+            const gi = GUN_ITEMS[gunIdx.current];
+            prompt = `E — Sable Arms: ${gi.label} $${gi.price}${gi.owned?.() ? " — fitted ✓" : ""} (tap E browse · hold E buy)`;
+          }
         } else if (atVendor) {
           // street food — the vendor keeps harbour hours: always open (B3)
           // Phase 8: the Wraps stall buys the day's catch off you first

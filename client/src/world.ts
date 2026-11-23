@@ -318,6 +318,9 @@ export const CAR_MODELS: Record<CarSpawn["kind"], { name: string; topSpeed: numb
   hyper: { name: "Kestrel One", topSpeed: 288, handling: 92 },
   gt: { name: "Marlowe GT", topSpeed: 224, handling: 76 },
   tow: { name: "Sable Wrecker", topSpeed: 132, handling: 46 },
+  // ---- Phase 9: second boat class + the flyable prop plane ----
+  skiff: { name: "Harbour Fisher 180", topSpeed: 58, handling: 48 },
+  plane: { name: "Sable Sparrow", topSpeed: 210, handling: 40 },
 };
 // ---- Phase 2: hillside scenic overlook (final mood-board image) ----
 export const OVERLOOK = { x: -102, z: -114 };
@@ -335,6 +338,11 @@ export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[]
   { x: 64, z: 218, hw: 5, hd: 3.4 },       // Marina Table restaurant (Coral)
   { x: 36, z: 218, hw: 4, hd: 3.4 },       // Coral Shores Apartment block
   { x: -44, z: -218.5, hw: 4.5, hd: 2.6 }, // Northgate Car Wash back wall
+  // ---- Phase 9: Port Sable Airport scenery is solid now (the apron is
+  // a playable area — terminal, tower and the parked airliner block) ----
+  { x: 114.5, z: 46, hw: 7.5, hd: 4.5 },  // airport terminal
+  { x: 113, z: 28, hw: 1.5, hd: 1.5 },    // control tower
+  { x: 124, z: -42, hw: 2.2, hd: 8 },     // parked airliner on the apron
   // ---- Phase 6 ----
   { x: 27, z: -222, hw: 3.5, hd: 5.5 },  // Sable Arms gun store (Northgate)
   { x: -52, z: 158, hw: 1.7, hd: 1.7 },  // Sable Island lighthouse
@@ -365,6 +373,8 @@ export const RESTAURANT_EXT_DOOR = { x: 64, z: 213.2 };  // Marina Table, Coral 
 export const APARTMENT_DOOR = { x: 36, z: 213.2 };       // Coral Shores Apartment (buyable)
 export const CAR_WASH = { x: -44, z: -210 };             // Northgate Car Wash (buyable business)
 export const CLUB_SHARE_POINT = { x: 54, z: 112 };       // Club Solace share buy point
+// ---- Phase 9: airport hangar door (terminal front, apron side) ----
+export const AIRPORT_DOOR = { x: 114.5, z: 40.6 };
 
 // ---- Phase 7 world sweep: toll booth on the Coral causeway (bridge
 // deck at x = 60; the booth sits in the corridor, the barrier arm is a
@@ -425,7 +435,7 @@ export const MANSION_DRIVE = { x: MANSION.x + 4.4, z: MANSION.z + 4.4, hw: 3.6, 
 // ---- Phase 3: enterable interiors live in an offset pocket (z ≈ -175),
 // far outside the city grid. Player movement clamps to the room while
 // G.interior is set, so city collision never applies there.
-export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant";
+export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar";
 export interface InteriorDef { cx: number; cz: number; w: number; d: number; spawnIn: [number, number]; exitDoor: [number, number]; }
 export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   garage: { cx: 0, cz: -175, w: 18, d: 13, spawnIn: [0, -171.2], exitDoor: [0, -169.4] },
@@ -434,6 +444,8 @@ export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   police: { cx: 104, cz: -175, w: 20, d: 14, spawnIn: [104, -171.4], exitDoor: [104, -169.2] },
   clinic: { cx: 140, cz: -175, w: 16, d: 12, spawnIn: [140, -172], exitDoor: [140, -170] },
   restaurant: { cx: 172, cz: -175, w: 18, d: 13, spawnIn: [172, -171.6], exitDoor: [172, -169.6] },
+  // ---- Phase 9: airport hangar (sixth pocket interior) ----
+  hangar: { cx: 208, cz: -175, w: 20, d: 14, spawnIn: [208, -171.4], exitDoor: [208, -169.2] },
 };
 
 export function isBlocked(x: number, z: number, radius: number): boolean {
@@ -480,7 +492,7 @@ export function nearestIntersection(x: number, z: number): [number, number] {
 }
 
 // ---- Drivable parked cars (original model names, Harborfall range) ----
-export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow"; owned: boolean; }
+export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane"; owned: boolean; }
 export const CAR_SPAWNS: CarSpawn[] = [
   { id: 0, x: 3, z: 106, heading: Math.PI, color: "#1f7a72", model: "Sable Sprinter", kind: "sedan", owned: true },   // Rayan's own car at the pier
   { id: 1, x: -17, z: -40, heading: Math.PI / 2, color: "#d99a3d", model: "Harbor Hauler", kind: "pickup", owned: false },
@@ -513,4 +525,9 @@ export const CAR_SPAWNS: CarSpawn[] = [
   { id: 25, x: -28, z: -238, heading: Math.PI / 2, color: "#d99a3d", model: "Vantara S", kind: "wedge", owned: false },   // dealership display wedge
   { id: 26, x: -44, z: -238, heading: Math.PI / 2, color: "#31556e", model: "Marlowe GT", kind: "gt", owned: false },    // dealership display GT
   { id: 27, x: -17, z: 105, heading: 0, color: "#d99a3d", model: "Sable Wrecker", kind: "tow", owned: false },           // tow truck at Lina's yard
+  // ---- Phase 9: flyable prop plane on the airport apron + fishing
+  // skiffs at the island dock and the Coral marina ----
+  { id: 28, x: 124, z: 70, heading: Math.PI, color: "#e8e4da", model: "Sable Sparrow", kind: "plane", owned: false },   // faces north up the runway
+  { id: 29, x: -58, z: 160, heading: 0, color: "#7a8a5a", model: "Harbour Fisher 180", kind: "skiff", owned: false },    // island dock skiff
+  { id: 30, x: 92, z: 196, heading: Math.PI, color: "#b4622d", model: "Harbour Fisher 180", kind: "skiff", owned: false }, // Coral marina skiff
 ];

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, persistSkills, bark, toast } from "../game/store";
-import { M, currentTarget, endMission, persist, effectivePayout, recordBest } from "../game/missionState";
+import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, persistSkills, persistZoneRep, bark, toast } from "../game/store";
+import { M, currentTarget, endMission, persist, effectivePayout, recordBest, altActive } from "../game/missionState";
 import { gates, type QualityTier } from "../game/quality";
 import { perf } from "../game/perf";
 import { pushPhoneMsg } from "../game/phone";
@@ -374,6 +374,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       if (!car.dormant && distP > 165) car.dormant = true;
       else if (car.dormant && distP < 140) car.dormant = false;
       if (car.dormant) { car.speed = 0; continue; }
+      // Phase 9: a traffic car at full damage is a WRECK — it stays where
+      // it died for the rest of the game-day instead of healing off-screen
+      // (the wreck set is persisted day-scoped by Phase9; the tow job and
+      // the diversion scan there keep traffic flowing around it)
+      if (car.damage >= 100) { car.speed = 0; continue; }
       const prevSpeed = car.speed;
       // ---- the bus follows its waypoint route and dwells at stops ----
       if (car.busRoute) {
@@ -624,6 +629,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         hitCooldown.current = 1.5; ped.fleeUntil = t + 4; addCrime("ped"); cb.current.event("shake"); sfx.thud();
         const mine = G.cars[G.activeCarId]; if (mine) mine.damage = Math.min(100, mine.damage + 3);
         ped.x += Math.sin(ped.heading) * 2; // knocked aside (arcade, non-graphic)
+        // Phase 9 ragdoll-lite: the ped goes down and FLAILS for a beat
+        // (procedural limbs, no solver) before the usual get-up-and-run
+        ped.downUntil = t + 2.2; ped.flailUntil = t + 1.2;
       }
     }
     // ---- police / wanted (Blueprint §4): line-of-sight + last-known search.
@@ -813,7 +821,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // UNSEEN, heat bleeds faster if you've swapped either since
       if (seen) disguise.current = { carId: G.activeCarId, district: districtAt(px, pz) };
       const disguised = disguise.current.carId !== -2 && (G.activeCarId !== disguise.current.carId || districtAt(px, pz) !== disguise.current.district);
-      if (!seen) { G.wantedCooldown += dt * (disguised ? 1.6 : 1); if (G.wantedCooldown > 11) { G.wanted -= 1; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup(disguised ? "New wheels, new district — heat lost faster" : "Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
+      if (!seen) { G.wantedCooldown += dt * (disguised ? 1.6 : 1); if (G.wantedCooldown > 11) { G.wanted -= 1; G.starHeat = 0; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup(disguised ? "New wheels, new district — heat lost faster" : "Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
       // busted: cop close + player slow (unchanged rule, cleaner condition;
       // crouched in cover slows the grab — A6)
       if (nearestCop < 7.5 && pSpeed < 2.5) {
@@ -1042,7 +1050,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // Phase 5: Ch.6 pays the alternate split when Elias was warned;
       // side arcs advance their own progress and NEVER touch storyIndex.
       const pay = effectivePayout(def);
-      const outro = def.outroAlt && M.choice === "elias" ? def.outroAlt : def.outro;
+      const outro = def.outroAlt && altActive(def) ? def.outroAlt : def.outro;
       G.missionResult = { ok: true, title: def.title, reward: pay, items: 0, timeLeft: Math.max(0, Math.round(M.timer)), reason: "", at: t };
       G.cash += pay; G.lifetimeEarned += pay;
       pushPhoneMsg("SableBank", `💰 $${pay} received — ${def.title}. Balance: $${G.cash}.`);
@@ -1071,6 +1079,14 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           if (side === "heist" && M.side.heist === 1) M.heistClean = G.wanted === 0; // prep seen or unseen
           persist();
           if (side === "heist" && M.side.heist >= 2) pushPhoneMsg("Old Elias", "It's done, lad. The dock fund's home and Tamim's name is off the last page. The harbour provides.");
+          else if (side === "after" && def.id === "after2") {
+            // Phase 9: the pack's choice lands in the world — publishing
+            // makes the Harbour Wire headline; burning clears every
+            // district's memory of your face (reputation reset)
+            if (M.packChoice === "burn") { G.zoneRep = {}; persistZoneRep(); pushNews("Harbour Wire: smoke over the East Yards", "A small fire at the old counting house annex burned itself out by dawn. Nothing of value was lost, say officials. Nobody believes them, but the docks feel quieter already."); }
+            else pushNews("Harbour Wire: THE LEDGER, IN FULL", "Every name Solano owned, printed on page one. By noon, three harbour officials had resigned and the parole board announced a review. Port Sable is reading itself in print today.");
+          }
+          else if (side === "after" && M.side.after >= 3) pushPhoneMsg("Tamim Kade", "Heard you ran the lights clean, brother. Five years inside and the harbour still turns for a Kade. Dinner's on me — Lina's cooking, my treat. 🐟");
           else if (M.side[side] >= 3) pushPhoneMsg(side === "lina" ? "Lina Park" : "Det. Mara Voss", side === "lina" ? "That's the whole line done, Rayan. The garage owes you — come by any time." : "File closed and filed. The parole board has everything. Thank you, Kade.");
           cb.current.event("missionEnd");
         } else { M.repeatIndex += 1; persist(); cb.current.event("missionEnd"); }
@@ -1085,11 +1101,18 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         const g = pedRefs.current[i]; if (!g) return;
         g.visible = pd.active;
         const down = tt < pd.downUntil;
+        const flailing = down && tt < (pd.flailUntil ?? 0);
         g.position.set(pd.x, down ? 0.32 : 0, pd.z);
-        g.rotation.set(down ? -Math.PI / 2 * 0.92 : 0, pd.heading, 0);
+        // Phase 9 ragdoll-lite: a car-hit ped tips AND rolls/flails for
+        // the first second on the ground (procedural, no solver)
+        g.rotation.set(down ? -Math.PI / 2 * 0.92 : 0, pd.heading, flailing ? Math.sin(tt * 24) * 0.4 : 0);
         const rig = pedRigs[i];
         // Visual V7: far peds (>120u) animate every 3rd frame
         const far = (pd.x - G.followPos.x) ** 2 + (pd.z - G.followPos.z) ** 2 > 120 ** 2;
+        if (rig && flailing && (!far || (frameNo.current + i) % 3 === 0)) {
+          animateHumanoid(rig, tt * 21, 1, tt); // limbs cycle hard = flail
+          rig.group.position.y = 0.1 + Math.abs(Math.sin(tt * 12)) * 0.08;
+        } else if (rig && down) rig.group.position.y = 0;
         if (rig && !down && (!far || (frameNo.current + i) % 3 === 0)) {
           animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
           // ---- Phase 6 life poses (A4/A6) ----

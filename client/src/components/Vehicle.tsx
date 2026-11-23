@@ -3,7 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { PhysicsEngine } from "../physics/GamePhysics";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
-import { isBlocked, FUEL_STATIONS, groundYAt, isWaterAt, BRIDGE } from "../world";
+import { isBlocked, FUEL_STATIONS, groundYAt, isWaterAt, BRIDGE, buildings } from "../world";
 import { G, addCrime, toast } from "../game/store";
 import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
@@ -66,6 +66,13 @@ export default function Vehicle(p: Props) {
   // Phase 4: shared steering ref (front wheels + cabin wheel), break-in hold
   const steerRef = useRef(0);
   const brakeRef = useRef(false); // Phase 5: brake-light boost state
+  // ---- Phase 9: per-plane flight state (altitude above ground + vy) ----
+  const planeAlt = useRef(new Map<number, { alt: number; vy: number }>());
+  const planeState = (id: number) => {
+    let s = planeAlt.current.get(id);
+    if (!s) { s = { alt: 0, vy: 0 }; planeAlt.current.set(id, s); }
+    return s;
+  };
   const alarmRefs = useRef<Array<THREE.Sprite | null>>([]);
   const eHeld = useRef(false);
   const breakIn = useRef<{ car: number; since: number } | null>(null);
@@ -83,9 +90,10 @@ export default function Vehicle(p: Props) {
       const pl = refs.current.playerPositionRef.current;
       let best = -1; let bestD = 0;
       G.cars.forEach((c, i) => {
-        // the speedboat is boarded from the pier edge / while swimming —
-        // it gets a longer reach than a kerbside car door
-        const reach = c.kind === "boat" ? 5.4 : 3.6;
+        // the boats are boarded from the pier edge / while swimming —
+        // they get a longer reach than a kerbside car door; the plane
+        // gets a wing's-width reach on the apron
+        const reach = c.kind === "boat" || c.kind === "skiff" ? 5.4 : c.kind === "plane" ? 4.6 : 3.6;
         const d = (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2;
         if (d < reach ** 2 && (best < 0 || d < bestD)) { bestD = d; best = i; }
       });
@@ -99,10 +107,14 @@ export default function Vehicle(p: Props) {
       if (refs.current.paused || G.dialogueActive || isInteractiveTarget(e.target)) return;
       const key = normalizeGameKey(e.key);
       if (["w", "a", "s", "d", " "].includes(key) && G.driving) { e.preventDefault(); keys.current.add(key); }
+      // Phase 9: Shift/Ctrl are the plane's climb/descend controls
+      if ((key === "shift" || key === "control") && G.driving) keys.current.add(key);
       if (key === "b" && G.driving && !e.repeat) { sfx.horn(); e.preventDefault(); }
       if ((key === "e" || key === "f") && !e.repeat) {
         if (G.driving) {
           const car = G.cars[G.activeCarId];
+          // Phase 9: no bailing out of a flying plane — land first
+          if (car.kind === "plane" && (planeAlt.current.get(car.id)?.alt ?? 0) > 2) { toast("You can't bail out mid-flight — land the Sparrow first."); e.preventDefault(); return; }
           const exit = new THREE.Vector3(car.state.x + Math.cos(car.state.heading) * 2.4, 0, car.state.z - Math.sin(car.state.heading) * 2.4);
           G.driving = false; refs.current.onDrivingChange(false); refs.current.onExit(exit);
           G.playerPos.copy(exit); keys.current.clear(); sfx.door(); e.preventDefault(); return;
@@ -148,7 +160,8 @@ export default function Vehicle(p: Props) {
       // analog stick / triggers ride padAxes alongside (see steering)
       const k = { has: (key: string) => keys.current.has(key) || padKeys.has(key) };
       const isBike = car.kind === "bicycle";
-      const isBoat = car.kind === "boat";
+      const isBoat = car.kind === "boat" || car.kind === "skiff";
+      const isPlane = car.kind === "plane";
       // ---- Phase 2: damage + fuel shape the driving (arcade-forgiving) ----
       const wrecked = !isBike && !isBoat && car.damage >= 100;
       const empty = !isBike && !isBoat && car.fuel <= 0;
@@ -188,9 +201,11 @@ export default function Vehicle(p: Props) {
       } else if (isBoat) {
         // ---- Phase 6 speedboat: water-only drive, buoyancy in the render
         // loop below. Beaching (bow touches land) stops the boat dead;
-        // reverse backs it off the shore. ----
-        if (throttle > 0) next.speed = Math.min(14.5, next.speed + 4.6 * dt);
-        else if (throttle < 0) next.speed = Math.max(-4.5, next.speed - 3.6 * dt);
+        // reverse backs it off the shore. Phase 9: the fishing skiff
+        // shares the branch with a working boat's pace. ----
+        const boatTop = car.kind === "skiff" ? 9.5 : 14.5;
+        if (throttle > 0) next.speed = Math.min(boatTop, next.speed + 4.6 * dt);
+        else if (throttle < 0) next.speed = Math.max(car.kind === "skiff" ? -3.2 : -4.5, next.speed - 3.6 * dt);
         next.speed -= next.speed * 0.45 * dt; // water drag
         if (Math.abs(next.speed) < 0.03 && throttle === 0) next.speed = 0;
         next.heading += steering * 0.55 * dt * THREE.MathUtils.clamp(Math.abs(next.speed) / 6, 0.2, 1) * (next.speed < 0 ? -1 : 1);
@@ -212,6 +227,68 @@ export default function Vehicle(p: Props) {
             w.z = next.z - Math.cos(next.heading) * 2.4 + (Math.random() - 0.5) * 0.8;
           }
         }
+      } else if (isPlane) {
+        // ---- Phase 9: the Sable Sparrow — an honest ARCADE flight model
+        // (documented in VISUAL_AUDIT): ground roll, lift past 16.5 u/s,
+        // Shift climbs / Ctrl descends, stall sink below 13 u/s, banked
+        // turns, hard-touchdown and building-strike crash rules, water
+        // ditching wrecks the airframe. No physics-core step: flight is
+        // presentation-tier, like the bicycle/boat branches. ----
+        const fs = planeState(car.id);
+        const dmgF = car.damage >= 100 ? 0 : car.damage > 60 ? 0.5 : 1;
+        if (throttle > 0) next.speed = Math.min(36, next.speed + 8.5 * dt * dmgF);
+        else if (throttle < 0) next.speed = Math.max(0, next.speed - (fs.alt > 0.05 ? 4 : 11) * dt);
+        next.speed -= next.speed * (fs.alt > 0.05 ? 0.1 : 0.32) * dt; // air drag vs rolling drag
+        if (Math.abs(next.speed) < 0.03 && throttle === 0) next.speed = 0;
+        const sfly = THREE.MathUtils.clamp(Math.abs(next.speed) / 8, 0, 1);
+        next.heading += steering * (fs.alt > 0.05 ? 0.5 : 0.38) * sfly * dt;
+        next.x += Math.sin(next.heading) * next.speed * dt;
+        next.z += Math.cos(next.heading) * next.speed * dt;
+        next.x = THREE.MathUtils.clamp(next.x, -135, 135);
+        next.z = THREE.MathUtils.clamp(next.z, -305, 335);
+        // vertical model
+        let vy = 0;
+        if (next.speed >= 16.5) vy += (next.speed - 16.5) * 0.22; // ground-effect lift
+        if (k.has("shift")) vy += 5.2;
+        if (k.has("control")) vy -= 6.5;
+        if (fs.alt > 0.05 && next.speed < 13) vy -= 4.5; // stall: the nose drops
+        const prevAlt = fs.alt;
+        fs.alt = Math.max(0, Math.min(60, fs.alt + vy * dt));
+        fs.vy = vy;
+        if (prevAlt > 0.5 && fs.alt <= 0 && vy < -7.5) {
+          // slammed the runway: bent gear, real damage, speed scrubbed
+          car.damage = Math.min(100, car.damage + 42);
+          G.health = Math.max(0, G.health - 6);
+          G.eventQueue.push("shake", "hitwall"); sfx.crash();
+          toast("Hard landing! The Sparrow's gear took it badly.");
+          next.speed *= 0.35;
+        }
+        if (fs.alt <= 0.02) {
+          // on the ground (or the water): taxi rules
+          if (isWaterAt(next.x, next.z) && groundYAt(next.x, next.z) <= 0.05) {
+            if (Math.abs(car.state.speed) > 3) { car.damage = 100; G.eventQueue.push("shake", "hitwall"); sfx.crash(); sfx.splash(); toast("DITCHED — the Sparrow is wrecked in the bay. Swim for it (E)."); }
+            next.x = car.state.x; next.z = car.state.z; next.speed = 0;
+          } else if (isBlocked(next.x, next.z, 1.3)) {
+            if (Math.abs(car.state.speed) > 7) { car.damage = Math.min(100, car.damage + 22); G.eventQueue.push("shake", "hitwall"); sfx.crash(); }
+            next.x = car.state.x; next.z = car.state.z; next.speed = 0;
+          }
+        } else {
+          // airborne: building strike — revert, scrub speed, real damage
+          for (const b of buildings) {
+            if (Math.abs(next.x - b.x) < b.width / 2 + 1 && Math.abs(next.z - b.z) < b.depth / 2 + 1 && fs.alt < b.height - 1) {
+              next.x = car.state.x; next.z = car.state.z; next.speed *= 0.25;
+              car.damage = Math.min(100, car.damage + 30);
+              G.eventQueue.push("shake", "hitwall"); sfx.crash();
+              toast("You clipped a tower! The Sparrow is barely holding together.");
+              break;
+            }
+          }
+        }
+        // render pose: nose follows the climb, wings bank into turns
+        const targetPitch = fs.alt > 0.05 ? THREE.MathUtils.clamp(-vy * 0.02, -0.32, 0.3) : 0;
+        const targetRoll = fs.alt > 0.05 ? -steering * 0.55 : 0;
+        car.pitch += (targetPitch - car.pitch) * Math.min(1, dt * 4);
+        car.roll += (targetRoll - car.roll) * Math.min(1, dt * 4);
       } else {
         const stepped = physicsRef.current.stepVehicleV2(car.state, throttle, steering, k.has(" "), delta);
         next = stepped.state;
@@ -291,8 +368,10 @@ export default function Vehicle(p: Props) {
       } else refuelTimer.current = 0;
       vehicleStateRef.current = next;
       const gy = groundYAt(next.x, next.z);
-      vehiclePositionRef.current.set(next.x, gy, next.z);
-      G.followPos.set(next.x, gy, next.z);
+      // Phase 9: the camera + follow point ride the plane's altitude
+      const altY = isPlane ? planeState(car.id).alt : 0;
+      vehiclePositionRef.current.set(next.x, gy + altY, next.z);
+      G.followPos.set(next.x, gy + altY, next.z);
       G.speedKph = Math.round(Math.abs(next.speed) * 3.6);
     } else if (!G.driving) G.speedKph = 0;
     // ---- Phase 4: break-in hold progress (E held near a locked car) ----
@@ -378,20 +457,30 @@ export default function Vehicle(p: Props) {
     // near-car prompt
     if (!G.driving) {
       const pl = refs.current.playerPositionRef.current;
-      const near = G.cars.some((c) => (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2 <= (c.kind === "boat" ? 5.4 : 3.6) ** 2);
+      const near = G.cars.some((c) => (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2 <= (c.kind === "boat" || c.kind === "skiff" ? 5.4 : c.kind === "plane" ? 4.6 : 3.6) ** 2);
       if (near !== nearRef.current) { nearRef.current = near; refs.current.onNearVehicleChange(near); }
     } else if (nearRef.current) { nearRef.current = false; refs.current.onNearVehicleChange(false); }
     G.cars.forEach((c, i) => {
       const g = groups.current[i]; if (!g) return;
-      if (c.kind === "boat") {
+      if (c.kind === "boat" || c.kind === "skiff") {
         // buoyancy from the Harborfall Core (boat_buoyancy): bob +
         // pitch/roll from the wave phase, calming as the boat planes;
-        // the swell still scales with the wind gust value (Phase 7)
-        const swell = 0.7 + G.wind * 0.7;
+        // the swell still scales with the wind gust value (Phase 7);
+        // the little skiff rides lower and bobs gentler
+        const swell = (0.7 + G.wind * 0.7) * (c.kind === "skiff" ? 0.7 : 1);
         const b = physicsRef.current.boatBuoyancy(tt * 1.25 + i * 1.7, c.state.speed, 0.07 * swell);
         g.position.set(c.state.x, -0.08 + b.bob, c.state.z);
         g.rotation.order = "YXZ";
         g.rotation.set(b.pitch * swell, c.state.heading, b.roll * swell);
+        return;
+      }
+      if (c.kind === "plane") {
+        // Phase 9: altitude + flight pose (pitch/roll damped in the
+        // flight branch); parked, it sits on its gear on the apron
+        const alt = planeAlt.current.get(c.id)?.alt ?? 0;
+        g.position.set(c.state.x, groundYAt(c.state.x, c.state.z) + alt, c.state.z);
+        g.rotation.order = "YXZ";
+        g.rotation.set(c.pitch, c.state.heading, c.roll);
         return;
       }
       g.position.set(c.state.x, groundYAt(c.state.x, c.state.z), c.state.z);

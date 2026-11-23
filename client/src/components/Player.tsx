@@ -9,6 +9,7 @@ import { buildHumanoid, animateHumanoid } from "../humanoid";
 import { fallbackPhysics } from "../physics/GamePhysics";
 import type { CharacterPreset } from "../game/characters";
 import { CLOTH } from "../game/phase8";
+import { LOOK } from "../game/phase9";
 import { padKeys, padMove } from "../game/gamepad";
 import { touchMove } from "../game/touch";
 
@@ -47,17 +48,28 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
   // colours and wins over the preset/variant (Character Select clears it).
   // merged keyboard ∪ gamepad key view, built once (no per-frame literal)
   const pressedView = useMemo(() => ({ has: (k: string) => keys.current.has(k) || padKeys.has(k) }), []);
+  // Phase 9: barber/tattoo LOOK override — bumped by the phase9 event
+  const [lookKey, setLookKey] = useState(0);
+  useEffect(() => {
+    const onLook = () => setLookKey((k) => k + 1);
+    window.addEventListener("harborfall-look", onLook);
+    return () => window.removeEventListener("harborfall-look", onLook);
+  }, []);
   const rig = useMemo(() => {
     const c = CLOTH.current;
-    if (c) {
-      return buildHumanoid({
-        ...preset.options, top: c.top, topStyle: c.topStyle,
-        bottom: c.bottom ?? preset.options.bottom, bottomStyle: c.bottomStyle ?? preset.options.bottomStyle,
-      });
-    }
-    return buildHumanoid({ ...preset.options, top: preset.variants[0] });
+    const opts = c
+      ? {
+          ...preset.options, top: c.top, topStyle: c.topStyle,
+          bottom: c.bottom ?? preset.options.bottom, bottomStyle: c.bottomStyle ?? preset.options.bottomStyle,
+        }
+      : { ...preset.options, top: preset.variants[0] };
+    // Phase 9 LOOK layer wins over preset + clothing for hair/tattoo
+    if (LOOK.hairStyle) opts.hairStyle = LOOK.hairStyle as typeof opts.hairStyle;
+    if (LOOK.hairColor) opts.hair = LOOK.hairColor;
+    if (LOOK.tattoo) opts.tattooSleeve = true;
+    return buildHumanoid(opts);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset, clothingKey]);
+  }, [preset, clothingKey, lookKey]);
   useEffect(() => {
     if (CLOTH.current) rig.setTop(CLOTH.current.top);
     else rig.setTop(preset.variants[variant] ?? preset.variants[0]);
@@ -125,10 +137,32 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     setAnimationLabel(next);
   }, [driving]);
 
+  const collapseT = useRef(0); // Phase 9: wasted collapse progress
+
   useFrame((_, delta) => {
-    if (!root.current || (paused && !showcase)) return;
+    // Phase 9: the frame keeps running through a WASTED status so the
+    // collapse can play under the respawn screen
+    if (!root.current || (paused && !showcase && !G.status)) return;
     const dt = Math.min(delta, 0.05);
     const tNow = performance.now() / 1000;
+    if (G.status === "wasted" && !driving) {
+      // ---- Phase 9 ragdoll-LITE: a procedural limp collapse (there is
+      // no ragdoll solver in this stack — see VISUAL_AUDIT). The body
+      // tips back over 0.45 s with arms thrown wide, then settles. ----
+      collapseT.current = Math.min(1, collapseT.current + dt / 0.45);
+      const p = collapseT.current;
+      const ease = 1 - (1 - p) * (1 - p);
+      root.current.rotation.x = -ease * Math.PI * 0.47;
+      root.current.position.y = groundYAt(positionRef.current.x, positionRef.current.z) + ease * 0.12;
+      rig.lArm.rotation.x = -0.4 * ease; rig.rArm.rotation.x = -0.9 * ease;
+      rig.lArm.rotation.z = 1.15 * ease; rig.rArm.rotation.z = -1.15 * ease;
+      rig.lThigh.rotation.x = -0.3 * ease; rig.rThigh.rotation.x = 0.18 * ease;
+      rig.lShin.rotation.x = 0.4 * ease; rig.rShin.rotation.x = 0.15 * ease;
+      rig.torso.rotation.x = 0.1 * ease;
+      return;
+    }
+    if (G.status !== "wasted") collapseT.current = 0;
+    if (paused && !showcase) return; // BUSTED: freeze (hands-up is pre-status)
     // Phase 8: one merged view of keyboard ∪ gamepad keys (analog
     // stick/touch vectors are consulted separately below)
     const pressed = pressedView;
@@ -253,7 +287,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         // Phase 8: an analog stick pushed past 0.92 latches sprint too.
         running = (pressed.has("shift") || (analog !== null && analog.mag > 0.92)) && !swimmingNow && !G.crouched && G.stamina > 2 && !G.exhausted;
         const limp = G.health < 25 && !swimmingNow; // A7: hurt = slow + hunched (pose below)
-        const speed = (swimmingNow ? 2.4 : running ? 8 : 4.2) * (analog ? analog.mag : 1) * (G.crouched && !swimmingNow ? 0.45 : 1) * (limp ? 0.6 : 1);
+        const speed = (swimmingNow ? 2.4 : running ? 8 : 4.2) * (analog ? analog.mag : 1) * (G.crouched && !swimmingNow ? 0.45 : 1) * (limp ? 0.6 : 1) * (G.aiming ? 0.45 : 1);
         // vault trigger: moving into a low spot's edge with Space held
         if (jumpRequested.current && grounded.current && !swimmingNow && !G.interior) {
           for (const s of VAULT_SPOTS) {
@@ -294,6 +328,14 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
           }
         }
         root.current.rotation.y = Math.atan2(movement.x, movement.z);
+      }
+      // Phase 9 free-aim: standing still while aiming, the body faces
+      // the camera (the shot travels the camera ray — see Combat).
+      // NB: `direction` was consumed building `movement`, so re-read it.
+      if (G.aiming && !showcase) {
+        const aimDir = _rightV; // scratch reuse — `right` is dead by here
+        camera.getWorldDirection(aimDir); aimDir.y = 0;
+        if (aimDir.lengthSq() > 0.01) { aimDir.normalize(); root.current.rotation.y = Math.atan2(aimDir.x, aimDir.z); }
       }
 
       G.playerSprinting = running && moving && !swimmingNow;
@@ -499,6 +541,26 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         rig.torso.rotation.x += 0.23;
         rig.head.rotation.x += 0.17;
         rig.lArm.rotation.z = 0.16; rig.rArm.rotation.z = -0.16;
+      }
+      // ---- Phase 9 pose layers: free-aim gun arm + arrest hands-up ----
+      if (G.aiming && G.weaponSel !== "fist" && G.weaponSel !== "bottle") {
+        // two-handed aim: gun arm level at the camera ray, support hand up
+        rig.rArm.rotation.x = -1.45; rig.rFore.rotation.x = -0.08;
+        rig.lArm.rotation.x = -1.18; rig.lFore.rotation.x = -0.38;
+        rig.head.rotation.x = -0.06;
+      }
+      const bustAmt = grounded.current
+        ? Math.max(
+            G.bustTimer > 0.15 ? Math.min(1, G.bustTimer / 2.2) : 0,
+            G.hold?.label.startsWith("Surrendering") ? G.hold.progress : 0)
+        : 0;
+      if (bustAmt > 0) {
+        // arrest/surrender: both hands rise with the bust meter — the
+        // visible half of an arrest (no cuffing rig exists; see audit)
+        rig.lArm.rotation.x = -2.95 * bustAmt; rig.rArm.rotation.x = -2.95 * bustAmt;
+        rig.lArm.rotation.z = 0.25 * bustAmt; rig.rArm.rotation.z = -0.25 * bustAmt;
+        rig.lFore.rotation.x = -0.15 * bustAmt; rig.rFore.rotation.x = -0.15 * bustAmt;
+        rig.head.rotation.x = -0.2 * bustAmt;
       }
     }
   });

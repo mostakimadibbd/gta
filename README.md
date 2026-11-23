@@ -109,6 +109,28 @@ corrupt harbour boss's debt ledger.
   decides traffic, pedestrian steering, police line-of-sight, boat
   buoyancy and race pacing, the Python server adds leaderboards and
   economy snapshots, and C# desktop tooling lives in `tools/`.
+- **Phase 9 — "The 500 Sweep, Round 3"** — **flight**: the Sable
+  Sparrow at Sable Field actually flies (ground roll, lift-off, stall,
+  building strikes, hard landings cost damage) and the airfield gains a
+  **hangar interior**; a second boat class, the **Harbour Fisher
+  skiff**; **traffic wrecks that stay** for the game day with traffic
+  diverting around them, and rotating **roadworks** sites with real
+  slow zones; **four named townsfolk** with daily schedules and
+  branching conversations; a **sixth wanted star** (heat rule at 5★)
+  bringing the **Harbour Guard SUV**, a **patrol boat** and a **K9
+  unit**; **thrown bottles** that smash Market Row's shopfront glass;
+  **weapon mods** at Sable Arms (suppressors, extended mag, reflex
+  sight, choke); **free-aim** (hold right-mouse / LT); **Sable Cuts**
+  barber + **Port Ink** tattoos; a post-story mission pack, **After
+  the Fall** (three jobs, one real choice); the **SableWeb** phone
+  browser (five pages of live game data) and a persistent photo
+  **Gallery**; business **staffing** (+50% takings, $35/day wage);
+  shop hours enforced everywhere; and day-scoped persistence for
+  wrecks, broken props and smashed glass. The 500-feature ledger
+  (docs/BLUEPRINT.md §15) now stands at **82 ✅ · 9 🟡 · 2 ⬜** of 93
+  topics — the two remaining ⬜ are trains (no rail network in the
+  city plan) and seasons/snow (a subtropical harbour city with no
+  winter art set), each with its reason stated in the ledger.
 
 ## Personal themes
 
@@ -149,7 +171,13 @@ saved in `localStorage` and applies identically on web and desktop.
 | Space at a deep-water edge | Dive into the water |
 | E at your home | Sleep — morning, full heal, businesses pay out |
 | Hold E at a business | Buy it (Wraps stall · Car Wash · Club Solace share · Coral apartment) |
-| Q / Tab | Cycle weapon — fists · pistol · SMG · shotgun · bat |
+| Q / Tab | Cycle weapon — fists · pistol · SMG · shotgun · bat · bottles |
+| Hold right-mouse | Free-aim — over-shoulder camera, fire along the crosshair |
+| W / Shift / Ctrl (in the Sparrow) | Throttle · climb · descend — lift off past ~60 km/h, land gently |
+| E at Sable Arms | Tap: browse guns + weapon mods (suppressors, mag, sight, choke) · hold: buy/fit |
+| E at Sable Cuts / Port Ink (Market Row) | Tap: browse hair / tattoos · hold: buy ($25 / $60, 07:00–23:00) |
+| E near a named townsfolk | Talk — branching conversation (Tomas, Priya, Bea, Kip) |
+| E at bottle crates (Club Solace / pier) | Restock throwing bottles (+6) |
 | E at the pier / island dock | Fish — hold E to charge, release to cast, tap E on the bite, hold E to reel (keep the marker in the green) |
 | E at Lantern Park gym stations | Workout session ($10, once a day each) — tap E in the moving zone ×8 |
 | E at Thread & Tide (Market Row) | Tap: browse outfits · hold: buy (worn until you change character/variant) |
@@ -167,7 +195,8 @@ Any standard-mapping controller works alongside keyboard/touch
 (last input wins): **left stick** move/steer (analog — push past the
 edge to sprint), **right stick** camera, **RT/LT** accelerate/brake,
 **A** interact, **B** exit car / back, **X** jump / handbrake,
-**Y** phone, **LB** weapon cycle, **RB** horn, **Start** pause.
+**Y** phone, **LB** weapon cycle, **RB** horn, **Start** pause,
+**LT (hold, on foot)** free-aim.
 A toast confirms when a gamepad connects.
 
 ### Play on your phone
@@ -309,3 +338,12 @@ Unsigned installers may trigger SmartScreen/Gatekeeper first-run prompts.
   higher-resolution *painted* canvases on stylised-realistic rigs —
   still not scanned people. The loading bar counts real construction
   stages, never a timer.
+- Phase 9 honesty: flight is an **arcade model** (lift/stall/ceiling
+  rules in the vehicle step), not an aerodynamic simulation; the
+  "ragdoll" is a procedural collapse/flail on the existing rig — no
+  jointed ragdoll solver exists in the browser physics mirror; the
+  arrest is a hands-up pose feeding the BUSTED state, not a cuffing
+  animation. SableWeb is a closed local web rendered from live game
+  data, not the open internet. Wrecks, smashed glass and broken props
+  persist for the current game day only (the daily tick repairs the
+  city) — see BLUEPRINT §15 for the full per-topic ledger.

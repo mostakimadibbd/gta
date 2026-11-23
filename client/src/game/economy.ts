@@ -21,6 +21,10 @@ export const ECO = {
   ownsApartment: false,
   daySerial: 0,
   lastPaidSerial: -1,
+  // ---- Phase 9: business staffing (management-lite). A staffed
+  // business earns +50% and pays a $35/day wage — both land in the
+  // same guarded daily tick.
+  staff: [] as string[],
 };
 try {
   const raw = localStorage.getItem("harborfall-eco");
@@ -30,6 +34,7 @@ try {
     ECO.ownsApartment = !!e.ownsApartment;
     ECO.daySerial = e.daySerial ?? 0;
     ECO.lastPaidSerial = e.lastPaidSerial ?? -1;
+    ECO.staff = Array.isArray(e.staff) ? e.staff : [];
   }
 } catch { /* fresh economy */ }
 export function persistEco() {
@@ -38,7 +43,12 @@ export function persistEco() {
     localStorage.setItem("harborfall-apartment", ECO.ownsApartment ? "1" : "0");
   } catch { /* ignore */ }
 }
-export const dailyIncomeTotal = () => BUSINESSES.filter((b) => ECO.owned.includes(b.id)).reduce((a, b) => a + b.income, 0);
+export const STAFF_WAGE = 35; // $/day per staffed business
+export const STAFF_BONUS = 0.5; // +50% income while staffed
+export const dailyIncomeTotal = () => BUSINESSES.filter((b) => ECO.owned.includes(b.id)).reduce((a, b) => {
+  const staffed = ECO.staff.includes(b.id);
+  return a + b.income + (staffed ? Math.round(b.income * STAFF_BONUS) : 0) - (staffed ? STAFF_WAGE : 0);
+}, 0);
 
 /** The one daily tick: pay business income once per game day. */
 export function advanceDay() {

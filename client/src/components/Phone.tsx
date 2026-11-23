@@ -6,17 +6,18 @@
 import { useEffect, useState } from "react";
 import { CONTACTS, phoneMsgs, onPhoneMsgs } from "../game/phone";
 import { G, persistSettings, stashTotal, windLabel } from "../game/store";
-import { CAR_MODELS } from "../world";
+import { CAR_MODELS, DEALER_CARS } from "../world";
 import { M } from "../game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
 import { J, jobStats, fmtTime, RACES } from "../game/jobs";
-import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal } from "../game/economy";
+import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_WAGE, STAFF_BONUS } from "../game/economy";
 import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
 import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
 import { STOCKS, INV, buyLot, sellLot, portfolioValue, portfolioPL, LOT } from "../game/invest";
 import { manualTier, showFps, setShowFps } from "../game/perf";
 import { fetchBoard, type BoardEntry } from "../game/leaderboard";
+import { galleryList, galleryDelete } from "../game/phase9";
 
 /** Phase 8: harbour leaderboards from the Python service — renders
  * nothing until the fetch settles; an offline game shows the hint. */
@@ -53,7 +54,7 @@ interface Props {
   onPhotoMode: () => void;
   onChangeCharacter: () => void;
 }
-type AppId = "home" | "contacts" | "messages" | "bank" | "music" | "settings" | "garage" | "stash" | "stats" | "jobs" | "story" | "news" | "social";
+type AppId = "home" | "contacts" | "messages" | "bank" | "music" | "settings" | "garage" | "stash" | "stats" | "jobs" | "story" | "news" | "social" | "web" | "gallery";
 const APPS: { id: AppId | "map" | "camera"; icon: string; label: string }[] = [
   { id: "contacts", icon: "◉", label: "Contacts" },
   { id: "messages", icon: "✉", label: "Messages" },
@@ -68,6 +69,8 @@ const APPS: { id: AppId | "map" | "camera"; icon: string; label: string }[] = [
   { id: "stash", icon: "⚿", label: "Stash" },
   { id: "stats", icon: "▤", label: "Stats" },
   { id: "camera", icon: "◎", label: "Camera" },
+  { id: "gallery", icon: "▦", label: "Gallery" },
+  { id: "web", icon: "🌐", label: "SableWeb" },
   { id: "settings", icon: "⚙", label: "Settings" },
 ];
 
@@ -79,6 +82,7 @@ function gameClock(): string {
 
 export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onContact, onPhotoMode, onChangeCharacter }: Props) {
   const [app, setApp] = useState<AppId>("home");
+  const [webPage, setWebPage] = useState("home"); // Phase 9 SableWeb tab
   const [, setTick] = useState(0);
   const [playing, setPlaying] = useState(isMenuThemePlaying());
   useEffect(() => onPhoneMsgs(() => setTick((v) => v + 1)), []);
@@ -94,6 +98,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
     sfx.click();
     if (id === "map") { onOpenMap(); return; }
     if (id === "camera") { onPhotoMode(); return; }
+    if (id === "web") setWebPage("home");
     setApp(id);
   };
   const setSetting = (patch: Partial<typeof G.settings>) => { Object.assign(G.settings, patch); persistSettings(); setTick((v) => v + 1); };
@@ -154,9 +159,26 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>Fines & hospital bills paid</span><b>−${G.finesPaid.toLocaleString()}</b></div>
             <div className="bank-row"><span>Harbour tokens banked</span><b>{G.tokens} / 6</b></div>
             <h3 className="phone-subhead">Your businesses</h3>
-            {BUSINESSES.map((b) => (
-              <div key={b.id} className="bank-row"><span>{b.name}</span><b>{ECO.owned.includes(b.id) ? `+$${b.income}/day` : `$${b.price.toLocaleString()}`}</b></div>
-            ))}
+            {BUSINESSES.map((b) => {
+              const ownedBiz = ECO.owned.includes(b.id);
+              const staffed = ECO.staff.includes(b.id);
+              return (
+                <div key={b.id} className="bank-row">
+                  <span>{b.name}<small style={{ display: "block" }}>{ownedBiz
+                    ? staffed ? `Staffed: +$${Math.round(b.income * STAFF_BONUS)} bonus − $${STAFF_WAGE} wages` : "Unstaffed — hire a manager to earn +50%"
+                    : "Not owned"}</small></span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <b>{ownedBiz ? `+$${b.income + (staffed ? Math.round(b.income * STAFF_BONUS) - STAFF_WAGE : 0)}/day` : `$${b.price.toLocaleString()}`}</b>
+                    {ownedBiz && (
+                      <button type="button" className="phone-toggle" onClick={() => {
+                        ECO.staff = staffed ? ECO.staff.filter((s) => s !== b.id) : [...ECO.staff, b.id];
+                        persistEco(); setTick((v) => v + 1);
+                      }}>{staffed ? "Let go" : "Hire staff"}</button>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
             <div className="bank-row"><span>{APARTMENT.name}</span><b>{ECO.ownsApartment ? "Owned 🔑" : `$${APARTMENT.price.toLocaleString()}`}</b></div>
             <div className="bank-row"><span><b>Daily income (paid each morning)</b></span><b>${dailyIncomeTotal().toLocaleString()}</b></div>
             <p className="phone-tip">Income lands with a SableBank message every game-morning — or when you sleep at home. Solano's ledger can't touch this account. Probably.</p>
@@ -225,6 +247,8 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>Lina's Line</span><b>{M.side.lina}/3</b></div>
             <div className="bank-row"><span>Voss's File</span><b>{M.side.voss}/3</b></div>
             <div className="bank-row"><span>The Harbour Heist</span><b>{M.side.heist >= 2 ? "Done 🏆" : M.side.heist === 1 ? "Prepped — call Elias" : M.storyIndex >= 4 || M.storyDone ? "Call Old Elias" : "After Chapter 4"}</b></div>
+            <div className="bank-row"><span>After the Fall (post-story pack)</span><b>{!M.storyDone ? "Finish the story first" : M.side.after >= 3 ? "Done 🏆" : "Call Lina, then Voss, then Elias"}</b></div>
+            <div className="bank-row"><span>After the Fall progress</span><b>{M.side.after}/3</b></div>
             {SIDE_MISSIONS.filter((mDef) => (M.stats[mDef.id]?.best ?? 0) > 0).map((mDef) => (
               <div key={mDef.id} className="bank-row"><span>{mDef.title}</span><b>best {fmtTime(M.stats[mDef.id].best)}</b></div>
             ))}
@@ -248,6 +272,78 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <p className="phone-tip">The harbour talks. Cause a scene and you'll read about it here.</p>
           </div>
         )}
+        {app === "web" && (
+          <div className="phone-page">
+            <h3>SableWeb — the harbour, online</h3>
+            <div className="bank-row">
+              <span><b>sableweb.ps</b></span>
+              <span style={{ display: "flex", gap: 6 }}>
+                {(["home", "motors", "weather", "wire", "classifieds"] as const).map((p) => (
+                  <button key={p} type="button" className="phone-toggle" onClick={() => setWebPage(p)}>{p === "home" ? "⌂" : p[0].toUpperCase() + p.slice(1)}</button>
+                ))}
+              </span>
+            </div>
+            {webPage === "home" && (
+              <>
+                <div className="phone-msg"><b>Welcome to SableWeb</b><p>Port Sable's one-page internet. Motors, weather, the Wire, and the classifieds — everything a harbour town needs, nothing it doesn't.</p></div>
+                <div className="bank-row"><span>Harbour status</span><b>{G.weather} · wind {windLabel(G.wind).toLowerCase()} · {gameClock()}</b></div>
+                <div className="bank-row"><span>Top headline</span><b>{newsFeed[0]?.title ?? "Quiet on the docks"}</b></div>
+                <p className="phone-tip">Every page here reads LIVE game data — prices, weather and headlines are the real ones.</p>
+              </>
+            )}
+            {webPage === "motors" && (
+              <>
+                <h3 className="phone-subhead">sablemotors.ps — current stock</h3>
+                {DEALER_CARS.map((dc) => (
+                  <div key={dc.kind} className="bank-row"><span>{CAR_MODELS[dc.kind].name}<small style={{ display: "block" }}>Top speed {CAR_MODELS[dc.kind].topSpeed} · handling {CAR_MODELS[dc.kind].handling}</small></span><b>${dc.price.toLocaleString()}</b></div>
+                ))}
+                <p className="phone-tip">Buy at the Sable Motors showroom in Northgate (07:00–23:00) — cars are delivered to your garage.</p>
+              </>
+            )}
+            {webPage === "weather" && (
+              <>
+                <h3 className="phone-subhead">harbourweather.ps</h3>
+                <div className="bank-row"><span>Now over Port Sable</span><b>{G.weather}</b></div>
+                <div className="bank-row"><span>Wind</span><b>{windLabel(G.wind)}</b></div>
+                <div className="bank-row"><span>Next change</span><b>~{Math.max(1, Math.round(G.weatherIn / 60))} min</b></div>
+                <div className="phone-msg"><b>Harbourmaster's note</b><p>{G.weather === "Storm" ? "Storm over the bay — small craft stay in, and the fishing's off. The Sparrow stays hangared too, if you value it." : G.weather === "Rain" ? "Rain on the water. Roads are slick, the fish don't care, and Tomas is still on the pier." : G.weather === "Fog" ? "Fog in the harbour. Drive slow, boat slower — the patrol boat is out there somewhere." : "Fair harbour weather. The regatta lights are calling and the Downs dirt loop is dry."}</p></div>
+              </>
+            )}
+            {webPage === "wire" && (
+              <>
+                <h3 className="phone-subhead">harbourwire.ps — latest</h3>
+                {newsFeed.slice(0, 3).map((n, i) => (
+                  <div key={i} className="phone-msg"><b>{n.title}</b><p>{n.body}</p></div>
+                ))}
+                {newsFeed.length === 0 && <p className="phone-tip">No headlines yet — the harbour is quiet. Suspiciously quiet.</p>}
+              </>
+            )}
+            {webPage === "classifieds" && (
+              <>
+                <h3 className="phone-subhead">Classifieds</h3>
+                <div className="phone-msg"><b>FOR SALE — Harbour Fisher 180 skiffs</b><p>Moored at the island dock and the Coral marina. Slow, honest, smells faintly of coralfin. Just take one — harbour rules.</p></div>
+                <div className="phone-msg"><b>LESSONS — Sable Sparrow flying club</b><p>One prop plane, one runway, no questions. Throttle W, climb Shift, descend Ctrl. Land gently: the gear remembers.</p></div>
+                <div className="phone-msg"><b>WANTED — night staff</b><p>Harbour Wraps is the only counter in town that never closes. Everyone else keeps 07:00–23:00. Plan your crimes accordingly.</p></div>
+                <div className="phone-msg"><b>LOST — one reputation</b><p>Districts remember faces here. Help people, and witnesses hesitate. Cause scenes, and the whole row knows your name by Friday.</p></div>
+              </>
+            )}
+          </div>
+        )}
+        {app === "gallery" && (
+          <div className="phone-page">
+            <h3>Gallery — Photo Mode shots</h3>
+            {galleryList().length === 0 && <p className="phone-tip">No photos yet. Open the Camera app, frame something beautiful, and shoot — shots land here (and download too). Keeps the last 10.</p>}
+            {galleryList().map((p) => (
+              <div key={p.id} className="phone-msg">
+                <img src={p.src} alt={`Port Sable photo, ${p.at}`} style={{ width: "100%", borderRadius: 8, display: "block" }} />
+                <p style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>{p.at}</span>
+                  <button type="button" className="phone-toggle" onClick={() => { galleryDelete(p.id); setTick((v) => v + 1); }}>Delete</button>
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
         {app === "stats" && (
           <div>
             <p className="phone-note">Skills grow by doing. Perks unlock at 50.</p>
@@ -267,7 +363,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="phone-row"><span>Lifetime earned</span><b>${G.lifetimeEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Fines &amp; fees paid</span><b>${G.finesPaid.toLocaleString()}</b></div>
             <div className="phone-row"><span>Cars in garages</span><b>{G.storedCars.length}</b></div>
-            <div className="phone-row"><span>Weapons owned</span><b>{Object.values(G.weaponOwned).filter(Boolean).length}/4</b></div>
+            <div className="phone-row"><span>Weapons owned</span><b>{Object.values(G.weaponOwned).filter(Boolean).length}/5</b></div>
             <h3 className="phone-subhead">Honest work</h3>
             <div className="phone-row"><span>Taxi</span><b>{jobStats.taxiFares} fares · ${jobStats.taxiEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>

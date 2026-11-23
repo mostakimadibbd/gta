@@ -5,13 +5,14 @@
 // flinch, tip over, get up, and run. Crime flows through the
 // witness-aware addCrime() in the store.
 import { useEffect, useMemo, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, addCrime, toast, syncWeaponMirrors, type WeaponKind } from "../game/store";
 import { MANSION, GUN_STORE } from "../world";
 import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
 import { isInteractiveTarget } from "../keyboard";
+import { WMOD, BOTTLE, syncBottles } from "../game/phase9";
 
 interface WeaponSpec {
   cd: number; range: number; perp: number; spreadRad: number;
@@ -25,7 +26,19 @@ const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   // Phase 8 bat: fire() routes to swingBat() before this spec is used —
   // the entry exists so the Record stays complete (wider, slower, heavy)
   bat: { cd: 0.55, range: 2.6, perp: 1.5, spreadRad: 0, carDmg: 9, pedDown: 6, pellets: 1, recoil: 0.04, sfxFire: () => sfx.batSwing() },
+  // Phase 9 bottles: fire() routes to throwBottle() — entry for completeness
+  bottle: { cd: 0.45, range: 14, perp: 1, spreadRad: 0, carDmg: 3, pedDown: 3, pellets: 1, recoil: 0, sfxFire: () => sfx.batSwing() },
 };
+/** Phase 9: Sable Arms mods reshape the base specs (bought once,
+ * persisted in game/phase9.ts WMOD). */
+function specFor(sel: WeaponKind): WeaponSpec {
+  const base = WEAPONS[sel];
+  if (sel === "pistol" && WMOD.sightsPistol) return { ...base, perp: 0.6, range: 38 };
+  if (sel === "smg" && WMOD.magSmg) return { ...base, cd: 0.08, spreadRad: 0.038 };
+  if (sel === "shotgun" && WMOD.chokeShotgun) return { ...base, spreadRad: 0.1, range: 21 };
+  return base;
+}
+const suppressedFor = (sel: WeaponKind) => (sel === "pistol" && WMOD.suppPistol) || (sel === "smg" && WMOD.suppSmg);
 interface Pickup { x: number; z: number; kind: WeaponKind; ammo: number; label: string; }
 const PICKUPS: Pickup[] = [
   { x: MANSION.x - 4.5, z: MANSION.z + 6.5, kind: "pistol", ammo: 24, label: "Pistol" }, // mansion drive
@@ -33,6 +46,8 @@ const PICKUPS: Pickup[] = [
   { x: GUN_STORE.x + 1, z: GUN_STORE.z + 3, kind: "smg", ammo: 60, label: "SMG" },       // Sable Arms, Northgate
   { x: -13, z: -33, kind: "shotgun", ammo: 12, label: "Shotgun" },                       // alley off Lantern St
   { x: 74, z: -68, kind: "bat", ammo: 0, label: "Baseball bat" },                        // Phase 8: Lantern Park, by the outdoor gym
+  { x: 47, z: 108, kind: "bottle", ammo: 6, label: "Bottles" },                         // Phase 9: crate of empties by Club Solace
+  { x: 10, z: 118, kind: "bottle", ammo: 6, label: "Bottles" },                         // Phase 9: pier-side crate
 ];
 const RESPAWN_S = 60;
 
@@ -49,6 +64,11 @@ export default function Combat({ enabled }: { enabled: boolean }) {
   const atkCd = useRef(0);
   const held = useRef({ mouse: false, j: false });
   const fireRef = useRef<() => void>(() => {});
+  // Phase 9: free-aim reads the live camera; suppressed shots skip the
+  // muzzle-flash FX (the flag tracks the most recent shot only)
+  const camera = useThree((s) => s.camera);
+  const camRef = useRef(camera); camRef.current = camera;
+  const suppressedFx = useRef(false);
 
   useEffect(() => {
     const canAttack = () => enabledRef.current && !G.driving && !G.dialogueActive && !G.status && !G.interior;
@@ -143,22 +163,52 @@ export default function Combat({ enabled }: { enabled: boolean }) {
       }
     };
 
+    // ---- Phase 9: thrown bottles — the 6th Q slot. A lobbed arc
+    // (gravity integrated in Phase9's renderer); the impact rules live
+    // there too: ped hit = assault, car hit = criminal damage, bare
+    // ground = a scare and a mess, no crime class for littering. ----
+    const throwBottle = () => {
+      const t = performance.now() / 1000;
+      if (t < atkCd.current) return;
+      atkCd.current = t + 0.45;
+      if (G.weaponAmmo.bottle <= 0) { sfx.dryFire(); return; }
+      G.weaponAmmo.bottle -= 1;
+      syncBottles();
+      G.punchT = t; // the throw uses the punch arm-swing pose channel
+      const f = facing();
+      BOTTLE.active = true;
+      BOTTLE.x = G.playerPos.x + f.x * 0.5; BOTTLE.z = G.playerPos.z + f.z * 0.5; BOTTLE.y = 1.55;
+      BOTTLE.vx = f.x * 13; BOTTLE.vz = f.z * 13; BOTTLE.vy = 4.6; BOTTLE.spin = 0;
+      sfx.batSwing(); // whoosh — the closest foley in the kit
+    };
+
     const fire = () => {
       const t = performance.now() / 1000;
       if (t < atkCd.current) return;
       const sel = G.weaponSel;
       if (sel === "bat" && G.weaponOwned.bat) { swingBat(); return; }
+      if (sel === "bottle" && G.weaponOwned.bottle) { throwBottle(); return; }
       if (sel === "fist" || !G.weaponOwned[sel]) { punch(); return; }
-      const spec = WEAPONS[sel];
+      const spec = specFor(sel);
       atkCd.current = t + spec.cd;
       if (G.weaponAmmo[sel] <= 0) { sfx.dryFire(); return; }
       G.weaponAmmo[sel] -= 1;
       G.skillShootAcc += 1; // Shooting skill grows by trigger time (A7)
       syncWeaponMirrors();
       spec.sfxFire();
+      const suppressed = suppressedFor(sel);
+      suppressedFx.current = suppressed;
       // recoil: camera micro-shake through the shared shake channel
       if (G.settings.shake) G.shakeAmp = Math.min(0.5, G.shakeAmp + spec.recoil);
-      const base = facing();
+      let base = facing();
+      // Phase 9 free-aim: while aiming, shots travel the camera ray
+      // (projected to the ground plane) instead of the character facing
+      if (G.aiming) {
+        const d = new THREE.Vector3();
+        camRef.current.getWorldDirection(d);
+        const len = Math.hypot(d.x, d.z);
+        if (len > 0.05) base = { x: d.x / len, z: d.z / len };
+      }
       const px = G.playerPos.x, pz = G.playerPos.z;
       const mx = px + base.x * 0.55, mz = pz + base.z * 0.55;
       // Shooting skill ≥50 tightens every cone by 15% (A7)
@@ -191,7 +241,8 @@ export default function Combat({ enabled }: { enabled: boolean }) {
         }
       }
       G.shotFx = { t, mx, mz, hx: fxHit ? fxHit.x : px + base.x * 30, hz: fxHit ? fxHit.z : pz + base.z * 30, hit: anyHit };
-      addCrime("shoot");
+      // Phase 9: a suppressed shot is only as known as its witnesses
+      addCrime("shoot", suppressed);
     };
     fireRef.current = fire;
 
@@ -239,28 +290,31 @@ export default function Combat({ enabled }: { enabled: boolean }) {
         pickupReadyAt.current[i] = G.timeS + RESPAWN_S;
         const had = G.weaponOwned[pk.kind];
         G.weaponOwned[pk.kind] = true;
-        G.weaponAmmo[pk.kind] = Math.min(240, G.weaponAmmo[pk.kind] + pk.ammo);
+        G.weaponAmmo[pk.kind] = Math.min(pk.kind === "bottle" ? 24 : 240, G.weaponAmmo[pk.kind] + pk.ammo);
+        if (pk.kind === "bottle") syncBottles();
         G.weaponSel = pk.kind;
         syncWeaponMirrors();
         sfx.pickup();
         toast(pk.kind === "bat"
           ? "Baseball bat acquired — Q to the bat slot, click or J to swing. No ammo, all shoulder."
-          : had
-            ? `${pk.label} ammo +${pk.ammo} — Q cycles weapons`
-            : `${pk.label} acquired — click or J to fire, Q to cycle (+${pk.ammo} rounds)`);
+          : pk.kind === "bottle"
+            ? "Bottles ×6 — Q to the throw slot, click or J to lob one. Glass breaks loud."
+            : had
+              ? `${pk.label} ammo +${pk.ammo} — Q cycles weapons`
+              : `${pk.label} acquired — click or J to fire, Q to cycle (+${pk.ammo} rounds)`);
       }
     });
     // shot FX: muzzle flash (60ms), tracer (80ms), impact sparks (120ms)
     const fx = G.shotFx;
     const age = t - fx.t;
     if (flashRef.current) {
-      const on = age >= 0 && age < 0.06 && G.armed;
+      const on = age >= 0 && age < 0.06 && G.armed && !suppressedFx.current;
       flashRef.current.visible = on;
       if (on) flashRef.current.position.set(fx.mx, 1.35, fx.mz);
     }
     // pooled muzzle-flash point light (player only — Combat is player-only)
     if (muzzleLight.current) {
-      const on = age >= 0 && age < 0.05 && G.armed;
+      const on = age >= 0 && age < 0.05 && G.armed && !suppressedFx.current;
       muzzleLight.current.intensity = on ? 26 : Math.max(0, muzzleLight.current.intensity - 300 * 0.016);
       if (on) muzzleLight.current.position.set(fx.mx, 1.4, fx.mz);
     }
@@ -291,6 +345,17 @@ export default function Combat({ enabled }: { enabled: boolean }) {
               <mesh position={[0, -0.18, 0]} castShadow><cylinderGeometry args={[0.028, 0.034, 0.3, 8]} /><meshStandardMaterial color="#8a5a30" roughness={0.7} /></mesh>
               <mesh position={[0, 0.16, 0]} castShadow><cylinderGeometry args={[0.05, 0.032, 0.42, 8]} /><meshStandardMaterial color="#b98a4e" roughness={0.6} /></mesh>
               <mesh position={[0, -0.34, 0]}><cylinderGeometry args={[0.045, 0.045, 0.03, 8]} /><meshStandardMaterial color="#5d3a1c" roughness={0.7} /></mesh>
+            </group>
+          ) : pk.kind === "bottle" ? (
+            /* Phase 9: a crate of green-glass empties, ready to throw */
+            <group>
+              <mesh position={[0, -0.42, 0]} castShadow><boxGeometry args={[0.62, 0.22, 0.62]} /><meshStandardMaterial color="#6d4c33" roughness={0.85} /></mesh>
+              {([[-0.16, -0.16], [0.16, -0.16], [-0.16, 0.16], [0.16, 0.16]] as const).map(([x, z], j) => (
+                <group key={j} position={[x, -0.12, z]}>
+                  <mesh castShadow><cylinderGeometry args={[0.075, 0.085, 0.42, 8]} /><meshStandardMaterial color="#2e6b46" roughness={0.25} metalness={0.1} /></mesh>
+                  <mesh position={[0, 0.28, 0]}><cylinderGeometry args={[0.03, 0.06, 0.16, 8]} /><meshStandardMaterial color="#2e6b46" roughness={0.25} metalness={0.1} /></mesh>
+                </group>
+              ))}
             </group>
           ) : (<>
           {/* low-poly gun: grip + slide + barrel (longer for SMG/shotgun) */}

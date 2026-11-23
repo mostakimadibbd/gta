@@ -26,6 +26,7 @@ export let padConnected = false;
 const DEAD = 0.18;
 const dz = (v: number) => (Math.abs(v) < DEAD ? 0 : (v - Math.sign(v) * DEAD) / (1 - DEAD));
 let started = false;
+let padAimHeld = false; // Phase 9: LT-on-foot aim latch (mouse RMB is the other writer)
 const prevButtons = new Map<number, boolean>();
 
 function keyEvent(type: "keydown" | "keyup", key: string) {
@@ -64,6 +65,11 @@ function poll() {
     padAxes.throttle = bv(7) - bv(6);
     if (padAxes.throttle > 0.15) padKeys.add("w");
     if (padAxes.throttle < -0.15) padKeys.add("s");
+    // Phase 9: LT held ON FOOT is the free-aim trigger (in a car LT
+    // stays the brake, above). The latch only clears what it set, so
+    // the mouse's right-button aim is never fought over.
+    if (b(6) && !G.driving) { G.aiming = true; padAimHeld = true; }
+    else if (padAimHeld) { G.aiming = false; padAimHeld = false; }
     // ---- right stick → camera orbit deltas ----
     const rx = dz(pad.axes[2] ?? 0), ry = dz(pad.axes[3] ?? 0);
     if (rx) padCam.yaw -= rx * 0.055;
@@ -88,6 +94,7 @@ function poll() {
     padKeys.clear();
     padAxes.steer = 0; padAxes.throttle = 0;
     padMove.x = 0; padMove.y = 0; padMove.mag = 0;
+    if (padAimHeld) { G.aiming = false; padAimHeld = false; }
   }
   requestAnimationFrame(poll);
 }

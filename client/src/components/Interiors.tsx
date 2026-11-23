@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { G, toast, nowS, bark } from "../game/store";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
-import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, type InteriorKind } from "../world";
+import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, type InteriorKind } from "../world";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 import { neonSignTexture } from "../textures";
@@ -54,6 +54,9 @@ const WALL_R = new THREE.MeshStandardMaterial({ color: "#4a3527", roughness: 0.9
 const FLOOR_P = new THREE.MeshStandardMaterial({ color: "#2e3540", roughness: 0.55, metalness: 0.1 });
 const FLOOR_CL = new THREE.MeshStandardMaterial({ color: "#9fb3ae", roughness: 0.4 });
 const FLOOR_R = new THREE.MeshStandardMaterial({ color: "#2b2019", roughness: 0.7 });
+// Phase 9: hangar — corrugated steel + oil-stained concrete
+const WALL_H = new THREE.MeshStandardMaterial({ color: "#5d6a72", roughness: 0.7, metalness: 0.35 });
+const FLOOR_H = new THREE.MeshStandardMaterial({ color: "#43484d", roughness: 0.5, metalness: 0.2 });
 
 /** Wanted-poster wall art (canvas): three harbour faces, drawn not copied. */
 function posterTexture(): THREE.CanvasTexture {
@@ -184,6 +187,13 @@ export default function Interiors() {
             };
           } else { prompt = "The set menu is $25 — you're short."; warn = true; }
         }
+      } else if (G.interior === "hangar") {
+        // ---- Phase 9: Port Sable Airport hangar — exit only (the
+        // Sparrow outside is the attraction; in here: a display plane,
+        // crates and the crew's kettle) ----
+        const [x, z] = INTERIORS.hangar.exitDoor;
+        if (near(x, z, 2.2)) { prompt = "Press E — leave the hangar"; act = go(AIRPORT_DOOR.x, AIRPORT_DOOR.z - 1.2, ""); }
+        else prompt = "";
       } else if (near(GARAGE_EXT_DOOR.x, GARAGE_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Lina's Garage";
         act = go(INTERIORS.garage.spawnIn[0], INTERIORS.garage.spawnIn[1], "garage");
@@ -199,6 +209,9 @@ export default function Interiors() {
       } else if (near(RESTAURANT_EXT_DOOR.x, RESTAURANT_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Marina Table restaurant";
         act = go(INTERIORS.restaurant.spawnIn[0], INTERIORS.restaurant.spawnIn[1], "restaurant");
+      } else if (near(AIRPORT_DOOR.x, AIRPORT_DOOR.z, 2.8)) {
+        prompt = "Press E — enter the airport hangar";
+        act = go(INTERIORS.hangar.spawnIn[0], INTERIORS.hangar.spawnIn[1], "hangar");
       } else if (near(MANSION_GATE.x, MANSION_GATE.z, 3.2)) {
         if (G.ownsMansion) prompt = "🏠 Sable Heights Villa — your home. Park in the drive to garage-save a car.";
         else if (G.cash >= MANSION_PRICE) {
@@ -219,6 +232,7 @@ export default function Interiors() {
 
   const G0 = INTERIORS.garage, C0 = INTERIORS.club;
   const P0 = INTERIORS.police, CL0 = INTERIORS.clinic, R0 = INTERIORS.restaurant;
+  const H0 = INTERIORS.hangar;
   return (
     <group>
       {/* ================= LINA'S GARAGE — interior ================= */}
@@ -402,6 +416,33 @@ export default function Interiors() {
         {/* window glow strip + exit */}
         <mesh position={[0, 2, R0.d / 2 - 0.16]}><boxGeometry args={[10, 1.4, 0.03]} /><meshStandardMaterial color="#ffd9a0" emissive="#ffca7a" emissiveIntensity={0.35} transparent opacity={0.85} /></mesh>
         <mesh position={[0, 1.4, R0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#1d140d" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
+      </group>
+
+      {/* ================= Phase 9: PORT SABLE AIRPORT — hangar ======== */}
+      <RoomShell cx={H0.cx} cz={H0.cz} w={H0.w} d={H0.d} h={5.2} wall={WALL_H} floor={FLOOR_H} ceiling />
+      <group position={[H0.cx, 0, H0.cz]}>
+        <pointLight position={[0, 4.4, 0]} intensity={30} distance={22} decay={1.7} color="#ffe2b8" />
+        {/* the display Sparrow, chocked and roped off */}
+        <group position={[-2.5, 0, -1.5]} rotation={[0, 0.5, 0]}>
+          <CarBody kind="plane" color="#b3402e" />
+        </group>
+        {/* crates, drums + a tool bench along the east wall */}
+        {([[6.8, -4.4], [7.6, -3.2], [6.9, 2.8]] as const).map(([x, z], i) => (
+          <mesh key={i} position={[x, 0.45, z]} castShadow><boxGeometry args={[0.95, 0.9, 0.95]} /><primitive object={WOOD} attach="material" /></mesh>
+        ))}
+        {([[8.6, 0.6], [8.6, 1.5]] as const).map(([x, z], i) => (
+          <mesh key={i} position={[x, 0.55, z]} castShadow><cylinderGeometry args={[0.34, 0.34, 1.1, 12]} /><meshStandardMaterial color={i ? "#31556e" : "#b3402e"} metalness={0.4} roughness={0.5} /></mesh>
+        ))}
+        <group position={[-8.6, 0, 3.6]} rotation={[0, Math.PI / 2, 0]}>
+          <mesh position={[0, 0.85, 0]} castShadow><boxGeometry args={[4.2, 0.12, 1]} /><primitive object={WOOD} attach="material" /></mesh>
+          {[-1.9, 1.9].map((x) => <mesh key={x} position={[x, 0.42, 0]}><boxGeometry args={[0.14, 0.85, 0.85]} /><primitive object={WOOD} attach="material" /></mesh>)}
+          {[-1.2, 0.2, 1.3].map((x, i) => (
+            <mesh key={i} position={[x, 1.02, 0.1]} castShadow><boxGeometry args={[0.46, 0.22, 0.36]} /><meshStandardMaterial color={["#7a1f1f", "#274268", "#4c3b28"][i]} roughness={0.6} /></mesh>
+          ))}
+        </group>
+        {/* painted floor markings + exit door */}
+        <mesh position={[-2.5, 0.06, -1.5]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[4.6, 4.85, 28]} /><meshBasicMaterial color="#d99a3d" transparent opacity={0.5} /></mesh>
+        <mesh position={[0, 1.4, H0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#20242a" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
       </group>
     </group>
   );

@@ -405,3 +405,50 @@ can't hold ~27–42 fps.
   2,011.28 / 1,322.49) — +51 kB raw / +16 kB gzip for the entire
   Phase 8 round (8 sweep items + realism pass + 3 exotics + joystick
   + smoothness + language wiring); no new dependencies.
+
+## Phase 9 addendum — flight, the sixth star, glass and the day-scoped city (2026-11-23)
+
+- **Flight model (Sable Sparrow, honest scope)**: an ARCADE model in
+  the vehicle step, not aerodynamics — ground roll uses the normal car
+  step; lift-off when forward speed ≥ 16.5 u/s (~60 km/h); climb is a
+  direct rate (Shift +5.2 u/s, Ctrl −6.5 u/s) on top of a lift curve;
+  below 13 u/s airborne the plane sinks at up to −4.5 u/s (stall);
+  ceiling 60 u; touchdown with sink < −7.5 u/s costs 42 damage;
+  building strikes test the world `buildings` AABBs against altitude
+  (+30 damage, speed scrubbed); ditching in water = 100 damage. No
+  bail-out above 2 u altitude. The parked airliner blocker sits ON the
+  strip (z −50..−34) — taxi via the apron (x ≈ 116–119) or lift off
+  early; that is a deliberate obstacle, noted here so it isn't read
+  as a bug. Prop spin, pitch/roll damping and nav lights are visual.
+- **Skiff (second boat class)**: Harbour Fisher 180 — canopy, crates,
+  slower (14.5 / 9.5 u/s fwd/rev) than the Marina Racer, same buoyancy
+  mirror; spawns at Sable Island and the Coral dock.
+- **Sixth star**: heat, not a new meter UI — serious witnessed crime
+  at 5★ increments `G.starHeat`; the third raises 6★ (HUD now renders
+  six star slots). 6★ response: the Harbour Guard SUV (27 u/s chase)
+  joins the existing 6-car police pool; patrol boat pins the wanted
+  cooldown while you're on water at 2★+; K9 pair adds bust pressure
+  on foot at 3★+. All three are single extra actors in Phase9.tsx —
+  no change to the core police step.
+- **Glass + scaffold scope**: destructible BUILDING response is
+  exactly 9 Market Row shopfront panes + 1 construction scaffold —
+  buildings remain static merged geometry; panes/scaffold persist
+  broken for the game day (`harborfall-destruct`, day-serial scoped)
+  and are repaired on the daily tick, same contract as Phase 7 props
+  and Phase 9 traffic wrecks (`harborfall-wrecks`).
+- **Ragdoll / arrest honesty**: there is NO ragdoll solver. WASTED
+  uses a 0.45 s procedural collapse (body tips to the ground plane,
+  arms wide); car-hit peds flail via the existing animation driver at
+  high frequency for 1.2 s. The arrest is a hands-up POSE scaled by
+  the bust meter / surrender hold — no cuffing rig exists.
+- **Free-aim**: hold RMB (canvas only) or gamepad LT — over-shoulder
+  camera (3.1 back / 0.95 right / 1.62 up), FOV −14, player faces the
+  camera, Combat fires along the camera ray projected to the ground
+  plane. Mouse is the only pointer-lock-free writer; the gamepad
+  latch only clears what it set.
+- **Bundle**: index 2,125.96 kB / gzip 1,357.09 kB (Phase 8:
+  2,062.32 / 1,338.22) — +63.6 kB raw / +18.9 kB gzip for the whole
+  Phase 9 round (15 topic upgrades); CSS 51.24 kB; no new
+  dependencies. Build: `tsc --noEmit && vite build` PASS. No C++ or
+  Python files were touched this round, so no g++/py_compile re-run
+  was required.

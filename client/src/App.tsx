@@ -13,12 +13,15 @@ import World from "./components/World";
 import { isInteractiveTarget } from "./keyboard";
 import { fallbackPhysics, loadPhysicsEngine, type PhysicsEngine, type VehicleState } from "./physics/GamePhysics";
 import { G, resetAfterArrest, resetAfterWasted, windLabel } from "./game/store";
-import { M, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission } from "./game/missionState";
+import { M, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission, altActive } from "./game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
 import Phase7Systems from "./components/Phase7";
 import Phase8Systems from "./components/Phase8";
+import Phase9Systems from "./components/Phase9";
+import Phase9Ui from "./components/Phase9Ui";
 import { jobTarget } from "./game/jobs";
 import { currentMiniUi, clearClothingOverride, type MiniUi } from "./game/phase8";
+import { galleryAdd, clearLookOverride } from "./game/phase9";
 import { padCam } from "./game/gamepad";
 import { perf, DPR_LADDER, tierDprCap, autoDropTier, manualTier, showFps, setShowFps } from "./game/perf";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
@@ -77,6 +80,11 @@ const tmpSph = new THREE.Spherical();
 
 interface FpState { on: boolean; yaw: number; pitch: number; }
 
+/** Phase 9 free-aim look state (module-shared: App's mouse handlers
+ * write it, CameraRig reads it). Yaw seeds from the player heading. */
+const aimState = { yaw: 0, pitch: 0 };
+const mouseAim = { held: false };
+
 interface SweepState { t: number; dur: number; cx: number; cz: number; }
 
 function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THREE.Vector3>; camFar: RefObject<boolean>; fp: RefObject<FpState>; orbit: boolean; sweep: { current: SweepState | null } }) {
@@ -113,6 +121,21 @@ function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THR
         G.shakeAmp *= Math.exp(-5.5 * delta);
       }
     };
+    // ---- Phase 9 free-aim: hold right-mouse (or gamepad LT) on foot —
+    // an over-shoulder camera with a narrowed FOV; Combat fires along
+    // the camera ray while G.aiming is set ----
+    if (G.aiming && !G.driving && !G.interior && !orbit) {
+      if (controls.current) controls.current.enabled = false;
+      const fx = Math.sin(aimState.yaw), fz = Math.cos(aimState.yaw);
+      tmpV.copy(target.current);
+      camera.position.set(tmpV.x - fx * 3.1 + fz * 0.95, tmpV.y + 1.62, tmpV.z - fz * 3.1 - fx * 0.95);
+      const cp = Math.cos(aimState.pitch);
+      camera.lookAt(tmpV.x + fx * cp * 12, tmpV.y + 1.45 + Math.sin(aimState.pitch) * 12, tmpV.z + fz * cp * 12);
+      const aimFov = G.settings.fov - 14;
+      if (Math.abs(cam.fov - aimFov) > 0.4) { cam.fov += (aimFov - cam.fov) * 0.25; cam.updateProjectionMatrix(); }
+      applyShake();
+      return;
+    }
     // ---- first-person (V) and photo mode: head-height, drag to look.
     // Gyro gently trims yaw on foot (±~10°) when enabled.
     if (fp.current?.on || G.photoMode) {
@@ -235,6 +258,17 @@ function PhotoCapture({ shotRef }: { shotRef: RefObject<number> }) {
     const url = gl.domElement.toDataURL("image/png");
     const a = document.createElement("a");
     a.href = url; a.download = "harborfall-photo.png"; a.click();
+    // Phase 9: also keep a downscaled copy in the phone Gallery
+    try {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = 320; c.height = Math.max(1, Math.round(320 * (img.height / img.width)));
+        c.getContext("2d")?.drawImage(img, 0, 0, c.width, c.height);
+        galleryAdd(c.toDataURL("image/jpeg", 0.72));
+      };
+      img.src = url;
+    } catch { /* gallery is best-effort; the download already happened */ }
   });
   return null;
 }
@@ -261,8 +295,8 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0 };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; aiming: boolean; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0, aiming: false };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -302,6 +336,11 @@ const LOAD_TIPS = [
   "Businesses pay every morning: the Wraps stall, the Northgate Car Wash, a share of Club Solace. Sleep at home to settle up.",
   "Fail a mission? Press R to retry from your last checkpoint with a fresh clock.",
   "The causeway toll is $5 at a crawl — or smash the barrier and take the star. Speed cameras fine $75 over ~100 km/h.",
+  "Hold right-mouse to free-aim over the shoulder — LT on a gamepad.",
+  "The Sable Sparrow at Sable Field actually flies: Shift climbs, Ctrl descends, land gently.",
+  "Six stars exist now. Earn the sixth and the Harbour Guard rolls out in force.",
+  "Named townsfolk keep real schedules — talk to them, and Port Sable remembers kindness.",
+  "Sable Cuts and Port Ink on Market Row: new hair, new ink, cash only, 07:00–23:00.",
 ];
 /** Phase 6 staged loading: each label is a REAL construction stage —
  * World/GameSystems sub-trees mount as the stage counter advances, and
@@ -471,15 +510,18 @@ export default function App() {
   const startMission = useCallback((def: MissionDef) => {
     endMission(); M.phase = "intro";
     recordAttempt(def.id); // Phase 7: mission stats (Stats app)
-    const intro = def.introAlt && M.choice === "elias" ? def.introAlt : def.intro;
+    const intro = def.introAlt && altActive(def) ? def.introAlt : def.intro;
     beginDialogue(intro, () => {
       // Phase 5: the Ch.5 choice interrupts between intro and play, once.
-      if (def.choice && !M.choice) { setChoiceFor(def); return; }
+      // Phase 9: the post-story pack has its own choice flag (M.packChoice).
+      const chosen = def.id === "s5" ? M.choice : M.packChoice;
+      if (def.choice && !chosen) { setChoiceFor(def); return; }
       startPlay(def); showBanner(`${def.title} — ${def.giver}`, true);
     });
   }, [beginDialogue, showBanner]);
   const resolveChoice = useCallback((def: MissionDef, flag: string, reply: DialogueLine[]) => {
-    M.choice = flag as "voss" | "elias";
+    if (def.id === "s5") M.choice = flag as "voss" | "elias";
+    else M.packChoice = flag;
     persistMission();
     setChoiceFor(null);
     sfx.click();
@@ -539,13 +581,43 @@ export default function App() {
     window.addEventListener("harborfall-clothing-changed", onCloth);
     return () => window.removeEventListener("harborfall-clothing-changed", onCloth);
   }, []);
+  // ---- Phase 9 free-aim: right-mouse on the canvas holds aim; mouse
+  // movement steers the over-shoulder camera (gamepad LT is the other
+  // writer — see gamepad.ts) ----
+  useEffect(() => {
+    const down = (e: MouseEvent) => {
+      if (e.button !== 2) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag !== "CANVAS" || G.driving || G.photoMode) return;
+      mouseAim.held = true; G.aiming = true;
+      aimState.yaw = G.playerHeading; aimState.pitch = 0;
+    };
+    const up = (e: MouseEvent) => {
+      if (e.button === 2 && mouseAim.held) { mouseAim.held = false; G.aiming = false; }
+    };
+    const move = (e: MouseEvent) => {
+      if (!G.aiming || !mouseAim.held) return;
+      aimState.yaw -= e.movementX * 0.0032;
+      aimState.pitch = Math.max(-0.45, Math.min(0.5, aimState.pitch - e.movementY * 0.0028));
+    };
+    window.addEventListener("mousedown", down);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("mousemove", move);
+    return () => {
+      window.removeEventListener("mousedown", down);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("mousemove", move);
+    };
+  }, []);
   const pickCharacter = useCallback((id: string) => {
     clearClothingOverride();
+    clearLookOverride(); // Phase 9: the barber/tattoo work was on the old face
     setCharChoice((c) => { const next = { id, variant: c.variant }; persistCharacterChoice(next.id, next.variant); return next; });
     sfx.click();
   }, []);
   const pickVariant = useCallback((v: number) => {
     clearClothingOverride();
+    clearLookOverride(); // Phase 9: same rule as clothing
     setCharChoice((c) => { const next = { id: c.id, variant: v }; persistCharacterChoice(next.id, next.variant); return next; });
     sfx.click();
   }, []);
@@ -670,6 +742,7 @@ export default function App() {
         wind: windLabel(G.wind),
         mini: currentMiniUi(), // Phase 8: fishing/gym minigame bar (8 Hz poll)
         fps: showFps() ? Math.round(perf.fps) : 0,
+        aiming: G.aiming, // Phase 9: free-aim crosshair
       });
       setCamFlash(nowS() - G.camFlashAt < 0.22);
       // ---- Phase 6 flow bits polled with the HUD: door fade, respawn
@@ -751,13 +824,17 @@ export default function App() {
       if (key === "g" && started && G.garageZone) { e.preventDefault(); setGarageZoneId(G.garageZone.id); sfx.click(); return; }
       if ((key === "q" || key === "tab") && started) {
         e.preventDefault();
-        // Phase 6: Q cycles every OWNED slot — fists → pistol → SMG → shotgun
-        const order = ["fist", "pistol", "smg", "shotgun", "bat"] as const;
+        // Phase 6: Q cycles every OWNED slot — fists → pistol → SMG →
+        // shotgun → bat (Phase 9 adds the bottle throw slot)
+        const order = ["fist", "pistol", "smg", "shotgun", "bat", "bottle"] as const;
         const owned = order.filter((w) => w === "fist" || G.weaponOwned[w]);
         const next = owned[(owned.indexOf(G.weaponSel) + 1) % owned.length] ?? "fist";
         G.weaponSel = next;
         syncWeaponMirrors();
-        showPopup(next === "fist" ? "Weapon: fists" : `Weapon: ${next.toUpperCase()} · ${G.weaponAmmo[next as "pistol" | "smg" | "shotgun"]} rounds`);
+        showPopup(next === "fist" ? "Weapon: fists"
+          : next === "bat" ? "Weapon: BASEBALL BAT"
+          : next === "bottle" ? `Weapon: BOTTLES ×${G.weaponAmmo.bottle} — click to throw`
+          : `Weapon: ${next.toUpperCase()} · ${G.weaponAmmo[next as "pistol" | "smg" | "shotgun"]} rounds`);
         return;
       }
       if (key === "v") {
@@ -928,6 +1005,7 @@ export default function App() {
           <Interactions />
           <Phase7Systems />
           <Phase8Systems />
+          <Phase9Systems />
           <PerfGovernor active={started && !paused && flow === "game"} />
           <PhotoCapture shotRef={photoShotRef} />
           <FirstFrame onReady={() => setSceneReady(true)} />
@@ -958,6 +1036,7 @@ export default function App() {
 
       {flash && <div className="damage-flash" />}
       {camFlash && <div className="camera-flash" />}
+      {hud.aiming && started && !hud.status && <div className="aim-crosshair" aria-hidden="true" />}
       {started && !hud.status && !photoMode && (
         <section className="hud" aria-label="Game status">
           <div className="hud-topleft">
@@ -979,12 +1058,13 @@ export default function App() {
           <div className="hud-right">
             <div className="hud-topright">
               <div className={`stars ${starPulse ? "pulse" : ""}`} aria-label={`Wanted ${hud.wanted} stars`}>
-                {[1, 2, 3, 4, 5].map((i) => <span key={i} className={i <= hud.wanted ? "on" : ""}>★</span>)}
+                {[1, 2, 3, 4, 5, 6].map((i) => <span key={i} className={i <= hud.wanted ? "on" : ""}>★</span>)}
               </div>
               <div className="cash">${hud.cash.toLocaleString()}</div>
               {hud.lootCount > 0 && <div className="loot-chip" title="Stolen goods — fence them at Coral Pawn or Lina's">STASH ${hud.loot.toLocaleString()} <span>· {hud.lootCount} item{hud.lootCount > 1 ? "s" : ""}</span></div>}
-              {hud.armed && hud.weapon !== "fist" && hud.weapon !== "bat" && <div className="ammo-chip" title="Ammo — click or J to fire, Q to cycle weapons">{hud.weapon.toUpperCase()} · {hud.ammo}</div>}
+              {hud.armed && hud.weapon !== "fist" && hud.weapon !== "bat" && hud.weapon !== "bottle" && <div className="ammo-chip" title="Ammo — click or J to fire, Q to cycle weapons">{hud.weapon.toUpperCase()} · {hud.ammo}</div>}
               {hud.weapon === "bat" && !driving && <div className="ammo-chip" title="Baseball bat — click or J to swing, Q to cycle weapons">BAT · WOOD</div>}
+              {hud.weapon === "bottle" && !driving && <div className="ammo-chip" title="Throwing bottles — click or J to lob one, Q to cycle weapons">BOTTLES ×{G.weaponAmmo.bottle}</div>}
               <div className="hud-meta">Tokens {hud.tokens}/6 · {players.length + 1} player{players.length ? "s" : ""} · GFX {quality.toUpperCase()}{hud.fps > 0 ? ` · ${hud.fps} FPS` : ""}</div>
             </div>
             <div className="hud-right-row">
@@ -1001,9 +1081,9 @@ export default function App() {
                 <div className="car-bar"><span>DMG</span><div className="car-bar-track"><div className={`car-bar-fill dmg ${hud.damage > 60 ? "bad" : ""}`} style={{ width: `${hud.damage}%` }} /></div><b>{hud.damage}%</b></div>
               </div>
             )}
-            {(hud.armed || hud.weapon === "bat") && !driving && (
+            {(hud.armed || hud.weapon === "bat" || hud.weapon === "bottle") && !driving && (
               <button type="button" className="weapon-chip" onClick={() => {
-                const order = ["fist", "pistol", "smg", "shotgun", "bat"] as const;
+                const order = ["fist", "pistol", "smg", "shotgun", "bat", "bottle"] as const;
                 const owned = order.filter((w) => w === "fist" || G.weaponOwned[w]);
                 G.weaponSel = owned[(owned.indexOf(G.weaponSel) + 1) % owned.length] ?? "fist";
                 syncWeaponMirrors();
@@ -1034,7 +1114,7 @@ export default function App() {
             )}
           </div>
           {banner && <div className={`mission-banner ${banner.ok ? "ok" : "bad"}`}>{banner.text}</div>}
-          <div className="controls"><b>WASD</b> Move <i /><b>E</b> Interact · hold: rob / buy <i /><b>G</b> Garage <i /><b>M</b> Mods in garage <i /><b>X</b> Crouch <i /><b>Q</b> Weapon <i /><b>B</b> Surrender at 1★ <i /><b>V</b> 1st person <i /><b>U</b> Phone <i /><b>ESC</b> Pause</div>
+          <div className="controls"><b>WASD</b> Move <i /><b>E</b> Interact · hold: rob / buy <i /><b>G</b> Garage <i /><b>M</b> Mods in garage <i /><b>X</b> Crouch <i /><b>Q</b> Weapon <i /><b>RMB</b> Aim <i /><b>B</b> Surrender at 1★ <i /><b>V</b> 1st person <i /><b>U</b> Phone <i /><b>ESC</b> Pause</div>
         </section>
       )}
 
@@ -1170,8 +1250,16 @@ export default function App() {
             const next = unlocked ? nextSideMission(side, M.side[side]) : null;
             if (next) { startMission(next); return; }
           }
+          // Phase 9: after the story, the same three contacts offer the
+          // "After the Fall" pack missions, one per giver, in order
+          if (M.storyDone && started && !M.active && !dialogueRef.current) {
+            const pack = nextSideMission("after", M.side.after);
+            if (pack && name === pack.giver) { startMission(pack); return; }
+          }
           beginDialogue([{ who: name, text: line }, { who: name, text: hint }], () => {});
         }} />
+
+      <Phase9Ui />
 
       {(flow === "splash" || flow === "poster") && (
         <div className="start-screen poster-screen">
@@ -1349,7 +1437,12 @@ export default function App() {
               <div><dt>WASD / Arrows</dt><dd>Move</dd></div><div><dt>Shift</dt><dd>Sprint</dd></div>
               <div><dt>Space</dt><dd>Jump</dd></div><div><dt>E / F</dt><dd>Enter car · doors · buy · advance dialogue</dd></div>
               <div><dt>Click / J</dt><dd>Punch — or fire your weapon (SMG auto-fires while held)</dd></div>
-              <div><dt>Q / Tab</dt><dd>Weapon selector — fists · pistol · SMG · shotgun · bat</dd></div>
+              <div><dt>Hold right-mouse / LT</dt><dd>Free-aim — over-shoulder camera, fire along the crosshair</dd></div>
+              <div><dt>Q / Tab</dt><dd>Weapon selector — fists · pistol · SMG · shotgun · bat · bottles</dd></div>
+              <div><dt>Bottles</dt><dd>Crates by Club Solace and the pier — Q to the bottle slot, click to throw (breaks shopfront glass)</dd></div>
+              <div><dt>Sable Arms mods</dt><dd>Suppressors (quiet shots), extended mag, reflex sight, shotgun choke — hold E at the counter</dd></div>
+              <div><dt>Named townsfolk</dt><dd>Tomas, Priya, Bea and Kip keep schedules across the city — walk up and press E to talk</dd></div>
+              <div><dt>Sable Cuts / Port Ink</dt><dd>Market Row (07:00–23:00) — barber haircuts &amp; hair colour, tattoos; both reset when you change character</dd></div>
               <div><dt>E at the pier / island dock</dt><dd>Fish — hold E to charge, release to cast, tap E on the bite, hold E to reel (keep the marker in the green)</dd></div>
               <div><dt>E at Lantern Park gym</dt><dd>Bench press / treadmill session ($10, once a day each) — tap E in the zone to build Strength &amp; Stamina</dd></div>
               <div><dt>Thread &amp; Tide (Market Row)</dt><dd>Tap E to browse outfits, hold E to buy — worn until you change character or variant</dd></div>
@@ -1370,6 +1463,9 @@ export default function App() {
             <dl className="key-list">
               <div><dt>WASD / Arrows</dt><dd>Accelerate · brake/reverse · steer</dd></div>
               <div><dt>Space</dt><dd>Handbrake / drift</dd></div><div><dt>B</dt><dd>Horn</dd></div><div><dt>E / F</dt><dd>Exit car · board the boat / bicycle</dd></div>
+              <div><dt>Flying the Sparrow</dt><dd>W builds speed, lift-off past ~60 km/h · Shift climbs · Ctrl descends · land under ~27 km/h sink or it costs you</dd></div>
+              <div><dt>Boats</dt><dd>Speedboat at the pier, fishing skiffs at the island and Coral docks — E boards, W drives, mind the patrol boat at 2★+</dd></div>
+              <div><dt>Six stars</dt><dd>Serious crime at 5★ builds heat — the sixth star brings the Harbour Guard SUV and K9 units (3★+, on foot)</dd></div>
               <div><dt>M (at a garage)</dt><dd>Lina's mods — respray · engine tune · brakes</dd></div>
               <div><dt>C</dt><dd>Camera near / far</dd></div>
               <div><dt>Taxi work</dt><dd>Drive the yellow Sable Cab — fares hail with an amber marker; fast + clean = tips</dd></div>
@@ -1383,7 +1479,9 @@ export default function App() {
               <div><dt>T</dt><dd>Cycle theme</dd></div><div><dt>1–5</dt><dd>Switch theme directly</dd></div>
               <div><dt>M</dt><dd>Big map</dd></div><div><dt>L</dt><dd>Hold / resume day cycle</dd></div>
               <div><dt>N</dt><dd>Mute / unmute</dd></div><div><dt>R</dt><dd>Respawn (busted/wasted) · retry from checkpoint after a fail · restart mission</dd></div>
-              <div><dt>U</dt><dd>Smartphone (contacts · messages · bank · jobs · story · news · social · music · themes)</dd></div>
+              <div><dt>U</dt><dd>Smartphone (contacts · messages · bank · jobs · story · news · social · SableWeb · gallery · music · themes)</dd></div>
+              <div><dt>After the Fall</dt><dd>Post-story pack: finish the story, then call Lina, Voss and Elias — three more jobs, one real choice</dd></div>
+              <div><dt>Business staff</dt><dd>Bank app → Businesses: hire a hand for +50% takings, minus a $35 daily wage</dd></div>
               <div><dt>Jobs &amp; businesses</dt><dd>Phone Jobs app: taxi + delivery work. Hold E at the Wraps stall, Car Wash or Club Solace to buy in — income lands every morning</dd></div>
               <div><dt>Tow work</dt><dd>Jobs app → Tow shift: take the Sable Wrecker at Lina's, reverse the hook to a marked car, hold still to hitch, deliver to Lina's yard — $150 a drop</dd></div>
               <div><dt>SableBank Invest</dt><dd>Bank app: three local stocks in $100 lots — prices walk hourly and react to your heists, race wins and business buys</dd></div>
