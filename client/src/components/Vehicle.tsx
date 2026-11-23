@@ -361,10 +361,12 @@ export default function Vehicle(p: Props) {
     G.cars.forEach((c, i) => {
       const g = groups.current[i]; if (!g) return;
       if (c.kind === "boat") {
-        // buoyancy: gentle bob + pitch/roll swell on the waterline
-        g.position.set(c.state.x, -0.08 + Math.sin(tt * 1.25 + i * 1.7) * 0.07, c.state.z);
+        // buoyancy: gentle bob + pitch/roll swell on the waterline —
+        // Phase 7: the swell scales with the wind gust value
+        const swell = 0.7 + G.wind * 0.7;
+        g.position.set(c.state.x, -0.08 + Math.sin(tt * 1.25 + i * 1.7) * 0.07 * swell, c.state.z);
         g.rotation.order = "YXZ";
-        g.rotation.set(Math.sin(tt * 0.9 + i) * 0.02 + (c.state.speed > 6 ? -0.03 : 0), c.state.heading, Math.sin(tt * 1.1 + i * 2.3) * 0.025);
+        g.rotation.set(Math.sin(tt * 0.9 + i) * 0.02 * swell + (c.state.speed > 6 ? -0.03 : 0), c.state.heading, Math.sin(tt * 1.1 + i * 2.3) * 0.025 * swell);
         return;
       }
       g.position.set(c.state.x, groundYAt(c.state.x, c.state.z), c.state.z);

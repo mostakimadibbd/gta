@@ -63,6 +63,30 @@ corrupt harbour boss's debt ledger.
   events, shop hours, and a third character-realism pass (512² painted
   faces, crop/bald hair, jackets). C++ physics v3 source (suspension
   spring/damper + collision friction) with TS mirror + g++ smoke test.
+- **Phase 7 — "The 500 Sweep, Round 1"** — **jobs**: drive the yellow
+  Sable Cab and fares hail you (fare + tip by speed and cleanliness,
+  star ratings), plus Lina's 3-leg **delivery chain** — both run from
+  the phone **Jobs app**, earnings in Stats. **Street races**: Docks
+  Sprint, Bay Run and Northgate Loop — 3 AI rivals, checkpoints, live
+  position, $600/$250/$100 prizes, optional $100 bet, best times.
+  **Three new interiors**: Harbour Patrol HQ (surrender at the front
+  desk), Sable Clinic (heal inside), Marina Table restaurant (sit +
+  a $25 set menu). **Businesses**: buy the Harbour Wraps stall, the
+  Northgate Car Wash or a Club Solace share — daily income lands in
+  SableBank every game-morning; the **Coral Shores Apartment** is a
+  second home (respawn choice, sleep, garage-save #2), and **sleeping**
+  at any owned home skips to morning with a full heal. **The Harbour
+  Heist**: a two-night chain from Old Elias — prep the getaway van and
+  supply crates unseen, then drill the strongroom and run. Missions
+  gained **checkpoints** (fail → **R** retries from the last one) and
+  **replay** (phone Story app, 40% payout). New phone apps: **News**
+  (Harbour Wire headlines written from your actions), **Social**
+  (SableSocial) and a **GPS route** on the big map. World sweep: a
+  **toll booth** on the causeway ($5 slow, or smash it), **speed
+  cameras** ($75 SableCam fines), **destructible** crates/barrels/
+  fences, sitting on benches, wind gusts that move palms and boats,
+  fish at the pier — and **emergency vehicles**: parked + traffic
+  ambulance and fire truck, plus a rushing-ambulance world event.
 
 ## Personal themes
 
@@ -98,7 +122,11 @@ saved in `localStorage` and applies identically on web and desktop.
 | L | Hold / resume day cycle |
 | C | Camera near/far |
 | N | Mute / unmute |
-| R | Respawn when busted/wasted · restart current mission |
+| R | Respawn when busted/wasted · retry from checkpoint after a mission fail · restart current mission |
+| E at a bench / restaurant chair | Sit down (E or move to stand) |
+| Space at a deep-water edge | Dive into the water |
+| E at your home | Sleep — morning, full heal, businesses pay out |
+| Hold E at a business | Buy it (Wraps stall · Car Wash · Club Solace share · Coral apartment) |
 | Q / Tab | Cycle weapon — fists · pistol · SMG · shotgun |
 | Click / J (hold for SMG) | Punch / fire weapon |
 | Hold B (on foot, 1★, unarmed) | Surrender — $100 fine, no cell |

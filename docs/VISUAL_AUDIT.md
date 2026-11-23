@@ -285,3 +285,39 @@ can't hold ~27–42 fps.
   exist in C++ and as exact TS mirrors; g++ smoke test passes. The
   shipped WASM binary was NOT rebuilt this round (no emcc); the
   loader's per-function fallback makes behaviour identical.
+
+## Phase 7 addendum — new radii, corridors and contracts (2026-11-23)
+
+- **Interiors round 2**: three more pocket rooms join garage/club in
+  the z ≈ −175 pocket — police {cx 104, w 20, d 14}, clinic {cx 140,
+  w 16, d 12}, restaurant {cx 172, w 18, d 13}. Same contract as
+  Phase 3: Player clamps to the room while `G.interior` is set, door
+  teleports land ~130 ms behind the fade. Exterior blockers added for
+  the four new frontages (police/clinic on the Docks strip z 106.5,
+  restaurant/apartment in Coral z 218, car-wash back wall z −218.5) —
+  all in `STATIC_BLOCKERS`, all outside road corridors.
+- **Toll booth**: sits ON the bridge deck at (60, z 150), inside the
+  existing bridge corridor contract (x 60 ± 5.5, deck y 5.5). The
+  booth island and arms are VISUAL ONLY — no blocker was added, so
+  deck driving (and the Phase 4 bridge AABB contract) is unchanged;
+  the charge/smash logic is a proximity + speed check in Phase7.tsx.
+- **Speed cameras**: roadside poles at (100, −13.5), (−53.5, 40),
+  (26.5, −60) — all ≥1.5u off the drivable lane edge, non-blocking
+  visuals; the fine check is a 9u radius + speed > 28 u/s test.
+- **Destructibles**: crates/barrels/fences are NON-blocking props
+  (they were never in `STATIC_BLOCKERS`); the static crate render in
+  World.tsx is now filtered out and Phase7.tsx owns every crate mesh
+  so a smashed crate actually disappears. Break check: player car
+  within 2.3u at |speed| > 6. Respawn = next game-day tick.
+- **Emergency vans**: reuse the traffic `van` body (radius 1.55
+  contract unchanged). The two service traffic units are ordinary
+  NpcCar entries with `svc` dressing; the rushing ambulance is a
+  Phase7-owned visual on the z = 100 lane (y from `groundYAt`), it
+  does not collide.
+- **Race opponents**: visual-only CarBody groups steered by Phase7;
+  they do not collide with the player or traffic (ghost rivals — a
+  deliberate lightweight choice, stated here so nobody audits it as a
+  physics bug).
+- **Bundle**: index 2,011.22 kB / gzip 1,322.48 kB (Phase 6:
+  1,944.76 / 1,303.49) — +66 kB raw / +19 kB gzip for the whole round;
+  no new dependencies, no new textures (signs/posters are canvas).

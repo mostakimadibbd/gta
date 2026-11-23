@@ -41,6 +41,9 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
   const intensity = useRef(0);
   // ---- Phase 6: vault state + surrender (hold B) tracking ----
   const vault = useRef<{ t: number; dur: number; fx: number; fz: number; tx: number; tz: number } | null>(null);
+  // ---- Phase 7: swim dive entry + idle-variation timer ----
+  const dive = useRef<{ t: number; dur: number; fx: number; fz: number; tx: number; tz: number } | null>(null);
+  const idleT = useRef(0);
   const bHeldAt = useRef(-1);
   const surrendered = useRef(false);
   // Phase 5 Step 6: enter-car slide (0.35 s) instead of a teleport-pose swap
@@ -127,6 +130,19 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       if (swimmingNow && !wasSwimming.current) sfx.splash();
       wasSwimming.current = swimmingNow;
 
+      // ---- Phase 7 sitting: parked on a bench / restaurant chair —
+      // any movement key stands you back up (E toggles via the prompts) --
+      if (G.sitting) {
+        if (pressed.has("w") || pressed.has("a") || pressed.has("s") || pressed.has("d")) { G.sitting = false; G.sitSpot = null; }
+        else {
+          if (G.sitSpot) {
+            positionRef.current.x = G.sitSpot.x; positionRef.current.z = G.sitSpot.z;
+            root.current.rotation.y = G.sitSpot.heading;
+          }
+          jumpRequested.current = false;
+        }
+      }
+
       const forwardInput = showcase ? 0 : Number(pressed.has("w")) - Number(pressed.has("s"));
       const sideInput = showcase ? 0 : Number(pressed.has("d")) - Number(pressed.has("a"));
       const direction = new THREE.Vector3();
@@ -171,9 +187,19 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         } else if (G.hold?.label.startsWith("Surrendering")) G.hold = null;
       }
 
+      // ---- Phase 7 dive: an arc off the edge into deep water ----
+      if (dive.current) {
+        const v = dive.current;
+        v.t += dt;
+        const p = Math.min(1, v.t / v.dur);
+        positionRef.current.x = v.fx + (v.tx - v.fx) * p;
+        positionRef.current.z = v.fz + (v.tz - v.fz) * p;
+        positionRef.current.y = Math.sin(p * Math.PI) * 0.9;
+        if (p >= 1) { dive.current = null; positionRef.current.y = 0; grounded.current = true; sfx.splash(); }
+        moving = true;
       // ---- Phase 6 vault: Space near a low blocker (bench / hedge /
       // planter ≤ ~1.1u) arcs you over it instead of jumping in place ----
-      if (vault.current) {
+      } else if (vault.current) {
         const v = vault.current;
         v.t += dt;
         const p = Math.min(1, v.t / v.dur);
@@ -233,7 +259,20 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
 
       G.playerSprinting = running && moving && !swimmingNow;
       if (jumpRequested.current) {
-        if (grounded.current && !swimmingNow) {
+        // ---- Phase 7: Space at a deep-water edge = dive entry — the
+        // water must start within a step and still be water 3.6u out ----
+        if (grounded.current && !swimmingNow && !G.interior && !G.sitting && !dive.current) {
+          const h = root.current.rotation.y;
+          const fx = Math.sin(h), fz = Math.cos(h);
+          const nx = positionRef.current.x + fx * 1.5, nz = positionRef.current.z + fz * 1.5;
+          const tx = positionRef.current.x + fx * 3.6, tz = positionRef.current.z + fz * 3.6;
+          if (isWaterAt(nx, nz) && isWaterAt(tx, tz)) {
+            dive.current = { t: 0, dur: 0.55, fx: positionRef.current.x, fz: positionRef.current.z, tx, tz };
+            jumpRequested.current = false;
+            sfx.jump();
+          }
+        }
+        if (jumpRequested.current && grounded.current && !swimmingNow) {
           jumpVelocity.current = 7.5;
           grounded.current = false;
           sfx.jump();
@@ -279,6 +318,10 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         // prone at the surface, gentle bob
         root.current.position.y = -0.52 + Math.sin(tNow * 2.1) * 0.06;
         root.current.rotation.x = -1.02;
+      } else if (dive.current) {
+        // Phase 7: head-first pitch through the dive arc
+        const p = Math.min(1, dive.current.t / dive.current.dur);
+        root.current.rotation.x = -1.1 * Math.sin(p * Math.PI);
       } else root.current.rotation.x = 0;
       if (!driving) G.followPos.set(positionRef.current.x, groundYAt(positionRef.current.x, positionRef.current.z), positionRef.current.z);
       if (showcase) root.current.rotation.y += dt * 0.35; // select-screen turntable
@@ -295,10 +338,13 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     const target = driving ? 0 : moving ? (running ? 1 : 0.72) : 0;
     intensity.current += (target - intensity.current) * Math.min(1, dt * 10);
     animateHumanoid(rig, phase.current, intensity.current, tNow);
+    // Phase 7: idle clock — drives the weight-shift / phone-check layers
+    if (!driving && !moving && grounded.current && !G.swimming && !G.dialogueActive && !G.sitting) idleT.current += dt;
+    else idleT.current = 0;
 
     // ---- pose overrides (applied after the base animation) ----
     const crouchPose = G.crouched && !driving && !G.swimming && !onMoto;
-    rig.group.position.y = onMoto || onBike ? -0.15 : crouchPose ? -0.48 : 0;
+    rig.group.position.y = onMoto || onBike ? -0.15 : crouchPose ? -0.48 : G.sitting && !driving ? -0.42 : 0;
     if (crouchPose) {
       // crouch: knees bent, torso pitched — reads ~1.25u tall
       rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.05;
@@ -364,6 +410,22 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
           const s = Math.sin((pt / 0.3) * Math.PI);
           rig.rArm.rotation.x = -2.2 * s;
           rig.rFore.rotation.x = -0.3 * s;
+        }
+      }
+      // ---- Phase 7 pose layers: sitting + idle variations ----
+      if (G.sitting) {
+        rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.45;
+        rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
+        rig.lArm.rotation.x = -0.25; rig.rArm.rotation.x = -0.25;
+      } else if (idleT.current > 6 && grounded.current) {
+        // weight shift + slow look-around; every ~16 s he checks his phone
+        rig.torso.rotation.z = Math.sin(tNow * 0.5) * 0.05;
+        rig.head.rotation.y = Math.sin(tNow * 0.23) * 0.3;
+        const cyc = idleT.current % 16;
+        if (cyc > 10 && cyc < 12.5) {
+          rig.head.rotation.x = 0.42; rig.head.rotation.y = 0;
+          rig.rArm.rotation.x = -0.85; rig.rFore.rotation.x = -0.5;
+          rig.lArm.rotation.x = -0.55; rig.lFore.rotation.x = -0.45;
         }
       }
       // ---- Phase 6 pose layers (after the base poses) ----

@@ -455,6 +455,7 @@ body,
 .game-shell.shake { animation: shakeAnim .3s linear; }
 @keyframes shakeAnim { 0%,100%{transform:translate(0)} 25%{transform:translate(-5px,3px)} 50%{transform:translate(5px,-3px)} 75%{transform:translate(-3px,-2px)} }
 .damage-flash { position:absolute; inset:0; z-index:4; pointer-events:none; background:radial-gradient(ellipse at center, transparent 55%, #dc2626aa 100%); animation: flashFade .35s ease-out; }
+.camera-flash { position:absolute; inset:0; z-index:4; pointer-events:none; background:#ffffff; opacity:.85; animation: flashFade .25s ease-out; }
 @keyframes flashFade { from{opacity:1} to{opacity:0} }
 .hud { color: var(--hud-text); }
 .hud-topleft { position:absolute; top:18px; left:20px; display:flex; flex-direction:column; gap:7px; }

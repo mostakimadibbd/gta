@@ -6,7 +6,7 @@ export interface MissionChoice {
   options: { label: string; flag: string; reply: DialogueLine[] }[];
 }
 export interface MissionDef {
-  id: string; story?: boolean; side?: "lina" | "voss"; title: string; giver: string;
+  id: string; story?: boolean; side?: "lina" | "voss" | "heist"; title: string; giver: string;
   intro: DialogueLine[]; outro: DialogueLine[];
   objectiveText: string; kind: "goto" | "delivery" | "collect" | "escape" | "checkpoints" | "tokens";
   targets: [number, number][]; timeLimit: number; payout: number;
@@ -197,10 +197,41 @@ export const SIDE_MISSIONS: MissionDef[] = [
       L("Det. Mara Voss", "The harbour always needs us, Kade. That's the job."),
     ],
     objectiveText: "Pick up the witness packet at the union hall, drop it at the Ferry Quarter safehouse", kind: "delivery", targets: [[-60, -20], [-92, -92]], timeLimit: 280, payout: 650 },
+  // ---- Phase 7: THE HARBOUR HEIST — a two-stage chain from Old Elias
+  // (call him after Chapter 4). Prep quality is tracked in missionState:
+  // finishing Prep unseen banks a bonus for the Strongroom payout.
+  { id: "heist1", side: "heist", title: "The Harbour Heist I — Prep Night", giver: "Old Elias",
+    intro: [
+      L("Old Elias", "Sit down, lad. What I'm about to say doesn't leave this pier. Solano's counting house keeps a strongroom at the East Yards warehouse — cash, bonds, and the harbour's rainy-day sins."),
+      L("Rayan Kade", "You've been planning this since before I came home, haven't you."),
+      L("Old Elias", "Since the winter they took Tamim. Tonight we PREP. First: the Ferry Van at the East Yards — that's our getaway, inconspicuous as a gull. Drive it, learn it, leave it ready."),
+      L("Old Elias", "Then two supply crates: one at the crane office, one by the broken-down wreck on Ferry Road. Drill, masks, thermite pencils. Quietly, Rayan. If nobody sees the prep, the job's half done."),
+      L("Rayan Kade", "And if somebody does see?"),
+      L("Old Elias", "Then we still go — we just earn less and run harder. Harbour rules."),
+    ],
+    outro: [
+      L("Old Elias", "Van's ready, crates are ours. You move like harbour mist when you want to, boy."),
+      L("Rayan Kade", "Tomorrow night, then. The strongroom."),
+      L("Old Elias", "Tomorrow night. Sleep first — a tired thief is a caught thief. Call me when you're ready."),
+    ],
+    objectiveText: "Prep the heist: check the getaway van, then collect 2 supply crates (unseen prep pays a bonus)", kind: "delivery", targets: [[97, 40], [60, 100], [-64, 44]], timeLimit: 300, payout: 500 },
+  { id: "heist2", side: "heist", title: "The Harbour Heist II — The Strongroom", giver: "Old Elias",
+    intro: [
+      L("Old Elias", "It's tonight. The warehouse strongroom, East Yards. The drill takes six seconds that will feel like six years — the alarm wakes the moment the bit bites."),
+      L("Rayan Kade", "Drill, grab, run to the safehouse. Lose the heat before the door. I've danced this one before, old man."),
+      L("Old Elias", "Not like this. Half that room is dock money Solano stole in ledger ink. Take it back, and half the harbour eats this winter. Tamim's name comes off the last page too."),
+      L("Rayan Kade", "Then let's go take it back."),
+    ],
+    outro: [
+      L("Old Elias", "Done. DONE. The counting house is empty, the dock fund is home, and Solano's rainy day just flooded."),
+      L("Rayan Kade", "Split it quiet, Elias. Every family on the ledger first. My cut last."),
+      L("Old Elias", "Your father would've said the same. The harbour provides, Kade. Tonight, so did you."),
+    ],
+    objectiveText: "Drill the strongroom (hold position 6s), then escape to the safehouse — lose your heat first", kind: "escape", targets: [[100, 28], [-92, -92]], timeLimit: 360, payout: 1600 },
 ];
 
 /** Next unplayed part of a side arc, or null when the arc is finished. */
-export function nextSideMission(side: "lina" | "voss", progress: number): MissionDef | null {
+export function nextSideMission(side: "lina" | "voss" | "heist", progress: number): MissionDef | null {
   const parts = SIDE_MISSIONS.filter((m) => m.side === side);
   return parts[progress] ?? null;
 }

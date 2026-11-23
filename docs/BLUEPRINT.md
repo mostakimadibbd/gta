@@ -20,7 +20,7 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ✅ Bay Bridge is now a DRIVABLE raised causeway (deck profile + ramps, ground-height sampling for player/cars) leading to **Coral Shores** — a second city across the bay: ~4×3 block grid, ~23 buildings + 4 glass towers with the facade treatment, palm boulevards, beach, fuel station #4, pawn shop, 4 parked cars, its own traffic loop (6 cars) + 6 peds, district name on HUD/minimap/big map. Police pursue across the bridge (Phase 4)
 - ✅ Scenic hillside overlook with parked silver supercar (Phase 2)
 - ✅ Safehouses — buy the Sable Heights Villa ($7,500): respawn moves there and its drive is a garage save point (Phase 3)
-- 🟡 Building interiors (PDF priority list) — safehouse ✅ (villa), garage ✅ (Lina's), club ✅ (Club Solace), shop 🟡 (register robbery points at 4 storefronts, no walk-in interior), police station ⬜, clinic ⬜, restaurant ⬜ (Phase 5)
+- 🟡 Building interiors (PDF priority list) — safehouse ✅ (villa), garage ✅ (Lina's), club ✅ (Club Solace), police station ✅ (Harbour Patrol HQ lobby + desk surrender, Phase 7), clinic ✅ (Sable Clinic, heal inside, Phase 7), restaurant ✅ (Marina Table — sit + $25 set menu, Phase 7), shop 🟡 (register robbery points at 4 storefronts, no walk-in interior)
 - ✅ Facade & street detail pass: window depth/blinds/lit variance, cornices, doors + canopies, wall AC, balconies, stepped annexes; grass tufts, park paths, wet sand, road arrows + stop bars, oil stains, rain puddles, hydrants/mail/bus stops/dumpsters/bicycles (Phase 3)
 - ✅ Distance depth: far skyline silhouette ring + second bridge silhouette on the horizon (Phase 3)
 - ⬜ Further map expansion beyond Coral Shores (Phase 6)
@@ -69,7 +69,7 @@ official roadmap. Every item is marked honestly against the shipped game:*
 - ✅ Harbour tokens (6 collectibles, $25 each)
 - ✅ Mission messages arrive on the phone; payments confirmed by SableBank (Phase 2)
 - ✅ Mission debrief screen — completion/failure panel with reward lines, time and balance (Phase 4 / Visual V6)
-- ⬜ Side activities: races, taxi fares, tow jobs (Phase 4)
+- ✅ Side activities (Phase 7): street races (3 events, AI rivals, bets), taxi fares, Lina's delivery chain — tow jobs ⬜ (no tow truck class)
 - ✅ Branching choices in story — one real choice in Ch.5 (side with Voss / warn Elias) changing Ch.6's opening, ending and payout split; persisted (Phase 5)
 - ✅ Side storylines — "Lina's Line" + "Voss's File", 3 parts each, phone-offered, persisted progress (Phase 5)
 
@@ -153,67 +153,135 @@ materials, filmic light — inside the web stack instead.
 - ✅ **Phase 2** — weather, police LOS/search + roadblocks + witnesses, damage & fuel, smartphone, NPC life, overlook + bay bridge, visual realism overhaul, character realism rebuild, poster loading screen, theme-song upgrade (this release)
 - ✅ **Phase 3** — visual round 2 (rounded sculpted cars, post-processing grade, facade/ground/prop detail, skyline ring) + rideable motorcycle, two enterable interiors (garage + club), swimming, first-person camera, combat lite (punch + pistol), buyable villa with garage save (this release)
 - ✅ **Phase 4** — UI realism overhaul (dark glass), garage car selection, character select (6 presets), C++ physics v2 + vehicle collisions, drivable Bay Bridge + Coral Shores (second city), theft system (pickpocket/robberies/break-ins/pawn), gyro steering, PDF deltas (crouch, photo mode, shake/FOV settings), Visual Upgrade V1–V7 (audit doc, normal maps, weathering, vehicle interiors, water/palm motion, debrief screen + weapon selector, far-ped tick skip) (this release)
-- 🟡 **Phase 4.5** — traffic obeys lights ✅ and rush hour ✅ landed in Phase 6; still open: gamepad, side activities (races, taxi jobs, tow)
+- 🟡 **Phase 4.5** — traffic obeys lights ✅ and rush hour ✅ landed in Phase 6; races + taxi jobs ✅ landed in Phase 7; still open: gamepad, tow jobs
 - ✅ **Phase 5 (shipped as the realistic-visuals + story/UI round)** — quality tiers, equirect env + water shader + SSAO, CC0 PBR route, clearcoat cars + headlight beams, character material/animation pass, deepened story + 2 side arcs + Ch.5 choice, cinematic subtitles, UI redesign. Still open from the original Phase 5 list: more interiors, customisation, NPC memory, businesses, 6-star design review
 - ✅ **Phase 6 — "Proper Game" (this release)** — Northgate district + causeway + Sable Island; traffic obeys lights + queues + rush hour + reckless driver; bus (route + stops) / taxi / bicycle / speedboat; NPC destinations, phone-peds, dog walker, vendor, rain shelter, night club drift; police spike strips, surrender, heli searchlight, disguise-lite; SMG + shotgun, 4-slot Q, recoil, muzzle light, cover; stamina, skills + phone Stats, vault, limp, food/hospital heals; vehicle mods (B1); random world events (B2); shop hours (B3); character realism pass 3 (B4); C++ physics v3 source + TS mirror + smoke test (B5, WASM binary not rebuilt — no emcc); full game-flow pipeline (splash → staged loading → spawn sweep → streaming → area cards → respawn screens). Detailed 500-list mapping in §15.
-- ⬜ **Phase 7 candidates** — multiplayer co-op missions, gamepad, races/taxi/tow side activities, more interiors, player businesses, NPC memory, 6-star review
+- ✅ **Phase 7 — "The 500 Sweep, Round 1" (this release)** — jobs system (taxi fares with hailing peds, tips + star ratings; Lina's delivery chain) in a phone Jobs app; 3 street races with AI rivals, checkpoint framework, positions, prizes + optional $100 bet; interiors round (Harbour Patrol HQ + desk surrender, Sable Clinic, Marina Table restaurant); buyable businesses (Wraps stall / Car Wash / Club Solace share) with a single daily income tick (06:00 rollover — sleeping triggers the same tick) + Coral Shores Apartment (second home, garage-save #2, sleep); THE HARBOUR HEIST two-stage chain (prep stealth bonus → strongroom drill → escape); mission checkpoints + retry-from-checkpoint (R), chapter replay at 40% (Story app), mission stats; phone News (Harbour Wire, generated from player actions) + SableSocial apps; GPS route polyline on the big map; world sweep — causeway toll booth, 3 speed cameras, destructible crates/barrels/fences (respawn next day), bench/chair sitting, vendor cooler drink, wind gusts (palms/boats/HUD), fish; emergency vehicles (parked + traffic ambulance/fire + rushing-ambulance event); player idle variations + swim dive entry. Detailed per-topic account in §15.
+- ⬜ **Phase 8 candidates** — multiplayer co-op missions, gamepad, tow jobs, NPC memory, 6-star review, clothing shops
 
-**Status tally (recounted Phase 6):** ✅ Done 88 · 🟡 Partial 6 · ⬜ Planned 12 — the §15 ledger below is the detailed, per-category account of the user's 500-feature list; tallies there are grouped, not 1:1 item counts.
+**Status tally (recounted Phase 7):** the §15 ledger below is the per-topic account of the user's 500-feature list — **89 topic lines: ✅ 57 · 🟡 6 · ⬜ 26**, and every ⬜ carries its specific reason (engine-blocked or not-yet-built — never silently skipped). Blueprint sections §§1–13 above remain the design roadmap.
 *QA note (PDF §QA): each release is accepted against build-pass + in-game smoke checks of the new systems; a formal written QA checklist pass is tracked as a Phase 5 item.*
 
-## 15. The 500-feature list — mapped (Phase 6)
+## 15. The 500-feature list — mapped (Phase 7, "The 500 Sweep, Round 1")
 
 The user's expansion brief listed ~500 desired features in 12
-categories. This is the honest ledger: ✅ in the game today, 🟡 partial
-or simplified, ⬜ not yet. Grouped by his categories — nothing here is
-marked done that isn't playable.
+categories. This is the honest ledger, rewritten topic-by-topic in
+Phase 7: ✅ implemented and playable · 🟡 lightweight equivalent (the
+equivalent is named) · ⬜ not in — with the specific reason (engine
+limit of the browser build, or not yet built). Nothing is marked done
+that isn't playable, and nothing is silently skipped.
 
-1. **Open World & Map** — ✅ three districts (Port Sable, Coral Shores,
-   Northgate) + Sable Island, causeway + bay bridge, drivable parking
-   garage (2 decks), minimap + big map covering all of it, district
-   names/cards. 🟡 interiors: 2 pocket rooms + open parking decks (not
-   full building interiors). ⬜ countryside/airport expansion, enterable
-   buildings generally.
-2. **Player & Character** — ✅ 6 presets × 3 variants, crouch/stealth,
-   swimming, vaulting, limp, stamina, skills, first-person, photo mode.
-   🟡 faces/hair improved (512² painted faces, crop/bald, jackets) —
-   still stylised rigs. ⬜ clothing shops, haircuts, tattoos as player
-   choices.
-3. **Vehicles & Transportation** — ✅ 14 car classes + motorcycle +
-   bicycle + bus + taxi + speedboat, damage/fuel, garages, mods
-   (respray/tune/brakes), break-ins. 🟡 boat is one skiff class.
-   ⬜ planes/helicopter piloting, trains, vehicle interiors beyond dash.
-4. **Traffic & Road** — ✅ signal obedience, queueing, rush-hour
-   density, reckless driver, honking, bus route with stops, parking.
-   ⬜ traffic accidents with lasting wreck state, roadworks events.
-5. **NPC & Pedestrian AI** — ✅ destinations (shops/benches/bus stops),
-   sitting, phone-peds with night screen glow, dog walker, vendor,
-   rain hurry/shelter, night club drift, flee/witness/report pipeline.
-   ⬜ NPC memory of the player, conversations beyond barks, schedules
-   tied to named NPCs.
-6. **Police & Wanted** — ✅ LOS + last-known search, roadblocks, spike
-   strips, surrender, heli (+ night searchlight ≥3★), disguise-lite
-   decay, witness delay. 🟡 stars cap at 5 (6-star design review open).
-   ⬜ police boats, K9, arrest animations.
-7. **Combat & Weapons** — ✅ fists, pistol, SMG (auto), shotgun
-   (5-pellet), per-weapon ammo, 4-slot Q, recoil + muzzle light, hit
-   flinch/fall, crouch cover. ⬜ melee weapons, thrown, weapon mods,
-   aiming mode (shots are facing-based hitscan).
-8. **Missions & Story** — ✅ 6 chapters, 2 side arcs, Ch.5 choice,
-   repeatables, debriefs, subtitles. ⬜ post-story mission packs,
-   heists, branching beyond Ch.5.
-9. **Economy / Businesses** — ✅ cash, bank phone app, garages, villa,
-   dealership purchases, weapon shops, pawn fencing, mods, heals/food.
-   🟡 shops keep hours (23:00–07:00 closed). ⬜ owning businesses,
-   stock/property income, employees.
-10. **Activities** — ✅ tokens, photo mode, random world events
-    (crash scene, AI police chase, street performer, breakdown),
-    swimming, island trips. ⬜ races, taxi/tow jobs, fishing, gym.
-11. **Smartphone / Interface** — ✅ phone apps incl. Stats, staged
-    loading screen, splash, spawn sweep, area title cards, respawn
-    mini-screens, door fades, no-select solid HUD. ⬜ in-phone internet,
-    camera gallery persistence.
-12. **World Simulation** — ✅ day cycle, weather system, shop hours,
-    rush hours, streaming activation (traffic dormancy 165/140u, ped
-    tick skip), ambient events. ⬜ seasons, persistent world state
-    across sessions beyond saves, dynamic construction.
+**Tally: 89 topic lines — ✅ 57 · 🟡 6 · ⬜ 26.**
+
+### 1. Open World & Map
+- ✅ Three connected landmasses: Port Sable (6 districts), Coral Shores, Northgate, plus Sable Island
+- ✅ Bay Bridge + causeway crossings, fully drivable, police pursue across
+- ✅ Drivable 2-deck parking garage (Northgate)
+- ✅ Interiors I: Lina's Garage + Club Solace pocket rooms (Phase 3)
+- ✅ Interiors II (Phase 7): Harbour Patrol HQ lobby (front desk = surrender point, wanted-poster wall, cells), Sable Clinic (waiting room, heal $50 inside), Marina Table restaurant (sit at tables, $25 set menu → full heal + stamina boost)
+- ✅ Minimap + big map over all districts, district title cards, GPS route (see §11)
+- ✅ Landmarks: ferris wheel, lighthouse, port cranes/ships, airport scenery, PORT SABLE hillside sign
+- 🟡 Enterable buildings generally — equivalent: 5 hand-built pocket-room interiors + open parking decks; full per-building interiors are a scope limit (each room is hand-built), not an engine limit
+- ⬜ Countryside / playable airport expansion — not built; the streaming/draw budget is spent on the three current districts
+- ⬜ Destructible buildings — engine-blocked: buildings are static merged geometry and the browser physics mirror has no structural destruction
+
+### 2. Player & Character
+- ✅ 6 character presets × 3 outfit variants (character select)
+- ✅ Crouch/stealth + cover, vaulting, limp, stamina + 3 skills with perks
+- ✅ Swimming — plus dive entry (Phase 7: Space at a deep-water edge arcs you in head-first)
+- ✅ Sitting (Phase 7: benches city-wide + restaurant chairs; E or any movement key stands)
+- ✅ Idle life (Phase 7: after 6 s idle — weight shift, look-around, periodic phone check)
+- ✅ Eating/drinking poses (vendor wrap, cooler drink, restaurant meal — hand-to-mouth)
+- ✅ First-person camera + photo mode
+- 🟡 Faces/hair — equivalent: 512² painted face textures, 3 builds, 6 skin tones, jacket torsos; realistic-STYLED rigs, not photoreal (browser rig limit, stated since Phase 2)
+- ⬜ Clothing shops / haircuts / tattoos as player purchases — not built; presets + variants cover appearance choice
+- ⬜ Full ragdoll player physics — engine-blocked: no ragdoll solver in the TS/C++ physics mirror
+
+### 3. Vehicles & Transportation
+- ✅ 14 car classes + motorcycle + bicycle + bus + taxi + speedboat, damage/fuel, garages, mods, break-ins
+- ✅ The taxi is a working job vehicle (Phase 7 fare system)
+- ✅ Emergency vehicles (Phase 7): ambulance + fire truck — parked units at the clinic/fire point, one traffic variant each on slow loops, lights-off in normal service
+- ✅ Two garage-save homes: villa drive + Coral apartment parking (Phase 7)
+- 🟡 Boats — equivalent: one skiff/speedboat class with wake + beaching; no marina fleet or yacht ownership
+- ⬜ Player-flyable planes/helicopter — engine-blocked this round: no flight model or air collision in the physics mirror (an ambient heli + police heli exist as AI)
+- ⬜ Trains — not built: no rail network exists in the city plan
+
+### 4. Traffic & Road
+- ✅ Signal obedience + queueing, rush-hour density, reckless driver, honking, bus route with stops
+- ✅ Toll booth (Phase 7): Coral causeway — $5 auto-charge through slowly, barrier raises; smashing through at speed = reckless-driving crime, no charge, barrier down 20 s
+- ✅ Speed cameras (Phase 7): 3 fixed sites, flash + $75 fine by SableCam phone message over ≈100 km/h, per-camera + clean-minute cooldowns
+- ✅ Destructible roadside props (Phase 7, see §12) feed believable traffic chaos
+- ⬜ Lasting traffic-accident wreck state — not built: wrecks despawn with streaming; no persistent wreck registry
+- ⬜ Roadworks events — not built
+
+### 5. NPC & Pedestrian AI
+- ✅ Destinations (shops/benches/bus stops), sitting, phone-peds with night glow, dog walker, vendor, rain shelter behaviour, club drift
+- ✅ Witness/report pipeline (crimes are seen, reported, then wanted rises)
+- ✅ SableSocial (Phase 7): ambient NPC posts react to time, weather and district — and to the player's public crimes
+- 🟡 Conversations — equivalent: contextual barks + subtitle lines; no branching dialogue trees with ambient NPCs
+- ⬜ NPC memory of the player across days — not built: witnesses remember within an episode only
+- ⬜ Named-NPC daily schedules — not built: peds are ambient archetypes, not persistent individuals
+
+### 6. Police & Wanted
+- ✅ Line-of-sight + last-known-position search, witness delay, roadblocks, spike strips, helicopter (searchlight ≥3★ at night)
+- ✅ Surrender, two ways: hold-B on the street at 1★, and the Harbour Patrol HQ front desk (Phase 7) — same $100 fine, no cell
+- ✅ Disguise-lite heat decay (swap car/district while unseen), BUSTED/WASTED flows
+- 🟡 Star cap — equivalent: 5 stars with escalating tools (roadblocks, spikes, heli); a 6-star tier is a design review still open, not an engine limit
+- ⬜ Police boats / K9 units — not built: water pursuit is handled by the heli + shore rules
+- ⬜ Arrest animations — not built: BUSTED is a state + overlay; no cuffing animation rig
+
+### 7. Combat & Weapons
+- ✅ Fists, pistol, SMG (auto), shotgun (5-pellet) — per-weapon ammo, Q selector, recoil, muzzle light, crouch cover
+- ✅ Hit reactions (flinch/fall) and full crime/witness integration
+- ⬜ Melee weapons (bat/knife class) — not built
+- ⬜ Thrown weapons — not built
+- ⬜ Weapon mods/attachments — not built (vehicle mods exist)
+- ⬜ Free-aim aiming mode — by design: shots are facing-based hitscan; no aim-mode camera in the browser build
+
+### 8. Missions & Story
+- ✅ 6 story chapters, Ch.5 choice with payout consequences, 2 side arcs (Lina's Line, Voss's File), repeatables, debriefs, full subtitles
+- ✅ THE HARBOUR HEIST (Phase 7): two-stage chain from Old Elias after Ch.4 — Prep (getaway van check + 2 supply crates; finishing unseen banks the stealth bonus) → The Strongroom (hold-position 6 s drill, alarm trips 3★, escape + lose heat); payout $500 + $1,600 scaled by prep quality (+$150 unseen prep, +$400 clean-prep bonus)
+- ✅ Mission checkpoints (Phase 7): step checkpoints recorded live; failing offers retry-from-checkpoint on R with a refreshed clock, alongside full restart from the giver
+- ✅ Chapter replay (Phase 7): phone Story app replays completed chapters at 40% payout without touching progress
+- ✅ Mission stats (Phase 7): attempts + best clear times per mission in the Stats and Story apps
+- ⬜ Branching beyond the Ch.5 choice + heist prep quality — not built
+- ⬜ Post-story mission packs — not built
+
+### 9. Economy & Businesses
+- ✅ Cash + SableBank, dealership purchases, gun shops, pawn fencing, vehicle mods, food/heals
+- ✅ Buyable businesses (Phase 7): Harbour Wraps stall $3,500 (+$120/day), Northgate Car Wash $6,000 (+$220/day), Club Solace 50% share $12,000 (+$450/day) — hold-E buy points in the world, ownership + income shown in SableBank
+- ✅ Daily income tick (Phase 7): ONE consistent rule — the game-day rollover at 06:00 pays all business income to SableBank with a phone message; sleeping runs the same tick (guarded by day serial, never double-pays)
+- ✅ Second property (Phase 7): Coral Shores Apartment $5,000 — respawn-point choice, sleep point, garage-save point #2
+- ✅ Sleeping (Phase 7): E at the villa terrace or your apartment → fade to morning, full heal, businesses settle
+- 🟡 Shop hours — equivalent: shops close 23:00–07:00; the food vendor and garage keep harbour hours
+- ⬜ Stock market — not built
+- ⬜ Business employees/management sim — not built: income is automatic once owned
+
+### 10. Activities
+- ✅ Taxi jobs (Phase 7): fares hail the cab (waving ped + marker), ride along, fare by distance + tip for speed/cleanliness, 1–5★ passenger rating, earnings tracked
+- ✅ Delivery jobs (Phase 7): Lina's 3-leg chain formalised in the Jobs app — per-leg pay + $150 chain bonus
+- ✅ Street races (Phase 7): Docks Sprint, Bay Run (over the bridge), Northgate Loop — 3 AI rivals on the route, checkpoint sequence, live position, $600/$250/$100 prizes, optional $100 bet (win = $200 back), best times persisted
+- ✅ Collectible tokens, photo mode, swimming, island trips
+- ✅ Random world events — now 5 (Phase 7 adds the rushing ambulance to the clinic: lights flashing, Dispatch bark, live map marker)
+- ⬜ Fishing mini-game — not built: fish are ambient world life (Phase 7); no rod/catch loop
+- ⬜ Gym workouts — not built: stamina grows by use instead
+
+### 11. Smartphone / Interface
+- ✅ Core apps: Contacts, Messages, SableBank, Music, Maps, Garage, Stash, Stats, Camera, Settings
+- ✅ Jobs app (Phase 7): live taxi/delivery status, start-delivery button, race bet toggle, race best times, job earnings
+- ✅ Story app (Phase 7): chapter list with lock/complete state, replay buttons, side-arc + heist status
+- ✅ News app (Phase 7): Harbour Wire — headlines generated from the player's actual actions (mission completions, chases, purchases, the heist, weather turns), rolling persisted feed
+- ✅ Social app (Phase 7): SableSocial — ambient posts + reactions to public crimes (see §5)
+- ✅ GPS route (Phase 7): the big map draws a dashed route polyline (Manhattan routing on the road grid; bridge/causeway spines cross-district) to the active mission or job target
+- ✅ Game flow: staged loading, splash, spawn sweep, area cards, respawn mini-screens, door fades, no-select solid HUD, wind line in the weather chip tooltip + phone home
+- ⬜ In-phone internet/browser — not built: News + Social are the honest boundary; no fake web pages
+- ⬜ Camera gallery persistence — not built: photo mode captures the live frame; no saved gallery album
+
+### 12. World Simulation
+- ✅ Day cycle, 5-state weather, shop hours, rush hours, streaming activation + far-ped tick skip
+- ✅ Wind gusts (Phase 7): one slow gust value drives palm-frond sway, boat bob/pitch/roll, and a wind label (Calm/Breezy/Windy/Gusting) in the HUD chip + phone
+- ✅ Fish (Phase 7): visible fish circling and jumping at the pier, island shallows and Coral shore
+- ✅ Destructible props (Phase 7): crates/barrels/fences at the docks, yards, fuel points and the Lantern Park construction line — hit at speed in a car and they break into flying debris; repaired on the next game day
+- ✅ The daily tick (Phase 7): day rollover pays businesses and resets destructibles
+- ⬜ Seasons / snow — engine/art-blocked: Port Sable is a subtropical harbour city and no winter art set (snow materials, bare trees, ice) exists in the build
+- ⬜ Fully persistent world state — by design: the world resets per session; the player, economy, jobs, stats and story persist

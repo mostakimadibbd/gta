@@ -148,8 +148,10 @@ function PalmTree({ x, z, scale, lean }: { x: number; z: number; scale: number; 
     const d2 = (x - G.followPos.x) ** 2 + (z - G.followPos.z) ** 2;
     if (d2 > 65 ** 2) return;
     const t = clock.elapsedTime;
-    crown.current.rotation.z = Math.sin(t * 0.9 + x * 0.7 + z * 0.3) * 0.026;
-    crown.current.rotation.x = Math.cos(t * 0.7 + z * 0.5) * 0.02;
+    // Phase 7: frond sway scales with the slow wind-gust value
+    const sway = 0.5 + G.wind * 1.3;
+    crown.current.rotation.z = Math.sin(t * 0.9 + x * 0.7 + z * 0.3) * 0.026 * sway;
+    crown.current.rotation.x = Math.cos(t * 0.7 + z * 0.5) * 0.02 * sway;
   });
   return (
     <group position={[x, 0, z]} scale={scale}>
@@ -349,6 +351,75 @@ function NorthgateGroup({ night }: { night: number }) {
         {[-1.3, 1.3].map((x) => [16, 20, 24].map((dz) => (
           <mesh key={`${x}${dz}`} position={[ISLAND.x + x, -0.1, ISLAND.z + dz]}><cylinderGeometry args={[0.14, 0.14, 0.8, 6]} /><meshStandardMaterial color="#5d4630" /></mesh>
         )))}
+      </group>
+    </group>
+  );
+}
+
+/** Phase 7 frontages: Harbour Patrol HQ + Sable Clinic on the Docks
+ * strip, Marina Table + the buyable apartment block on the Coral
+ * waterfront, and the Northgate Car Wash arch. Blockers live in world.ts
+ * STATIC_BLOCKERS; doors/prompts in Interiors.tsx + Phase7.tsx. */
+function Phase7Frontages({ night }: { night: number }) {
+  const policeTex = useMemo(() => makeSignTexture("HARBOUR PATROL HQ", "#16283e", "#cfe0f2", 512), []);
+  const clinicTex = useMemo(() => makeSignTexture("SABLE CLINIC", "#eef2f0", "#c22e2e", 512), []);
+  const restTex = useMemo(() => makeSignTexture("MARINA TABLE", "#241a12", "#ffca7a", 512), []);
+  const aptTex = useMemo(() => makeSignTexture("CORAL SHORES APARTMENTS", "#17303a", "#ffe9c9", 512), []);
+  const washTex = useMemo(() => makeSignTexture("NORTHGATE CAR WASH", "#0f2c38", "#7fd8e8", 512), []);
+  const winMat = <meshStandardMaterial color="#ffe9a8" emissive="#ffca7a" emissiveIntensity={0.15 + night * 1.1} />;
+  return (
+    <group>
+      {/* Harbour Patrol HQ (-64, 106.5) — front faces the z=100 road */}
+      <group position={[-64, 0, 106.5]}>
+        <mesh position={[0, 3.5, 0]} castShadow receiveShadow><boxGeometry args={[12.2, 7, 8.2]} /><meshStandardMaterial color="#46586c" roughness={0.85} /></mesh>
+        <mesh position={[0, 7.15, 0]} castShadow><boxGeometry args={[12.6, 0.3, 8.6]} /><meshStandardMaterial color="#2c3644" roughness={0.8} /></mesh>
+        <mesh position={[0, 5.6, -4.16]} rotation={[0, Math.PI, 0]}><planeGeometry args={[8.4, 1.5]} /><meshStandardMaterial map={policeTex} emissive="#ffffff" emissiveMap={policeTex} emissiveIntensity={0.25 + night * 0.7} /></mesh>
+        {[-4.2, -1.4, 1.4, 4.2].map((x) => <mesh key={x} position={[x, 3.4, -4.13]}><boxGeometry args={[1.7, 1.6, 0.06]} />{winMat}</mesh>)}
+        <mesh position={[0, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#10161e" roughness={0.4} /></mesh>
+        <mesh position={[0, 7.6, 0]}><sphereGeometry args={[0.32, 10, 8]} /><meshStandardMaterial color="#3f7fae" emissive="#3f7fae" emissiveIntensity={0.4 + night * 1.6} /></mesh>
+      </group>
+      {/* Sable Clinic (88, 106.5) */}
+      <group position={[88, 0, 106.5]}>
+        <mesh position={[0, 3, 0]} castShadow receiveShadow><boxGeometry args={[12.2, 6, 8.2]} /><meshStandardMaterial color="#dfe5e2" roughness={0.7} /></mesh>
+        <mesh position={[0, 6.15, 0]} castShadow><boxGeometry args={[12.6, 0.3, 8.6]} /><meshStandardMaterial color="#9fb3ae" roughness={0.8} /></mesh>
+        <mesh position={[0, 4.9, -4.16]} rotation={[0, Math.PI, 0]}><planeGeometry args={[7.6, 1.35]} /><meshStandardMaterial map={clinicTex} emissive="#ffffff" emissiveMap={clinicTex} emissiveIntensity={0.2 + night * 0.5} /></mesh>
+        <mesh position={[3.9, 3.1, -4.13]}><boxGeometry args={[0.34, 1.1, 0.06]} /><meshStandardMaterial color="#c22e2e" emissive="#c22e2e" emissiveIntensity={0.25 + night * 0.6} /></mesh>
+        <mesh position={[3.9, 3.1, -4.13]}><boxGeometry args={[1.1, 0.34, 0.06]} /><meshStandardMaterial color="#c22e2e" emissive="#c22e2e" emissiveIntensity={0.25 + night * 0.6} /></mesh>
+        {[-4.2, -1.4, 1.4].map((x) => <mesh key={x} position={[x, 3.1, -4.13]}><boxGeometry args={[1.7, 1.5, 0.06]} />{winMat}</mesh>)}
+        <mesh position={[0, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#5c6a66" roughness={0.4} /></mesh>
+      </group>
+      {/* Marina Table restaurant (64, 218) — Coral waterfront */}
+      <group position={[64, 0, 218]}>
+        <mesh position={[0, 2.25, 0]} castShadow receiveShadow><boxGeometry args={[10, 4.5, 6.8]} /><meshStandardMaterial color="#7a5a3d" roughness={0.85} /></mesh>
+        <mesh position={[0, 4.7, 0]} rotation={[0, Math.PI / 4, 0]} castShadow><coneGeometry args={[6.4, 1.7, 4]} /><meshStandardMaterial color="#8a3b2a" flatShading /></mesh>
+        <mesh position={[0, 3.4, -3.46]} rotation={[0, Math.PI, 0]}><planeGeometry args={[7, 1.25]} /><meshStandardMaterial map={restTex} emissive="#ffffff" emissiveMap={restTex} emissiveIntensity={0.3 + night * 0.8} /></mesh>
+        {[-3.2, 3.2].map((x) => <mesh key={x} position={[x, 1.7, -3.43]}><boxGeometry args={[2.2, 1.7, 0.06]} /><meshStandardMaterial color="#ffd9a0" emissive="#ffca7a" emissiveIntensity={0.3 + night * 1.2} /></mesh>)}
+        <mesh position={[0, 1.05, -3.43]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#2b1c10" roughness={0.5} /></mesh>
+      </group>
+      {/* Coral Shores Apartments (36, 218) — the buyable second home */}
+      <group position={[36, 0, 218]}>
+        <mesh position={[0, 5.5, 0]} castShadow receiveShadow><boxGeometry args={[8, 11, 6.8]} /><meshStandardMaterial color="#cbb59a" roughness={0.9} /></mesh>
+        <mesh position={[0, 11.15, 0]} castShadow><boxGeometry args={[8.4, 0.3, 7.2]} /><meshStandardMaterial color="#8a6f52" roughness={0.85} /></mesh>
+        <mesh position={[0, 9.9, -3.46]} rotation={[0, Math.PI, 0]}><planeGeometry args={[6.4, 1.1]} /><meshStandardMaterial map={aptTex} emissive="#ffffff" emissiveMap={aptTex} emissiveIntensity={0.2 + night * 0.6} /></mesh>
+        {[2.2, 5.4, 8.6].flatMap((y) => [-2.2, 0, 2.2].map((x) => (
+          <mesh key={`${x}-${y}`} position={[x, y, -3.43]}><boxGeometry args={[1.3, 1.4, 0.06]} />{winMat}</mesh>
+        )))}
+        {[-2.2, 2.2].map((x) => <mesh key={x} position={[x, 3.6, -3.75]}><boxGeometry args={[2.4, 0.14, 0.7]} /><meshStandardMaterial color="#8a6f52" roughness={0.8} /></mesh>)}
+        <mesh position={[0, 1.05, -3.43]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#3a2c1c" roughness={0.5} /></mesh>
+      </group>
+      {/* Northgate Car Wash (-44, -218.5) + drive-through arch */}
+      <group position={[-44, 0, -218.5]}>
+        <mesh position={[0, 2, 0]} castShadow receiveShadow><boxGeometry args={[9, 4, 5.2]} /><meshStandardMaterial color="#2e5a68" roughness={0.8} /></mesh>
+        <mesh position={[0, 3.2, 2.66]}><planeGeometry args={[7.4, 1.3]} /><meshStandardMaterial map={washTex} emissive="#ffffff" emissiveMap={washTex} emissiveIntensity={0.25 + night * 0.7} /></mesh>
+        {[-3.4, 3.4].map((x) => (
+          <group key={x} position={[x, 0, 8.5]}>
+            <mesh position={[0, 2.1, 0]} castShadow><boxGeometry args={[0.4, 4.2, 0.4]} /><meshStandardMaterial color="#7fd8e8" metalness={0.4} roughness={0.4} /></mesh>
+          </group>
+        ))}
+        <mesh position={[0, 4.35, 8.5]} castShadow><boxGeometry args={[7.6, 0.5, 0.6]} /><meshStandardMaterial color="#17303a" roughness={0.7} /></mesh>
+        {[0.9, 1.7, 2.5].map((y) => (
+          <mesh key={y} position={[0, y, 6.2]}><boxGeometry args={[5.6, 0.5, 0.05]} /><meshStandardMaterial color="#7fd8e8" transparent opacity={0.4} roughness={0.2} /></mesh>
+        ))}
       </group>
     </group>
   );
@@ -1071,8 +1142,9 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
           </mesh>
         </group>
       ))}
-      {/* props */}
-      {props.map((p, i) => (
+      {/* props — Phase 7: crates are owned by the destructibles system
+          (components/Phase7.tsx), so they're filtered out here */}
+      {props.filter((p) => p.kind !== "crate").map((p, i) => (
         <mesh key={i} position={[p.x, p.kind === "bench" ? 0.35 : 0.4, p.z]} rotation={[0, p.rot, 0]} castShadow>
           <boxGeometry args={p.kind === "bench" ? [1.8, 0.15, 0.5] : p.kind === "crate" ? [1, 0.8, 1] : [0.35, 0.8, 0.35]} />
           <meshStandardMaterial color={p.kind === "hydrant" ? "#dc2626" : p.kind === "crate" ? "#a3764f" : "#6b4a2f"} flatShading />
@@ -1573,6 +1645,10 @@ export default function World({ theme, night, quality, stage }: { theme: GameThe
 
       {/* ======== Phase 6: Northgate + Sable Island (stage 3) ======== */}
       {stage >= 3 && <NorthgateGroup night={night} />}
+
+      {/* ======== Phase 7 frontages: police HQ + clinic (stage 1),
+           Coral restaurant + apartments (stage 2), car wash (stage 3) */}
+      {stage >= 1 && <Phase7Frontages night={night} />}
 
       {/* ======== Phase 3 distance depth: far skyline silhouette ring +
            a second, hazier bridge on the horizon ======== */}

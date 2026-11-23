@@ -98,6 +98,26 @@ it a different way — property, pride, then craft.*
 *Arc theme: two independent sources — Tamim's pages and Voss's
 manifest — converge on the same handwriting.*
 
+### The Harbour Heist — unlocks after Chapter 4 (call Old Elias) · Phase 7
+A two-night side chain, planned by Elias since the winter Tamim was
+taken. Solano's counting house keeps a strongroom at the East Yards
+warehouse: cash, bonds — and the dock fund Solano skimmed from the
+harbour's own ledger for years.
+
+1. **Prep Night** ($500, +$150 if unseen) — check the getaway Ferry Van
+   at the East Yards, then quietly collect two supply crates (crane
+   office; the wreck on Ferry Road). Finishing with no wanted level
+   marks the prep *clean*.
+2. **The Strongroom** ($1,600, +$400 if the prep was clean) — drill the
+   strongroom door on foot (6 seconds; the alarm trips the moment the
+   bit bites → 3★), then escape to the Ferry Quarter safehouse and lose
+   the heat before the door counts.
+
+Aftermath: the dock fund goes home to every family on the ledger,
+Tamim's name comes off the last page, and the Harbour Wire runs the
+story for days. Elias's closing line is the harbour's whole philosophy:
+*"The harbour provides, Kade. Tonight, so did you."*
+
 ## Ending
 The shipment is seized and the ledger published. Solano's empire is
 arrested in public; Tamim walks free into the dusk. Rayan keeps the car,
@@ -109,3 +129,10 @@ his line: the whole pier turns out at dawn — quiet-like. Family.)
 ## Repeatable jobs (post-/inter-story)
 Harbour Delivery · Checkpoint Sprint · Harbour Tokens — rotating paid
 work from "Dispatch", using the same systems as the campaign.
+Phase 7 adds open-world work outside the mission framework: **taxi
+fares** (Sable Cabs — hail, ride, tip, star rating), **Lina's delivery
+chain** (3 legs + chain bonus, started from the phone Jobs app) and
+**street races** (Docks Sprint · Bay Run · Northgate Loop, with an
+optional $100 bet). Completed chapters can be replayed at 40% payout
+from the phone Story app; failing any mission offers a
+retry-from-checkpoint on R.

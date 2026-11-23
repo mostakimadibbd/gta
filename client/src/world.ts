@@ -319,6 +319,12 @@ export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[]
   { x: 44, z: 117, hw: 7.6, hd: 4.6 },   // Club Solace exterior
   { x: 48, z: 218, hw: 5, hd: 3.4 },     // Coral Shores Goods (register shop)
   { x: 88, z: 218, hw: 5, hd: 3.4 },     // Coral Pawn shop
+  // ---- Phase 7 frontages (World.tsx Phase7Frontages) ----
+  { x: -64, z: 106.5, hw: 6.1, hd: 4.1 },  // Harbour Patrol HQ (police interior door)
+  { x: 88, z: 106.5, hw: 6.1, hd: 4.1 },   // Sable Clinic (clinic interior door)
+  { x: 64, z: 218, hw: 5, hd: 3.4 },       // Marina Table restaurant (Coral)
+  { x: 36, z: 218, hw: 4, hd: 3.4 },       // Coral Shores Apartment block
+  { x: -44, z: -218.5, hw: 4.5, hd: 2.6 }, // Northgate Car Wash back wall
   // ---- Phase 6 ----
   { x: 27, z: -222, hw: 3.5, hd: 5.5 },  // Sable Arms gun store (Northgate)
   { x: -52, z: 158, hw: 1.7, hd: 1.7 },  // Sable Island lighthouse
@@ -342,6 +348,65 @@ export const VAULT_SPOTS: { x: number; z: number; hw: number; hd: number }[] = [
 ];
 export const GARAGE_EXT_DOOR = { x: -25, z: 100.6 }; // prompt point, street side
 export const CLUB_EXT_DOOR = { x: 44, z: 110.2 };    // prompt point, beach side
+// ---- Phase 7 exterior doors (frontages rendered in World.tsx) ----
+export const POLICE_EXT_DOOR = { x: -64, z: 100.6 };     // Harbour Patrol HQ, Docks strip
+export const CLINIC_EXT_DOOR = { x: 88, z: 100.6 };      // Sable Clinic, Docks strip east
+export const RESTAURANT_EXT_DOOR = { x: 64, z: 213.2 };  // Marina Table, Coral waterfront
+export const APARTMENT_DOOR = { x: 36, z: 213.2 };       // Coral Shores Apartment (buyable)
+export const CAR_WASH = { x: -44, z: -210 };             // Northgate Car Wash (buyable business)
+export const CLUB_SHARE_POINT = { x: 54, z: 112 };       // Club Solace share buy point
+
+// ---- Phase 7 world sweep: toll booth on the Coral causeway (bridge
+// deck at x = 60; the booth sits in the corridor, the barrier arm is a
+// Phase7 visual — driving through slowly auto-charges $5) ----
+export const TOLL = { x: 60, z: 150 };
+// ---- Speed cameras: roadside poles; the fine logic lives in Phase7.
+export const SPEED_CAMERAS: { x: number; z: number; road: string }[] = [
+  { x: 100, z: -13.5, road: "Lantern straight (z −20)" },
+  { x: -53.5, z: 40, road: "Ferry Quarter climb (x −60)" },
+  { x: 26.5, z: -60, road: "Gull Heights run (x 20)" },
+];
+export const SPEED_LIMIT_U = 28; // ≈ 100 km/h in world units/s
+/** Destructible props (Phase 7): smashed by the player's car at speed,
+ * debris flies, they respawn on the next game day. NOT blockers. */
+export interface Destructible { x: number; z: number; kind: "crate" | "barrel" | "fence"; rot: number; }
+export const DESTRUCTIBLES: Destructible[] = [
+  ...props.filter((p) => p.kind === "crate").map((p) => ({ x: p.x, z: p.z, kind: "crate" as const, rot: p.rot })),
+  { x: 30, z: 112, kind: "barrel", rot: 0 }, { x: 36.5, z: 112.5, kind: "barrel", rot: 0 },
+  { x: -40, z: 112, kind: "barrel", rot: 0 }, { x: 58, z: 100, kind: "barrel", rot: 0 },
+  { x: -56, z: 156, kind: "barrel", rot: 0 }, { x: 27.5, z: 95, kind: "barrel", rot: 0 },
+  { x: 66, z: 42, kind: "barrel", rot: 0 }, { x: 100, z: 30, kind: "crate", rot: 0.4 },
+  { x: 102, z: 33, kind: "crate", rot: 0.9 }, { x: -64, z: 48, kind: "crate", rot: 0.2 },
+  // construction-style fence line along Lantern Park's south edge
+  ...[68, 72, 76, 80, 84, 88, 92].map((x) => ({ x, z: -63, kind: "fence" as const, rot: 0 })),
+];
+
+/** Manhattan GPS route on the road grid (big-map polyline, Phase 7):
+ * start → nearest cross street → target street → target. Cross-bay and
+ * cross-causeway trips route via the bridge / causeway spines. */
+export function routePoints(x0: number, z0: number, x1: number, z1: number): [number, number][] {
+  const pts: [number, number][] = [[x0, z0]];
+  const push = (x: number, z: number) => {
+    const last = pts[pts.length - 1];
+    if (!last || Math.abs(last[0] - x) > 0.5 || Math.abs(last[1] - z) > 0.5) pts.push([x, z]);
+  };
+  const inMain = (x: number, z: number) => Math.abs(x) <= 126 && z >= -126 && z <= 130;
+  const nearRoad = (v: number) => ROAD_COORDS.reduce((a, c) => (Math.abs(c - v) < Math.abs(a - v) ? c : a), ROAD_COORDS[0]);
+  if (inMain(x0, z0) && inMain(x1, z1)) {
+    const zr = nearRoad(z0), xr = nearRoad(x1);
+    push(x0, zr); push(xr, zr); push(xr, z1);
+  } else if (inCoral(x1, z1) && !inCoral(x0, z0)) {
+    push(60, 112); push(60, 214); push(x1, 224);
+  } else if (inCoral(x0, z0) && !inCoral(x1, z1)) {
+    push(60, 214); push(60, 112); push(x1, nearRoad(z1));
+  } else if ((inNorth(x1, z1) || z1 < -130) && !inNorth(x0, z0)) {
+    push(-20, -110); push(-20, -196); push(x1, z1);
+  } else if (inNorth(x0, z0) && !inNorth(x1, z1)) {
+    push(-20, -196); push(-20, -110); push(x1, nearRoad(z1));
+  }
+  push(x1, z1);
+  return pts;
+}
 export const MANSION_GATE = { x: MANSION.x, z: MANSION.z + 8.2 };
 export const MANSION_PRICE = 7500;
 /** Mansion driveway pad — park here (owned) and the car is garage-saved. */
@@ -350,10 +415,15 @@ export const MANSION_DRIVE = { x: MANSION.x + 4.4, z: MANSION.z + 4.4, hw: 3.6, 
 // ---- Phase 3: enterable interiors live in an offset pocket (z ≈ -175),
 // far outside the city grid. Player movement clamps to the room while
 // G.interior is set, so city collision never applies there.
+export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant";
 export interface InteriorDef { cx: number; cz: number; w: number; d: number; spawnIn: [number, number]; exitDoor: [number, number]; }
-export const INTERIORS: Record<"garage" | "club", InteriorDef> = {
+export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   garage: { cx: 0, cz: -175, w: 18, d: 13, spawnIn: [0, -171.2], exitDoor: [0, -169.4] },
   club: { cx: 52, cz: -175, w: 22, d: 15, spawnIn: [52, -170.8], exitDoor: [52, -168.6] },
+  // ---- Phase 7 interiors round: police HQ, clinic, restaurant ----
+  police: { cx: 104, cz: -175, w: 20, d: 14, spawnIn: [104, -171.4], exitDoor: [104, -169.2] },
+  clinic: { cx: 140, cz: -175, w: 16, d: 12, spawnIn: [140, -172], exitDoor: [140, -170] },
+  restaurant: { cx: 172, cz: -175, w: 18, d: 13, spawnIn: [172, -171.6], exitDoor: [172, -169.6] },
 };
 
 export function isBlocked(x: number, z: number, radius: number): boolean {

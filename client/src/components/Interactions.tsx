@@ -224,7 +224,17 @@ export default function Interactions() {
           prompt = `E — Sable Arms: ${gi.label} $${gi.price} (tap E browse · hold E buy)`;
         } else if (atVendor) {
           // street food — the vendor keeps harbour hours: always open (B3)
-          if (G.health >= 99.5) { prompt = "Harbour Wraps — you're full. The wraps keep till late."; warn = true; }
+          // Phase 7: full belly but tired legs → the $5 cooler drink
+          if (G.health >= 99.5 && G.stamina < 99 && G.cash >= 5) {
+            prompt = "E — Harbour cooler drink ($5) — refills stamina";
+            act = () => {
+              G.cash -= 5; G.stamina = 100;
+              G.eatingUntil = t + 1.4;
+              sfx.eat();
+              toast("Ice-cold harbour cooler — stamina refilled.");
+            };
+          }
+          else if (G.health >= 99.5) { prompt = "Harbour Wraps — you're full. The wraps keep till late."; warn = true; }
           else {
             prompt = "E — Harbour wrap ($10) — heals 40";
             act = () => {

@@ -5,9 +5,13 @@
 // settings: shake, FOV, post FX, shadows, character).
 import { useEffect, useState } from "react";
 import { CONTACTS, phoneMsgs, onPhoneMsgs } from "../game/phone";
-import { G, persistSettings, stashTotal } from "../game/store";
+import { G, persistSettings, stashTotal, windLabel } from "../game/store";
 import { CAR_MODELS } from "../world";
 import { M } from "../game/missionState";
+import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
+import { J, jobStats, fmtTime, RACES } from "../game/jobs";
+import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal } from "../game/economy";
+import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
 import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
 
@@ -21,11 +25,15 @@ interface Props {
   onPhotoMode: () => void;
   onChangeCharacter: () => void;
 }
-type AppId = "home" | "contacts" | "messages" | "bank" | "music" | "settings" | "garage" | "stash" | "stats";
+type AppId = "home" | "contacts" | "messages" | "bank" | "music" | "settings" | "garage" | "stash" | "stats" | "jobs" | "story" | "news" | "social";
 const APPS: { id: AppId | "map" | "camera"; icon: string; label: string }[] = [
   { id: "contacts", icon: "◉", label: "Contacts" },
   { id: "messages", icon: "✉", label: "Messages" },
   { id: "bank", icon: "$", label: "SableBank" },
+  { id: "jobs", icon: "⚑", label: "Jobs" },
+  { id: "story", icon: "✦", label: "Story" },
+  { id: "news", icon: "≡", label: "News" },
+  { id: "social", icon: "◍", label: "Social" },
   { id: "music", icon: "♪", label: "Music" },
   { id: "map", icon: "⌖", label: "Maps" },
   { id: "garage", icon: "▣", label: "Garage" },
@@ -46,6 +54,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
   const [, setTick] = useState(0);
   const [playing, setPlaying] = useState(isMenuThemePlaying());
   useEffect(() => onPhoneMsgs(() => setTick((v) => v + 1)), []);
+  useEffect(() => onFeed(() => setTick((v) => v + 1)), []);
   useEffect(() => {
     if (!open) return;
     setApp("home"); setPlaying(isMenuThemePlaying());
@@ -74,7 +83,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
         {app === "home" && (
           <div className="phone-home">
             <div className="phone-clock">{gameClock()}</div>
-            <div className="phone-date">Port Sable · {M.storyDone ? "Story complete" : `Chapter ${Math.min(6, M.storyIndex + 1)} of 6`}</div>
+            <div className="phone-date">Port Sable · {M.storyDone ? "Story complete" : `Chapter ${Math.min(6, M.storyIndex + 1)} of 6`} · {G.weather} · wind {windLabel(G.wind).toLowerCase()}</div>
             <div className="phone-apps">
               {APPS.map((a) => (
                 <button key={a.label} type="button" className="phone-app" onClick={() => go(a.id)}>
@@ -116,7 +125,76 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>Lifetime earnings</span><b>${G.lifetimeEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Fines & hospital bills paid</span><b>−${G.finesPaid.toLocaleString()}</b></div>
             <div className="bank-row"><span>Harbour tokens banked</span><b>{G.tokens} / 6</b></div>
-            <p className="phone-tip">Solano's ledger can't touch this account. Probably.</p>
+            <h3 className="phone-subhead">Your businesses</h3>
+            {BUSINESSES.map((b) => (
+              <div key={b.id} className="bank-row"><span>{b.name}</span><b>{ECO.owned.includes(b.id) ? `+$${b.income}/day` : `$${b.price.toLocaleString()}`}</b></div>
+            ))}
+            <div className="bank-row"><span>{APARTMENT.name}</span><b>{ECO.ownsApartment ? "Owned 🔑" : `$${APARTMENT.price.toLocaleString()}`}</b></div>
+            <div className="bank-row"><span><b>Daily income (paid each morning)</b></span><b>${dailyIncomeTotal().toLocaleString()}</b></div>
+            <p className="phone-tip">Income lands with a SableBank message every game-morning — or when you sleep at home. Solano's ledger can't touch this account. Probably.</p>
+          </div>
+        )}
+        {app === "jobs" && (
+          <div className="phone-page">
+            <h3>Jobs — Sable Cabs &amp; Deliveries</h3>
+            <div className="bank-row"><span>Taxi status</span><b>{J.taxiPhase === "idle" ? "Off duty" : J.taxiPhase === "pickup" ? "Fare hailing — follow the marker" : "Passenger aboard — drive to the marker"}</b></div>
+            <p className="phone-tip">Taxi work: take the yellow Sable Cab at Market Row and drive. Fares hail you automatically — stop beside them, then drive clean and quick for tips.</p>
+            <div className="bank-row"><span>Delivery chain</span><b>{J.delPhase === "idle" ? "Not running" : J.delPhase === "pickup" ? `Leg ${J.delLeg + 1}/3 — pick up at the marker` : `Leg ${J.delLeg + 1}/3 — drop off at the marker`}</b></div>
+            <button type="button" className="phone-row" onClick={() => { J.wantDelivery = true; onClose(); }}>
+              <span><b>Start delivery run</b><small>3 legs from Lina's network · ~$110 a leg + $150 chain bonus</small></span><span>›</span>
+            </button>
+            <h3 className="phone-subhead">Street races</h3>
+            <div className="bank-row"><span>Race bets ($100 stake, win = $200 back)</span>
+              <button type="button" className="phone-toggle" onClick={() => { J.bets = !J.bets; setTick((v) => v + 1); }}>{J.bets ? "On" : "Off"}</button></div>
+            {RACES.map((r) => (
+              <div key={r.id} className="bank-row"><span>{r.name}</span><b>{jobStats.bestTimes[r.id] ? `best ${fmtTime(jobStats.bestTimes[r.id])}` : "no time yet"}</b></div>
+            ))}
+            <h3 className="phone-subhead">Earnings</h3>
+            <div className="bank-row"><span>Taxi fares</span><b>{jobStats.taxiFares} · ${jobStats.taxiEarned.toLocaleString()} · best tip ${jobStats.taxiBestTip}</b></div>
+            <div className="bank-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
+            <div className="bank-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
+          </div>
+        )}
+        {app === "story" && (
+          <div className="phone-page">
+            <h3>Story — chapters &amp; replays</h3>
+            <p className="phone-note">Replay a finished chapter for 40% of its payout. Your progress never moves.</p>
+            {STORY_MISSIONS.map((mDef, i) => {
+              const done = M.storyDone || i < M.storyIndex;
+              const current = !M.storyDone && i === M.storyIndex;
+              const st = M.stats[mDef.id];
+              return (
+                <div key={mDef.id} className="phone-row">
+                  <span><b>{done ? "✓" : current ? "▶" : "🔒"} Ch.{i + 1} {mDef.title}</b><small>{done ? `Best clear ${st?.best ? fmtTime(st.best) : "—"} · ${st?.attempts ?? 0} attempt${(st?.attempts ?? 0) === 1 ? "" : "s"}` : current ? "Your current chapter — find the giver in the world" : "Locked — finish earlier chapters"}</small></span>
+                  {done && <button type="button" className="phone-toggle" onClick={() => { G.requestReplayId = mDef.id; onClose(); }}>Replay 40%</button>}
+                </div>
+              );
+            })}
+            <h3 className="phone-subhead">Side stories</h3>
+            <div className="bank-row"><span>Lina's Line</span><b>{M.side.lina}/3</b></div>
+            <div className="bank-row"><span>Voss's File</span><b>{M.side.voss}/3</b></div>
+            <div className="bank-row"><span>The Harbour Heist</span><b>{M.side.heist >= 2 ? "Done 🏆" : M.side.heist === 1 ? "Prepped — call Elias" : M.storyIndex >= 4 || M.storyDone ? "Call Old Elias" : "After Chapter 4"}</b></div>
+            {SIDE_MISSIONS.filter((mDef) => (M.stats[mDef.id]?.best ?? 0) > 0).map((mDef) => (
+              <div key={mDef.id} className="bank-row"><span>{mDef.title}</span><b>best {fmtTime(M.stats[mDef.id].best)}</b></div>
+            ))}
+          </div>
+        )}
+        {app === "news" && (
+          <div className="phone-page">
+            <h3>Harbour Wire — News</h3>
+            {newsFeed.map((n, i) => (
+              <div key={i} className="phone-msg"><b>{n.title}</b><p>{n.body}</p></div>
+            ))}
+            <p className="phone-tip">Headlines follow what actually happens in Port Sable — including you.</p>
+          </div>
+        )}
+        {app === "social" && (
+          <div className="phone-page">
+            <h3>SableSocial</h3>
+            {socialFeed.map((n, i) => (
+              <div key={i} className="phone-msg"><b>{n.title}</b><p>{n.body}</p></div>
+            ))}
+            <p className="phone-tip">The harbour talks. Cause a scene and you'll read about it here.</p>
           </div>
         )}
         {app === "stats" && (
@@ -138,6 +216,16 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="phone-row"><span>Fines &amp; fees paid</span><b>${G.finesPaid.toLocaleString()}</b></div>
             <div className="phone-row"><span>Cars in garages</span><b>{G.storedCars.length}</b></div>
             <div className="phone-row"><span>Weapons owned</span><b>{Object.values(G.weaponOwned).filter(Boolean).length}/3</b></div>
+            <h3 className="phone-subhead">Honest work</h3>
+            <div className="phone-row"><span>Taxi</span><b>{jobStats.taxiFares} fares · ${jobStats.taxiEarned.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
+            <div className="phone-row"><span>Business income</span><b>${dailyIncomeTotal().toLocaleString()}/day</b></div>
+            <h3 className="phone-subhead">Mission record</h3>
+            {[...STORY_MISSIONS, ...SIDE_MISSIONS].filter((mDef) => (M.stats[mDef.id]?.attempts ?? 0) > 0).map((mDef) => (
+              <div key={mDef.id} className="phone-row"><span>{mDef.title}</span><b>{M.stats[mDef.id].attempts} tries{M.stats[mDef.id].best ? ` · best ${fmtTime(M.stats[mDef.id].best)}` : ""}</b></div>
+            ))}
+            {Object.keys(M.stats).length === 0 && <p className="phone-tip">No missions attempted yet.</p>}
           </div>
         )}
 

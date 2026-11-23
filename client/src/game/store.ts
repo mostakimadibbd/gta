@@ -9,6 +9,7 @@ import type { VehicleState } from "../physics/GamePhysics";
 export interface NpcCar extends VehicleState {
   axis: "x" | "z"; dir: 1 | -1; lane: number; color: string; stopped: number; fleeing: number;
   side: "main" | "coral" | "north"; steerVis: number; pitch: number; damage: number;
+  svc?: "ambulance" | "fire"; // Phase 7: emergency-service traffic variants
   // ---- Phase 6: per-car kind + traffic-light / rush-hour / bus state ----
   kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
   rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
@@ -85,7 +86,14 @@ export const G = {
   timeS: 0, // elapsed game clock (set by GameSystems every frame)
   firstPerson: false,
   swimming: false,
-  interior: "" as "" | "garage" | "club",
+  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant",
+  // ---- Phase 7: wind, sitting, replay requests, camera flash, boosts ----
+  wind: 0.5, // 0..1 slow gust value — palm sway, boat bob, HUD/phone label
+  sitting: false, // player parked on a bench / chair (Player pose + lock)
+  sitSpot: null as null | { x: number; z: number; heading: number },
+  requestReplayId: "", // phone Story app → App starts a chapter replay
+  camFlashAt: -9, // nowS() of the last speed-camera flash (App overlay)
+  staminaBoostUntil: 0, // restaurant meal: stamina drain halved until G.timeS
   armed: false,
   ammo: 0, // legacy mirror of the SELECTED weapon's ammo (HUD compat)
   // ---- Phase 6: stamina / skills / weapon inventory / misc state ----
@@ -134,6 +142,8 @@ export const G = {
   enterAnimT: 0, // seconds left of the enter-car slide (Player sets, Vehicle waits)
 };
 export function toast(msg: string) { G.toast = msg; G.toastAt = nowS(); }
+/** Human label for the Phase 7 wind value (HUD chip + phone home). */
+export const windLabel = (w: number) => (w < 0.3 ? "Calm" : w < 0.55 ? "Breezy" : w < 0.8 ? "Windy" : "Gusting");
 /** Ambient subtitle bark — witness shouts, police radio, system voices. */
 export function bark(who: string, text: string) { G.bark = { who, text, at: nowS() }; }
 
@@ -220,8 +230,15 @@ export function processPendingCrimes() {
 }
 
 function respawnPoint() {
-  // villa owners wake up at home; everyone else gets the hospital corner
-  if (G.ownsMansion) G.playerPos.set(MANSION.x + 9, 0, MANSION.z + 9);
+  // Phase 7: the chosen home wins — the Coral apartment (36, 208) when
+  // it's the set home and owned, else the villa, else the hospital corner
+  let home = "villa"; let ownsApt = false;
+  try {
+    home = localStorage.getItem("harborfall-home") ?? "villa";
+    ownsApt = localStorage.getItem("harborfall-apartment") === "1";
+  } catch { /* ignore */ }
+  if (home === "apartment" && ownsApt) G.playerPos.set(36, 0, 208);
+  else if (G.ownsMansion) G.playerPos.set(MANSION.x + 9, 0, MANSION.z + 9);
   else G.playerPos.set(-100, 0, 100);
   G.interior = "";
 }

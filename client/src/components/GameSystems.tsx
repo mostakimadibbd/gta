@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, persistSkills, bark, toast } from "../game/store";
-import { M, currentTarget, endMission, persist, effectivePayout } from "../game/missionState";
+import { M, currentTarget, endMission, persist, effectivePayout, recordBest } from "../game/missionState";
 import { gates, type QualityTier } from "../game/quality";
 import { pushPhoneMsg } from "../game/phone";
+import { pushNews } from "../game/feed";
 import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, NORTH_ROAD_X, NORTH_ROAD_Z, BUS_STOPS, REGISTERS, PAWN_SHOP, DEALERSHIP, VENDOR, districtAt, isBlocked, inNorth, onIsland, MANSION_DRIVE, groundYAt, CAR_MODELS, props as WORLD_PROPS } from "../world";
 import { lightAllows } from "../game/lights";
 import { glowTexture } from "../textures";
@@ -128,6 +129,17 @@ function initWorld() {
     G.traffic.push({
       x: 60, z: 0, heading: 0, speed: 0, axis: "z", dir: 1, lane: 0, color: "#2e7fb8", stopped: 0, fleeing: 0,
       side: "main", steerVis: 0, pitch: 0, damage: 0, kind: "bus", fixed: 60, busRoute: true, wp: 1, stopT: 0, blockedT: 0, dormant: false,
+    });
+    // ---- Phase 7: emergency-service traffic — an ambulance looping the
+    // hospital road and a fire truck on the east climb (lights off in
+    // normal service; the rushing ambulance is a Phase7 world event) ----
+    G.traffic.push({
+      x: -20, z: 102.8, heading: Math.PI / 2, speed: 7, axis: "x", dir: 1, lane: 2.8, color: "#e8ecef", stopped: 0, fleeing: 0,
+      side: "main", steerVis: 0, pitch: 0, damage: 0, kind: "van", fixed: 100, blockedT: 0, dormant: false, svc: "ambulance",
+    });
+    G.traffic.push({
+      x: 102.8, z: -30, heading: 0, speed: 7, axis: "z", dir: 1, lane: 2.8, color: "#c22e2e", stopped: 0, fleeing: 0,
+      side: "main", steerVis: 0, pitch: 0, damage: 0, kind: "van", fixed: 100, blockedT: 0, dormant: false, svc: "fire",
     });
     // ---- Phase 6: rush-hour reserve — parked at kerbs off-peak, they
     // pull out and join the flow at the morning/evening peaks (A2) ----
@@ -256,6 +268,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     buildHumanoid({ top: "#e8e4da", bottom: "#5c4a32", skin: "#8d5524", hair: "#14100e", topStyle: "tank", gender: "f", hairStyle: "ponytail" }),
     buildHumanoid({ top: "#c9a227", bottom: "#274268", skin: "#ffdbac", hair: "#4a2f1a", topStyle: "varsity", gender: "m", hairStyle: "flat" }),
   ], []);
+  const drillT = useRef(0); // Phase 7: heist strongroom drill progress
   const eventRefs = useRef<Array<THREE.Group | null>>([]);
   const eventCarRef = useRef<THREE.Group>(null);
   const eventState = useRef<{ kind: string; x: number; z: number; heading: number; until: number; barked: boolean } | null>(null);
@@ -769,13 +782,31 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         if (tokenCountRef.current >= 6) completeMission();
       } else {
         const tgt = currentTarget();
-        if (tgt) {
+        // ---- Phase 7: the Harbour Heist strongroom drill — hold the
+        // drill point on foot for 6 s; the alarm trips as you start ----
+        if (def.id === "heist2" && M.step === 0 && tgt && !G.driving) {
+          const dDrill = Math.hypot(tgt[0] - px, tgt[1] - pz);
+          if (dDrill < 7) {
+            drillT.current += dt;
+            if (drillT.current > 0.1 && G.wanted < 3) { G.wanted = 3; G.wantedCooldown = 0; sfx.alarm(); cb.current.popup("The alarm trips — the patrol is coming!"); }
+            G.hold = { label: "Drilling the strongroom…", progress: Math.min(1, drillT.current / 6) };
+            if (drillT.current >= 6) {
+              drillT.current = 0; G.hold = null; M.step = 1; M.checkpointStep = 1; sfx.cash();
+              cb.current.popup("Strongroom open — the dock fund is yours. RUN.");
+              pushNews("Strongroom drilled at the East Yards", "Alarms sounded across the Yards as the Solano counting-house strongroom was drilled open. The patrol calls it 'professional work'.");
+            }
+          } else {
+            drillT.current = Math.max(0, drillT.current - dt * 2);
+            if (G.hold?.label.startsWith("Drilling")) G.hold = null;
+          }
+        }
+        if (tgt && !(def.id === "heist2" && M.step === 0)) {
           G.objective = { x: tgt[0], z: tgt[1], label: def.objectiveText, kind: def.kind };
           const d2 = (tgt[0] - px) ** 2 + (tgt[1] - pz) ** 2;
           const radius = def.kind === "collect" ? 3.4 : 7;
           if (d2 < radius ** 2) {
             if (def.kind === "escape" && G.wanted > 0) { /* must lose heat first — HUD text explains */ }
-            else if (M.step < def.targets.length - 1) { M.collected = new Set(M.collected).add(M.step); M.step += 1; sfx.pickup(); cb.current.popup(def.kind === "collect" ? "Ledger page recovered!" : "Checkpoint!"); }
+            else if (M.step < def.targets.length - 1) { M.collected = new Set(M.collected).add(M.step); M.step += 1; M.checkpointStep = M.step; sfx.pickup(); cb.current.popup(def.kind === "collect" ? "Ledger page recovered!" : "Checkpoint!"); }
             else completeMission();
           }
         }
@@ -786,8 +817,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     {
       const gs = garageSave.current;
       const car = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
-      const onDrive = !!car && G.ownsMansion && Math.abs(car.state.speed) < 0.5 &&
-        Math.abs(car.state.x - MANSION_DRIVE.x) < MANSION_DRIVE.hw && Math.abs(car.state.z - MANSION_DRIVE.z) < MANSION_DRIVE.hd;
+      // Phase 7: the Coral apartment's parking spot is garage-save point #2
+      const ownsApt = (() => { try { return localStorage.getItem("harborfall-apartment") === "1"; } catch { return false; } })();
+      const onDrive = !!car && Math.abs(car.state.speed) < 0.5 &&
+        ((G.ownsMansion && Math.abs(car.state.x - MANSION_DRIVE.x) < MANSION_DRIVE.hw && Math.abs(car.state.z - MANSION_DRIVE.z) < MANSION_DRIVE.hd) ||
+          (ownsApt && Math.abs(car.state.x - 36) < 4 && Math.abs(car.state.z - 208) < 5));
       if (onDrive && car) {
         gs.timer += dt;
         const key = `${G.activeCarId}|${car.state.x.toFixed(1)}|${car.state.z.toFixed(1)}`;
@@ -800,7 +834,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
             G.storedCars.push({ kind: car.kind, color: car.color, name: CAR_MODELS[car.kind].name, damage: Math.round(car.damage), fuel: Math.round(car.fuel), brokenWindow: car.brokenWindow, tuneLvl: car.tuneLvl ?? 0, brakeLvl: car.brakeLvl ?? 0, flatTyre: car.flatTyre ?? false });
             persistStoredCars();
           }
-          cb.current.popup("Car saved in your villa garage — it'll be here next visit.");
+          cb.current.popup("Car saved in your garage — it'll be here next visit.");
           sfx.cash();
         }
       } else gs.timer = 0;
@@ -815,7 +849,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     // health regen (A7) + spike strips (A5) + random events (B2) ========
     {
       const v = vitals.current;
-      const poolMul = G.skills.stamina >= 50 ? 0.8 : 1; // +25% effective pool
+      // ---- Phase 7: slow wind gusts (two beating sines) + meal boost ----
+      G.wind = THREE.MathUtils.clamp(0.45 + 0.35 * Math.sin(t * 0.045) + 0.2 * Math.sin(t * 0.13 + 1.7), 0.05, 1);
+      const poolMul = (G.skills.stamina >= 50 ? 0.8 : 1) * (t < G.staminaBoostUntil ? 0.5 : 1);
       let drain = 0;
       if (G.playerSprinting) drain = 14;
       else if (G.swimming) drain = 9;
@@ -937,7 +973,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     function failMission(reason: string) {
       if (!M.active) return;
       G.missionResult = { ok: false, title: M.active.title, reward: 0, items: 0, timeLeft: 0, reason, at: t };
-      sfx.fail(); cb.current.banner(`Mission failed — ${reason}`, false); endMission(); cb.current.event("missionEnd");
+      // Phase 7: remember the checkpoint for an R-key retry; a failed
+      // replay simply ends the replay (progress untouched either way)
+      M.lastFailed = { def: M.active, step: M.checkpointStep };
+      M.replayId = "";
+      sfx.fail(); cb.current.banner(`Mission failed — ${reason} Press R to retry from checkpoint ${M.checkpointStep + 1}, or restart from the giver.`, false); endMission(); cb.current.event("missionEnd");
     }
     function completeMission() {
       const def = M.active; if (!def) return;
@@ -948,6 +988,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       G.missionResult = { ok: true, title: def.title, reward: pay, items: 0, timeLeft: Math.max(0, Math.round(M.timer)), reason: "", at: t };
       G.cash += pay; G.lifetimeEarned += pay;
       pushPhoneMsg("SableBank", `💰 $${pay} received — ${def.title}. Balance: $${G.cash}.`);
+      // Phase 7: best-time stats + a News headline for real completions
+      recordBest(def.id, def.timeLimit - M.timer);
+      const isReplay = M.replayId === def.id;
+      M.replayId = ""; M.lastFailed = null;
+      if (!isReplay) pushNews(`Harbour Wire: ${def.title} — done`, def.story
+        ? `Word on the docks is another chapter closed in the Kade–Solano feud. $${pay} changed hands and nobody official will say a word.`
+        : `Local work wrapped up quietly in Port Sable — $${pay} paid, no questions asked.`);
       persist();
       sfx.complete(); cb.current.popup(`+$${pay}`);
       cb.current.banner(`Mission complete: ${def.title} +$${pay}`, true);
@@ -955,14 +1002,18 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const side = def.side;
       endMission();
       cb.current.dialogue(outro, () => {
+        if (isReplay) { cb.current.event("missionEnd"); return; } // replays never move progress
         if (wasStory) {
           M.storyIndex += 1;
           if (M.storyIndex >= 6) { M.storyDone = true; persist(); cb.current.storyFinished(); }
           persist(); cb.current.event("missionEnd");
         } else if (side) {
-          M.side[side] = Math.min(3, M.side[side] + 1);
+          const cap = side === "heist" ? 2 : 3;
+          M.side[side] = Math.min(cap, M.side[side] + 1);
+          if (side === "heist" && M.side.heist === 1) M.heistClean = G.wanted === 0; // prep seen or unseen
           persist();
-          if (M.side[side] >= 3) pushPhoneMsg(side === "lina" ? "Lina Park" : "Det. Mara Voss", side === "lina" ? "That's the whole line done, Rayan. The garage owes you — come by any time." : "File closed and filed. The parole board has everything. Thank you, Kade.");
+          if (side === "heist" && M.side.heist >= 2) pushPhoneMsg("Old Elias", "It's done, lad. The dock fund's home and Tamim's name is off the last page. The harbour provides.");
+          else if (M.side[side] >= 3) pushPhoneMsg(side === "lina" ? "Lina Park" : "Det. Mara Voss", side === "lina" ? "That's the whole line done, Rayan. The garage owes you — come by any time." : "File closed and filed. The parole board has everything. Thank you, Kade.");
           cb.current.event("missionEnd");
         } else { M.repeatIndex += 1; persist(); cb.current.event("missionEnd"); }
       });
@@ -1152,6 +1203,22 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       {stage >= 4 && G.traffic.map((c, i) => (
         <group key={i} ref={(n) => { trafficRefs.current[i] = n; }} position={[c.x, 0, c.z]}>
           <CarBody kind={c.kind ?? TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} steerRef={trafficSteerRefs[i]} liveDamage={() => G.traffic[i].damage} brakeRef={trafficBrakeRefs.current[i]} beams />
+          {/* Phase 7: emergency-service dressing on the van bodies —
+              light bar (dark in normal service) + ambulance cross /
+              fire ladder on the roof */}
+          {c.svc === "ambulance" && (
+            <group>
+              <mesh position={[0, 2.02, -0.2]}><boxGeometry args={[1.1, 0.14, 0.4]} /><meshStandardMaterial color="#dfe5ea" emissive="#ff4444" emissiveIntensity={0.25} /></mesh>
+              <mesh position={[0, 2.06, 0.9]}><boxGeometry args={[0.52, 0.05, 0.17]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+              <mesh position={[0, 2.06, 0.9]}><boxGeometry args={[0.17, 0.05, 0.52]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+            </group>
+          )}
+          {c.svc === "fire" && (
+            <group>
+              <mesh position={[0, 2.02, -0.2]}><boxGeometry args={[1.1, 0.14, 0.4]} /><meshStandardMaterial color="#5c1616" emissive="#ff3333" emissiveIntensity={0.25} /></mesh>
+              <mesh position={[0, 2.12, 0.4]}><boxGeometry args={[0.5, 0.08, 4.4]} /><meshStandardMaterial color="#c8ccd2" metalness={0.7} roughness={0.35} /></mesh>
+            </group>
+          )}
         </group>
       ))}
       {/* pedestrians — articulated humanoids with outfit variety */}

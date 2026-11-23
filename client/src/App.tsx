@@ -12,11 +12,13 @@ import Vehicle from "./components/Vehicle";
 import World from "./components/World";
 import { isInteractiveTarget } from "./keyboard";
 import { fallbackPhysics, loadPhysicsEngine, type PhysicsEngine, type VehicleState } from "./physics/GamePhysics";
-import { G, resetAfterArrest, resetAfterWasted } from "./game/store";
-import { M, startPlay, endMission, persist as persistMission } from "./game/missionState";
-import { STORY_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
+import { G, resetAfterArrest, resetAfterWasted, windLabel } from "./game/store";
+import { M, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission } from "./game/missionState";
+import { STORY_MISSIONS, SIDE_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
+import Phase7Systems from "./components/Phase7";
+import { jobTarget } from "./game/jobs";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
-import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked } from "./world";
+import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints } from "./world";
 import { skyEnvTexture, setNormalsEnabled } from "./textures";
 import { gates, initQuality, runFpsSampleOnce, setTier, type QualityTier } from "./game/quality";
 import Weather from "./components/Weather";
@@ -204,8 +206,8 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100 };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy" };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -240,6 +242,11 @@ const LOAD_TIPS = [
   "Sprint, swim and pedal burn stamina. The wrap stall at Market Row puts health back.",
   "In a garage with your car? Press M for Lina's mods — resprays, tunes, brakes.",
   "Your phone's Stats app tracks Driving, Shooting and Stamina — perks unlock at 50.",
+  "Grab the yellow Sable Cab at Market Row — fares hail you with an amber marker, and clean fast rides tip best.",
+  "Amber rings on the road are street races: Docks Sprint, Bay Run, Northgate Loop. Winners take $600.",
+  "Businesses pay every morning: the Wraps stall, the Northgate Car Wash, a share of Club Solace. Sleep at home to settle up.",
+  "Fail a mission? Press R to retry from your last checkpoint with a fresh clock.",
+  "The causeway toll is $5 at a crawl — or smash the barrier and take the star. Speed cameras fine $75 over ~100 km/h.",
 ];
 /** Phase 6 staged loading: each label is a REAL construction stage —
  * World/GameSystems sub-trees mount as the stage counter advances, and
@@ -308,6 +315,7 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [shake, setShake] = useState(false);
   const [flash, setFlash] = useState(false);
+  const [camFlash, setCamFlash] = useState(false); // Phase 7: speed-camera flash
   const [starPulse, setStarPulse] = useState(false);
   const [ending, setEnding] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -407,6 +415,7 @@ export default function App() {
 
   const startMission = useCallback((def: MissionDef) => {
     endMission(); M.phase = "intro";
+    recordAttempt(def.id); // Phase 7: mission stats (Stats app)
     const intro = def.introAlt && M.choice === "elias" ? def.introAlt : def.intro;
     beginDialogue(intro, () => {
       // Phase 5: the Ch.5 choice interrupts between intro and play, once.
@@ -554,6 +563,20 @@ export default function App() {
       for (const c of G.traffic) dot(c.x, c.z, mm.car, 2);
       for (const c of G.cops) if (c.active) dot(c.x, c.z, mm.police, 3.4);
       if (G.objective && M.phase === "play") dot(G.objective.x, G.objective.z, mm.marker, 4);
+      // Phase 7: job / race target dot + the GPS route on the big map
+      const jt = jobTarget();
+      if (jt && M.phase !== "play") dot(jt.x, jt.z, "#ffb340", 3.6);
+      if (size > 300) {
+        const tgt: { x: number; z: number } | null = M.phase === "play" && G.objective ? { x: G.objective.x, z: G.objective.z } : jt;
+        if (tgt) {
+          const pts = routePoints(G.followPos.x, G.followPos.z, tgt.x, tgt.z);
+          g.strokeStyle = "#ffb340"; g.lineWidth = Math.max(2, 3.5 * S); g.setLineDash([7, 5]);
+          g.beginPath();
+          pts.forEach(([x, z], i) => { if (i === 0) g.moveTo(mx(x), mz(z)); else g.lineTo(mx(x), mz(z)); });
+          g.stroke(); g.setLineDash([]);
+          dot(tgt.x, tgt.z, "#ffb340", 4);
+        }
+      }
       // player arrow
       const px = mx(G.followPos.x), pz = mz(G.followPos.z);
       const h = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.heading : playerRotationRef.current.y;
@@ -578,7 +601,9 @@ export default function App() {
         loot: stashTotal(), lootCount: G.inventory.length, eye: G.stealthEye,
         holdLabel: G.hold?.label ?? "", holdP: G.hold?.progress ?? 0, weapon: G.weaponSel,
         stamina: Math.round(G.stamina),
+        wind: windLabel(G.wind),
       });
+      setCamFlash(nowS() - G.camFlashAt < 0.22);
       // ---- Phase 6 flow bits polled with the HUD: door fade, respawn
       // mini-screen, first-visit area title cards ----
       setFadeOn(nowS() - G.fadeAt < 0.3);
@@ -601,6 +626,12 @@ export default function App() {
         window.setTimeout(() => setMissionResult((r) => (r && r.at === lastMissionAt.current ? null : r)), 9000);
       }
       if (G.requestCharSelect) { G.requestCharSelect = false; tryOpenCharSelectRef.current(); }
+      // Phase 7: phone Story app replay requests (40% payout, no progress)
+      if (G.requestReplayId) {
+        const rid = G.requestReplayId; G.requestReplayId = "";
+        const def = [...STORY_MISSIONS, ...SIDE_MISSIONS].find((m) => m.id === rid);
+        if (def && !M.active) { M.replayId = rid; startMissionRef.current(def); showPopup(`Replaying: ${def.title} (40% payout)`); }
+      }
       if (G.settings.postFx !== postFxRef.current) { postFxRef.current = G.settings.postFx; setPostFx(G.settings.postFx); }
       // Phase 5: quality can change under us (FPS step-down, phone settings)
       if (G.settings.quality !== qualityRef.current) setQualityState(G.settings.quality);
@@ -684,6 +715,12 @@ export default function App() {
       else if (key === "c") { camFar.current = !camFar.current; showPopup(camFar.current ? "Camera: far" : "Camera: near"); }
       else if (key === "r") {
         if (G.status) respawnRef.current();
+        // Phase 7: after a failure, R retries from the last checkpoint
+        else if (M.lastFailed && !M.active) {
+          const lf = M.lastFailed; M.lastFailed = null;
+          endMission(); startPlayAt(lf.def, lf.step);
+          showPopup(`Retry from checkpoint ${lf.step + 1} — clock refreshed`);
+        }
         else if (M.active) { const def = M.active; startMissionRef.current(def); showPopup("Mission restarted"); }
       }
       else if (key === "enter" && introIdx >= 0) { /* handled by intro buttons */ }
@@ -821,6 +858,7 @@ export default function App() {
           <Combat enabled={started && !effectivePaused} />
           <Interiors />
           <Interactions />
+          <Phase7Systems />
           <PhotoCapture shotRef={photoShotRef} />
           <FirstFrame onReady={() => setSceneReady(true)} />
           {players.map((pl) => <RemoteAvatar key={pl.playerId} player={pl} />)}
@@ -849,12 +887,13 @@ export default function App() {
       </Canvas>
 
       {flash && <div className="damage-flash" />}
+      {camFlash && <div className="camera-flash" />}
       {started && !hud.status && !photoMode && (
         <section className="hud" aria-label="Game status">
           <div className="hud-topleft">
             <div className="hud-brand">HARBOR<span>FALL</span></div>
             <div className="hud-meta">{hud.district} · {theme.name}{hud.storyDone ? " · Story Complete" : ""}</div>
-            <div className="weather-chip" title="Weather (Y to change)">
+            <div className="weather-chip" title={`Weather (Y to change) · Wind: ${hud.wind} — palms and boats feel it`}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="9" cy="9" r="3.4" /><path d="M9 2.5v1.6M2.5 9h1.6M4.9 4.9l1.1 1.1M13.1 4.9l-1.1 1.1" /><path d="M10 20h7.2a3.4 3.4 0 0 0 .6-6.7 4.6 4.6 0 0 0-8.7 1A3.2 3.2 0 0 0 10 20Z" /></svg>
               {hud.weather}
             </div>
@@ -1043,8 +1082,9 @@ export default function App() {
           // Phase 5 Step 7a: Lina (after Ch.2) and Voss (after Ch.4) offer
           // their side-story arcs by phone — calling them starts the next
           // unplayed part instead of the ambient chat.
-          const side = name === "Lina Park" ? "lina" : name === "Det. Mara Voss" ? "voss" : null;
+          const side = name === "Lina Park" ? "lina" : name === "Det. Mara Voss" ? "voss" : name === "Old Elias" ? "heist" : null;
           if (side && started && !M.active && !dialogueRef.current) {
+            // Phase 7: Old Elias offers THE HARBOUR HEIST after Chapter 4
             const unlocked = side === "lina" ? M.storyIndex >= 2 : M.storyIndex >= 4;
             const next = unlocked ? nextSideMission(side, M.side[side]) : null;
             if (next) { startMission(next); return; }
@@ -1231,6 +1271,9 @@ export default function App() {
               <div><dt>X / Ctrl</dt><dd>Crouch — stealthier; crouch at a wall/car for cover (cops spot you slower)</dd></div>
               <div><dt>Behind a ped + E</dt><dd>Pickpocket (cash or loot for your stash)</dd></div>
               <div><dt>Hold E</dt><dd>Rob a shop till (3s) · break into a locked car (1.5s)</dd></div>
+              <div><dt>E at a bench / table</dt><dd>Sit down — E or any movement key stands up</dd></div>
+              <div><dt>Space at a water edge</dt><dd>Dive in (deep water ahead) instead of jumping</dd></div>
+              <div><dt>E at home</dt><dd>Sleep at the villa / Coral apartment — morning, full heal, businesses pay out</dd></div>
               <div><dt>G</dt><dd>Garage car select (villa garage / Lina's)</dd></div>
               <div><dt>R (in car, at garage)</dt><dd>Repair damage + broken windows for cash</dd></div>
               <div><dt>V</dt><dd>First-person camera (drag to look) — works in cars too</dd></div>
@@ -1242,14 +1285,20 @@ export default function App() {
               <div><dt>Space</dt><dd>Handbrake / drift</dd></div><div><dt>B</dt><dd>Horn</dd></div><div><dt>E / F</dt><dd>Exit car · board the boat / bicycle</dd></div>
               <div><dt>M (at a garage)</dt><dd>Lina's mods — respray · engine tune · brakes</dd></div>
               <div><dt>C</dt><dd>Camera near / far</dd></div>
+              <div><dt>Taxi work</dt><dd>Drive the yellow Sable Cab — fares hail with an amber marker; fast + clean = tips</dd></div>
+              <div><dt>Street races</dt><dd>Amber rings: Docks Sprint · Bay Run · Northgate Loop — $600 to win, optional $100 bet (Jobs app)</dd></div>
+              <div><dt>Causeway toll</dt><dd>$5 through the bridge booth at a crawl — smashing the barrier earns a star</dd></div>
+              <div><dt>Speed cameras</dt><dd>Over ~100 km/h near a camera pole: $75 SableCam fine by phone</dd></div>
             </dl>
             <h3>Game</h3>
             <dl className="key-list">
               <div><dt>Esc / P</dt><dd>Pause</dd></div><div><dt>H / ?</dt><dd>This help</dd></div>
               <div><dt>T</dt><dd>Cycle theme</dd></div><div><dt>1–5</dt><dd>Switch theme directly</dd></div>
               <div><dt>M</dt><dd>Big map</dd></div><div><dt>L</dt><dd>Hold / resume day cycle</dd></div>
-              <div><dt>N</dt><dd>Mute / unmute</dd></div><div><dt>R</dt><dd>Respawn (busted/wasted) · restart mission</dd></div>
-              <div><dt>U</dt><dd>Smartphone (contacts · messages · bank · music · themes)</dd></div>
+              <div><dt>N</dt><dd>Mute / unmute</dd></div><div><dt>R</dt><dd>Respawn (busted/wasted) · retry from checkpoint after a fail · restart mission</dd></div>
+              <div><dt>U</dt><dd>Smartphone (contacts · messages · bank · jobs · story · news · social · music · themes)</dd></div>
+              <div><dt>Jobs &amp; businesses</dt><dd>Phone Jobs app: taxi + delivery work. Hold E at the Wraps stall, Car Wash or Club Solace to buy in — income lands every morning</dd></div>
+              <div><dt>The Harbour Heist</dt><dd>After Chapter 4, call Old Elias from Contacts — a two-night job: prep, then the strongroom</dd></div>
               <div><dt>Y</dt><dd>Change the weather</dd></div>
               <div><dt>⛽ Fuel</dt><dd>Cars burn fuel — park at a red FUEL canopy to refill for cash</dd></div>
               <div><dt>🔧 Damage</dt><dd>Crashes damage your car; 100% = wrecked</dd></div>
