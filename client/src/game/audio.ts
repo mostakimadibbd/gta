@@ -75,6 +75,10 @@ export const sfx = {
   shot() { noiseBurst(0.16, 0.4, 3400); blip(150, 0.14, "sawtooth", 0.2, 0, -95); noiseBurst(0.3, 0.1, 700, ); }, // pistol crack + tail
   dryFire() { blip(1200, 0.04, "square", 0.07); blip(900, 0.05, "square", 0.06, 0.05); },
   splash() { noiseBurst(0.45, 0.2, 900); blip(320, 0.3, "sine", 0.07, 0.05, -140); noiseBurst(0.3, 0.1, 1600); },
+  glass() { noiseBurst(0.22, 0.3, 5200); noiseBurst(0.34, 0.16, 3600); blip(2400, 0.1, "triangle", 0.06, 0.02, -900); blip(3100, 0.08, "triangle", 0.05, 0.09, -1200); }, // window smash: highpass noise + falling shards
+  alarm() { blip(1180, 0.14, "square", 0.06); blip(880, 0.14, "square", 0.06, 0.16); }, // car alarm chirp pair
+  shout() { blip(300, 0.16, "sawtooth", 0.1, 0, 160); blip(420, 0.2, "sawtooth", 0.09, 0.14, -120); }, // startled ped shout
+  register() { blip(1318, 0.09, "square", 0.07); blip(1760, 0.14, "square", 0.06, 0.08); noiseBurst(0.1, 0.06, 2400); }, // till drawer ding
 };
 export function isMenuThemePlaying() { return themeTimer !== null; }
 // ---------------------------------------------------------------------------
