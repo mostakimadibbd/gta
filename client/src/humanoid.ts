@@ -8,6 +8,10 @@
 // singletons; materials are colour-cached, so 20+ rigs stay cheap.
 import * as THREE from "three";
 import { fabricTexture, skinTexture, hairTexture, faceTexture } from "./textures";
+import { G } from "./game/store";
+
+/** Phase 6 (B4): cloth weave bump reads stronger on Medium/High tiers. */
+const clothBump = () => (G.settings.quality === "low" ? 0.6 : 1.1);
 
 export interface HumanoidOptions {
   top: string;            // shirt / jacket colour
@@ -17,10 +21,10 @@ export interface HumanoidOptions {
   hair: string;
   shoes?: string;
   undershirt?: string;
-  topStyle?: "tee" | "tank" | "hoodie" | "varsity" | "crop";
+  topStyle?: "tee" | "tank" | "hoodie" | "varsity" | "crop" | "jacket";
   bottomStyle?: "jeans" | "shorts";
   gender?: "m" | "f";
-  hairStyle?: "cap" | "flat" | "bun" | "ponytail";
+  hairStyle?: "cap" | "flat" | "bun" | "ponytail" | "crop" | "bald";
   sunglasses?: boolean;
   cap?: string;           // cap colour, if wearing one
   tattooSleeve?: boolean; // darker patterned right arm
@@ -84,7 +88,7 @@ function fabricMat(color: string): THREE.MeshStandardMaterial {
   const key = `f:${color}`;
   let m = matCache.get(key);
   // Phase 5 Step 6: cloth weave as a bump map so fabric catches raking light
-  if (!m) { m = new THREE.MeshStandardMaterial({ color, map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: 0.6, roughness: 0.88 }); matCache.set(key, m); }
+  if (!m) { m = new THREE.MeshStandardMaterial({ color, map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: clothBump(), roughness: 0.88 }); matCache.set(key, m); }
   return m;
 }
 function plainMat(key: string, color: string, roughness: number, metalness = 0): THREE.MeshStandardMaterial {
@@ -136,14 +140,14 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
   const topMats: THREE.MeshStandardMaterial[] = [];
   // Top material is NOT cached-shared for the player (theme recolours it),
   // so each rig gets its own top fabric material instance.
-  const topMat = new THREE.MeshStandardMaterial({ color: o.top, map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: 0.6, roughness: 0.88 });
+  const topMat = new THREE.MeshStandardMaterial({ color: o.top, map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: clothBump(), roughness: 0.88 });
   topMats.push(topMat);
   const sleeveMat = style === "varsity"
-    ? new THREE.MeshStandardMaterial({ color: o.sleeve ?? "#e8e4da", map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: 0.6, roughness: 0.88 })
+    ? new THREE.MeshStandardMaterial({ color: o.sleeve ?? "#e8e4da", map: fabricTexture(), bumpMap: fabricTexture(), bumpScale: clothBump(), roughness: 0.88 })
     : topMat;
   if (sleeveMat !== topMat) topMats.push(sleeveMat);
   const tattooMat = new THREE.MeshStandardMaterial({ color: "#5a4638", map: fabricTexture(), roughness: 0.7 });
-  const longSleeve = style === "hoodie" || style === "varsity";
+  const longSleeve = style === "hoodie" || style === "varsity" || style === "jacket";
   const armSkin = style === "tank" ? skin : null; // tank: bare upper arms
 
   const group = new THREE.Group();
@@ -204,7 +208,17 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
       torso.add(em);
     }
     if (style === "hoodie") torso.add(mesh(GEO.pocket, topMat, 0, 0.14, 0.145));
-    if (style !== "hoodie") torso.add(mesh(GEO.underV, fabricMat(o.undershirt ?? "#e8e2d4"), 0, 0.33, 0.128, false));
+    if (style === "jacket") {
+      // Phase 6 (B4): jacket = zipped front stripe + raised collar over
+      // a plain undershirt V
+      torso.add(mesh(GEO.underV, fabricMat(o.undershirt ?? "#2e3138"), 0, 0.33, 0.128, false));
+      const zip = mesh(GEO.stripe, plainMat("zip", "#c8ccd2", 0.35, 0.6), 0, 0.13, 0);
+      zip.scale.set(0.16, 1, 0.72);
+      torso.add(zip);
+      const collar = mesh(GEO.hood, topMat, 0, 0.5, -0.06);
+      collar.scale.set(0.8, 0.45, 0.8);
+      torso.add(collar);
+    } else if (style !== "hoodie") torso.add(mesh(GEO.underV, fabricMat(o.undershirt ?? "#e8e2d4"), 0, 0.33, 0.128, false));
   }
   if (style === "hoodie") torso.add(mesh(GEO.hood, topMat, 0, 0.52, -0.15));
   body.add(torso);
@@ -254,6 +268,13 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
       const tail = mesh(GEO.ponytail, hair, 0, 0.08, -0.18);
       tail.rotation.x = 0.25;
       head.add(tail);
+    } else if (hairStyle === "crop") {
+      // short crop (B4): a thin close cap of hair, no back panel
+      const cp = mesh(GEO.hairCap, hair, 0, 0.178, -0.008);
+      cp.scale.set(0.99, 0.82, 0.99);
+      head.add(cp);
+    } else if (hairStyle === "bald") {
+      // bald (B4): bare skull with a slight sheen — nothing to add
     } else {
       head.add(mesh(GEO.hairCap, hair, 0, 0.175, -0.012));
     }

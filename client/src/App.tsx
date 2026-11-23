@@ -24,12 +24,16 @@ import Combat from "./components/Combat";
 import Interiors from "./components/Interiors";
 import Interactions from "./components/Interactions";
 import GaragePanel from "./components/GaragePanel";
+import ModMenu from "./components/ModMenu";
+import { setCc0Deferred } from "./cc0Textures";
+import { nowS } from "./game/store";
+import { inNorth, onIsland, NORTH_ROAD_X, NORTH_ROAD_Z } from "./world";
 import CharacterSelect from "./components/CharacterSelect";
 import { POSTER_PANELS } from "./posterData";
 import Phone from "./components/Phone";
 import { loadCharacterChoice, persistCharacterChoice, presetById } from "./game/characters";
 import { gyroYawTrim } from "./game/gyro";
-import { stashTotal, persistSettings, toast as gameToast } from "./game/store";
+import { stashTotal, persistSettings, toast as gameToast, syncWeaponMirrors } from "./game/store";
 import { CORAL_ROAD_X, CORAL_ROAD_Z, OVERLOOK, PIER_SPAWN } from "./world";
 import { WEATHER_META, cycleWeather } from "./game/weather";
 import { audioTick, initAudio, sfx, startMenuTheme, stopMenuTheme, toggleMute } from "./game/audio";
@@ -65,12 +69,34 @@ const tmpV = new THREE.Vector3();
 
 interface FpState { on: boolean; yaw: number; pitch: number; }
 
-function CameraRig({ target, camFar, fp, orbit }: { target: RefObject<THREE.Vector3>; camFar: RefObject<boolean>; fp: RefObject<FpState>; orbit: boolean }) {
+interface SweepState { t: number; dur: number; cx: number; cz: number; }
+
+function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THREE.Vector3>; camFar: RefObject<boolean>; fp: RefObject<FpState>; orbit: boolean; sweep: { current: SweepState | null } }) {
   const controls = useRef<ComponentRef<typeof OrbitControls> | null>(null);
   const { camera } = useThree();
   useFrame((_, delta) => {
     if (!target.current) return;
     const cam = camera as THREE.PerspectiveCamera;
+    // ---- Phase 6 spawn-in sweep: high/wide over the district, easing
+    // down to the follow position over ~2.6 s (skippable — App clears
+    // the sweep ref on any input) ----
+    if (sweep.current) {
+      const sw = sweep.current;
+      sw.t += delta;
+      const p = Math.min(1, sw.t / sw.dur);
+      if (controls.current) controls.current.enabled = false;
+      if (p >= 1) { sweep.current = null; if (controls.current) controls.current.enabled = true; }
+      else {
+        const e = 1 - Math.pow(1 - p, 3); // easeOutCubic
+        const tx = target.current.x, tz = target.current.z;
+        const ox = tx + (sw.cx - tx) * (1 - e) + Math.sin(G.playerHeading) * -6.5 * e;
+        const oz = tz + (sw.cz - tz) * (1 - e) + Math.cos(G.playerHeading) * -6.5 * e;
+        const oy = 1.6 + 34 * (1 - e);
+        camera.position.set(ox, oy, oz);
+        camera.lookAt(tx, 1.2, tz);
+        return;
+      }
+    }
     // impact shake (collision-driven amplitude, gated by the shake setting)
     const applyShake = () => {
       if (G.settings.shake && G.shakeAmp > 0.004) {
@@ -178,8 +204,8 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist" };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100 };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -205,7 +231,35 @@ const LOAD_TIPS = [
   "Hold E on a locked car to break in — alarms are loud and witnesses talk.",
   "On a phone? Tap GYRO and tilt to steer. Buttons still work as backup.",
   "Your phone has a Camera app now — photo mode hides the HUD for clean shots.",
+  "Northgate is open: cross the causeway at Lantern St for mansions, Sable Motors and the parking garage.",
+  "The city bus runs a loop and stops at the shelters — or steal one and drive the route yourself.",
+  "A skiff waits at the pier. Sable Island's lighthouse is a short hop across the bay.",
+  "Traffic stops at red lights now. So should you — 4 stars brings out the spike strips.",
+  "At 1 star with empty hands, hold B to surrender: a $100 fine beats a cell.",
+  "SMGs and shotguns: Sable Arms in Northgate, or browse the Coral Pawn counter with E.",
+  "Sprint, swim and pedal burn stamina. The wrap stall at Market Row puts health back.",
+  "In a garage with your car? Press M for Lina's mods — resprays, tunes, brakes.",
+  "Your phone's Stats app tracks Driving, Shooting and Stamina — perks unlock at 50.",
 ];
+/** Phase 6 staged loading: each label is a REAL construction stage —
+ * World/GameSystems sub-trees mount as the stage counter advances, and
+ * stage 5 completes only when the physics engine promise resolves. */
+const LOAD_STAGE_LABELS = [
+  "Loading textures",
+  "Building Port Sable",
+  "Raising Coral Shores",
+  "Sailing to Northgate",
+  "Placing traffic & people",
+  "Warming up physics",
+  "Finalising",
+];
+const AREA_CARDS: Record<string, { title: string; sub: string }> = {
+  main: { title: "THE DOCKS", sub: "Port Sable" },
+  coral: { title: "CORAL SHORES", sub: "Across the bay" },
+  north: { title: "NORTHGATE", sub: "The luxury district" },
+  island: { title: "SABLE ISLAND", sub: "Mind the lighthouse" },
+};
+
 /** Interaction prompt pill: pulls a leading key ("E — …", "Press E — …",
  * "Hold E — …", "G — …") out into a keyboard-key cap. */
 function PromptPill({ text, warn }: { text: string; warn?: boolean }) {
@@ -278,6 +332,23 @@ export default function App() {
   const lastMissionAt = useRef(0);
   const [sceneReady, setSceneReady] = useState(false);
   const [minWait, setMinWait] = useState(false);
+  // ---- Phase 6 game flow: splash → poster → staged loading → spawn
+  // sweep → game. loadStage gates World/GameSystems sub-tree mounting;
+  // the progress bar is literally loadStage / LOAD_STAGE_LABELS.length.
+  const [flow, setFlow] = useState<"splash" | "poster" | "loading" | "spawn" | "game">("splash");
+  const [loadStage, setLoadStage] = useState(0);
+  const [physicsReady, setPhysicsReady] = useState(false);
+  const [modOpen, setModOpen] = useState(false);
+  const [areaCard, setAreaCard] = useState<{ title: string; sub: string } | null>(null);
+  const [respawnScreen, setRespawnScreen] = useState<"hospital" | "patrol" | null>(null);
+  const [fadeOn, setFadeOn] = useState(false);
+  const sweepRef = useRef<SweepState | null>(null);
+  const startedRef = useRef(false);
+  const respawnScreenRef = useRef<"hospital" | "patrol" | null>(null);
+  const storyModeRef = useRef(true);
+  const visitedRef = useRef<Set<string>>(new Set());
+  const respawnAtRef = useRef(0);
+  const prevStatusRef = useRef("");
   const [tipIdx, setTipIdx] = useState(0);
   const [posterIdx, setPosterIdx] = useState(0);
   const [showHow, setShowHow] = useState(false);
@@ -426,7 +497,11 @@ export default function App() {
     connectToRoom(initialRoom);
     return () => { multiplayerRef.current?.disconnect(); multiplayerRef.current = null; };
   }, [connectToRoom, serverUrl]);
-  useEffect(() => { let m = true; void loadPhysicsEngine().then((e) => { if (m) { physicsRef.current = e; setPhysicsSource(e.source); } }); return () => { m = false; }; }, []);
+  useEffect(() => { let m = true; void loadPhysicsEngine().then((e) => { if (m) { physicsRef.current = e; setPhysicsSource(e.source); setPhysicsReady(true); } }); return () => { m = false; }; }, []);
+  // Phase 6 first-load order: on Low/Medium the CC0 photo textures decode
+  // AFTER spawn (they're shared texture objects — they sharpen in place);
+  // High preloads them during the loading screen.
+  useEffect(() => { if (G.settings.quality !== "high") setCc0Deferred(true); }, []);
 
   // network state sender
   useEffect(() => {
@@ -448,20 +523,18 @@ export default function App() {
       if (!cv) return;
       const g = cv.getContext("2d"); if (!g) return;
       const mm = theme.minimap;
-      // world → map: covers Port Sable + the bay + Coral Shores
-      // (x −145..165, z −130..340 around centre (10, 105))
-      const S = size / 480;
-      const mx = (x: number) => (x - 10) * S + size / 2;
-      const mz = (z: number) => (z - 105) * S + size / 2;
-      g.fillStyle = mm.bg; g.fillRect(0, 0, size, size);
-      // water: the bay band + around Coral island
-      g.fillStyle = "#2c5d84";
-      g.fillRect(0, mz(128), size, mz(196) - mz(128));
-      g.fillRect(0, mz(324), size, size - mz(324));
-      g.fillRect(0, mz(196), mx(28), mz(324) - mz(196));
-      g.fillRect(mx(112), mz(196), size - mx(112), mz(324) - mz(196));
-      // Coral Shores landmass
-      g.fillStyle = mm.bg; g.fillRect(mx(28), mz(196), (112 - 28) * S, (324 - 196) * S);
+      // world → map (Phase 6): covers Northgate (z −296) to Coral Shores
+      // (z 324) — span 700 around centre (5, 15)
+      const S = size / 700;
+      const mx = (x: number) => (x - 5) * S + size / 2;
+      const mz = (z: number) => (z - 15) * S + size / 2;
+      g.fillStyle = "#2c5d84"; g.fillRect(0, 0, size, size); // water everywhere first
+      g.fillStyle = mm.bg;
+      g.fillRect(mx(-124), mz(-124), (124 + 124) * S, (128 + 124) * S); // Port Sable
+      g.fillRect(mx(28), mz(196), (112 - 28) * S, (324 - 196) * S);     // Coral Shores
+      g.fillRect(mx(-118), mz(-296), (38 + 118) * S, (-186 + 296) * S); // Northgate
+      // Sable Island
+      g.beginPath(); g.arc(mx(-64), mz(168), Math.max(2, 17 * S), 0, 7); g.fill();
       g.strokeStyle = mm.road; g.lineWidth = Math.max(1.5, 5 * S);
       for (const c of ROAD_COORDS) {
         g.beginPath(); g.moveTo(mx(c), mz(-124)); g.lineTo(mx(c), mz(128)); g.stroke();
@@ -469,9 +542,12 @@ export default function App() {
       }
       for (const c of CORAL_ROAD_X) { g.beginPath(); g.moveTo(mx(c), mz(200)); g.lineTo(mx(c), mz(320)); g.stroke(); }
       for (const c of CORAL_ROAD_Z) { g.beginPath(); g.moveTo(mx(32), mz(c)); g.lineTo(mx(108), mz(c)); g.stroke(); }
-      // the bridge
+      for (const c of NORTH_ROAD_X) { g.beginPath(); g.moveTo(mx(c), mz(-292)); g.lineTo(mx(c), mz(-190)); g.stroke(); }
+      for (const c of NORTH_ROAD_Z) { g.beginPath(); g.moveTo(mx(-114), mz(c)); g.lineTo(mx(34), mz(c)); g.stroke(); }
+      // the bridge + the causeway
       g.strokeStyle = "#d9d4c5"; g.lineWidth = Math.max(1.5, 4 * S);
       g.beginPath(); g.moveTo(mx(60), mz(112)); g.lineTo(mx(60), mz(214)); g.stroke();
+      g.beginPath(); g.moveTo(mx(-20), mz(-196)); g.lineTo(mx(-20), mz(-110)); g.stroke();
       const dot = (x: number, z: number, col: string, r: number) => { g.fillStyle = col; g.beginPath(); g.arc(mx(x), mz(z), Math.max(1.4, r * S * 2.2), 0, 7); g.fill(); };
       for (const st of FUEL_STATIONS) dot(st.x, st.z, "#ffb703", 3); // fuel pumps
       for (const c of G.cars) if (!c.storedAway) dot(c.state.x, c.state.z, mm.car, 2.4);
@@ -501,7 +577,23 @@ export default function App() {
         ammo: G.ammo, armed: G.armed, prompt: G.promptText, promptWarn: G.promptWarn,
         loot: stashTotal(), lootCount: G.inventory.length, eye: G.stealthEye,
         holdLabel: G.hold?.label ?? "", holdP: G.hold?.progress ?? 0, weapon: G.weaponSel,
+        stamina: Math.round(G.stamina),
       });
+      // ---- Phase 6 flow bits polled with the HUD: door fade, respawn
+      // mini-screen, first-visit area title cards ----
+      setFadeOn(nowS() - G.fadeAt < 0.3);
+      if (G.status && !prevStatusRef.current) { respawnAtRef.current = performance.now(); const rs = G.status === "wasted" ? "hospital" : "patrol"; respawnScreenRef.current = rs; setRespawnScreen(rs); }
+      if (!G.status && respawnScreenRef.current && performance.now() - respawnAtRef.current > 1400) { respawnScreenRef.current = null; setRespawnScreen(null); }
+      prevStatusRef.current = G.status;
+      if (startedRef.current && !G.status) {
+        const zone = onIsland(px, pz) ? "island" : inNorth(px, pz) ? "north" : pz > 150 ? "coral" : "main";
+        if (!visitedRef.current.has(zone)) {
+          visitedRef.current.add(zone);
+          const card = AREA_CARDS[zone];
+          setAreaCard(card);
+          window.setTimeout(() => setAreaCard((c) => (c === card ? null : c)), 2800);
+        }
+      }
       // Phase 4/V6: mission debrief + phone-driven requests + settings sync
       if (G.missionResult && G.missionResult.at !== lastMissionAt.current) {
         lastMissionAt.current = G.missionResult.at;
@@ -560,7 +652,13 @@ export default function App() {
       if (key === "g" && started && G.garageZone) { e.preventDefault(); setGarageZoneId(G.garageZone.id); sfx.click(); return; }
       if ((key === "q" || key === "tab") && started) {
         e.preventDefault();
-        if (G.armed) { G.weaponSel = G.weaponSel === "pistol" ? "fist" : "pistol"; showPopup(G.weaponSel === "pistol" ? "Weapon: pistol" : "Weapon: fists"); }
+        // Phase 6: Q cycles every OWNED slot — fists → pistol → SMG → shotgun
+        const order = ["fist", "pistol", "smg", "shotgun"] as const;
+        const owned = order.filter((w) => w === "fist" || G.weaponOwned[w]);
+        const next = owned[(owned.indexOf(G.weaponSel) + 1) % owned.length] ?? "fist";
+        G.weaponSel = next;
+        syncWeaponMirrors();
+        showPopup(next === "fist" ? "Weapon: fists" : `Weapon: ${next.toUpperCase()} · ${G.weaponAmmo[next as "pistol" | "smg" | "shotgun"]} rounds`);
         return;
       }
       if (key === "v") {
@@ -573,7 +671,12 @@ export default function App() {
       else if (key === "?" || key === "h") { e.preventDefault(); setShowHelp((v) => !v); }
       else if (key === "t") { const i = THEMES.findIndex((t) => t.id === theme.id); applyTheme(THEMES[(i + 1) % THEMES.length]); showPopup(`Theme: ${THEMES[(i + 1) % THEMES.length].name}`); }
       else if (["1", "2", "3", "4", "5"].includes(key)) { const t = THEMES[Number(key) - 1]; if (t) { applyTheme(t); showPopup(`Theme: ${t.name}`); } }
-      else if (key === "m") setBigMap((v) => !v);
+      else if (key === "m") {
+        // Phase 6 (B1): in a garage zone, behind the wheel, M is Lina's
+        // mod menu — anywhere else it stays the big map
+        if (started && G.garageZone && G.driving) { setModOpen((v) => !v); sfx.click(); }
+        else setBigMap((v) => !v);
+      }
       else if (key === "y") { cycleWeather(); showPopup(`Weather: ${G.weather}`); }
       else if (key === "u") { setPhoneOpen((v) => !v); sfx.click(); }
       else if (key === "l") { G.dayPaused = !G.dayPaused; showPopup(G.dayPaused ? "Day cycle held (L to resume)" : "Day cycle running"); }
@@ -601,7 +704,11 @@ export default function App() {
     return () => window.removeEventListener("pointermove", move);
   }, []);
 
-  const effectivePaused = paused || !!dialogue || !!choiceFor || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen || charOpen || !!garageZoneId;
+  const effectivePaused = paused || !!dialogue || !!choiceFor || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen || charOpen || !!garageZoneId || modOpen;
+  // Phase 6: which construction stage the 3D world shows. The poster and
+  // character showcase sit over a built Port Sable (stage 1); loading
+  // walks the real stages; in game everything is mounted.
+  const worldStage = flow === "game" || flow === "spawn" ? 6 : flow === "loading" ? loadStage : 1;
   // ---- poster loading screen: real first-frame signal + minimum display ----
   const loaded = sceneReady && minWait;
   useEffect(() => { const id = window.setTimeout(() => setMinWait(true), 1800); return () => window.clearTimeout(id); }, []);
@@ -621,7 +728,7 @@ export default function App() {
   }, [started, posterIdx]);
   useEffect(() => {
     if (started || !loaded) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter") startGame(true); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter") startLoad(true); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -638,12 +745,60 @@ export default function App() {
     return () => { window.removeEventListener("pointerdown", kick); window.removeEventListener("keydown", kick); };
   }, [started]);
 
-  const startGame = (story: boolean) => {
-    initAudio(); sfx.playStart(); stopMenuTheme(); setStarted(true); setCharOpen(false); savedPosRef.current = null;
+  // ---- Phase 6 flow: Play → staged loading → spawn sweep → game ----
+  const startLoad = (story: boolean) => {
+    initAudio();
+    storyModeRef.current = story;
+    setLoadStage(0);
+    setFlow("loading");
+  };
+  const beginPlay = () => {
+    const story = storyModeRef.current;
+    sfx.playStart(); stopMenuTheme(); setStarted(true); startedRef.current = true; setCharOpen(false); savedPosRef.current = null;
+    setCc0Deferred(false); // Low/Medium: CC0 textures start decoding now
     runFpsSampleOnce(); // Phase 5: one 2.5 s sample may step the tier down once
+    // spawn-in sweep: start high over the spawn point, ease down to Rayan
+    const sx = G.playerPos.x, sz = G.playerPos.z;
+    sweepRef.current = { t: 0, dur: 2.6, cx: sx + 30, cz: sz + 44 };
+    visitedRef.current = new Set(["main"]);
+    setAreaCard(AREA_CARDS.main);
+    setFlow("spawn");
+    window.setTimeout(() => setAreaCard((c) => (c === AREA_CARDS.main ? null : c)), 3400);
     if (story && M.storyIndex === 0 && !localStorage.getItem("harborfall-intro")) setIntroIdx(0);
     else if (story && M.storyIndex < 6) startMission(STORY_MISSIONS[M.storyIndex]);
   };
+  // splash: brief brand beat, then the poster
+  useEffect(() => {
+    if (flow !== "splash") return;
+    const id = window.setTimeout(() => setFlow("poster"), 1500);
+    return () => window.clearTimeout(id);
+  }, [flow]);
+  // staged loading: stages 0–4 advance as their sub-trees mount (two
+  // frames apart so each stage's construction actually happens between
+  // bar steps); stage 5 waits for the real physics promise; then spawn.
+  useEffect(() => {
+    if (flow !== "loading") return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        if (loadStage < 4) setLoadStage(loadStage + 1);
+        else if (loadStage === 4) setLoadStage(5);
+        else if (loadStage === 5 && physicsReady) setLoadStage(6);
+        else if (loadStage >= 6) beginPlay();
+      });
+    });
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow, loadStage, physicsReady]);
+  // spawn sweep: any key or tap skips straight into the game
+  useEffect(() => {
+    if (flow !== "spawn") return;
+    const skip = () => { sweepRef.current = null; setFlow("game"); };
+    const to = window.setTimeout(skip, 2900);
+    window.addEventListener("keydown", skip);
+    window.addEventListener("pointerdown", skip);
+    return () => { window.clearTimeout(to); window.removeEventListener("keydown", skip); window.removeEventListener("pointerdown", skip); };
+  }, [flow]);
   const nextStory = () => { if (M.storyIndex < 6) startMission(STORY_MISSIONS[M.storyIndex]); };
   const nextRepeatable = () => startMission(REPEATABLE[M.repeatIndex % REPEATABLE.length]);
 
@@ -653,7 +808,7 @@ export default function App() {
         gl={{ antialias: true, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15, outputColorSpace: THREE.SRGBColorSpace }}>
         <Suspense fallback={null}>
           <EnvSetup theme={theme} quality={quality} />
-          <World theme={theme} night={nightBucket} quality={quality} />
+          <World theme={theme} night={nightBucket} quality={quality} stage={worldStage} />
           <Collectibles targetRef={followRef} paused={effectivePaused}
             onCollect={() => { tokenCountRef.current += 1; G.tokens = tokenCountRef.current; sfx.pickup(); showPopup("Harbour token +$25"); G.cash += 25; }} />
           <Vehicle playerPositionRef={playerPositionRef} vehiclePositionRef={vehiclePositionRef} vehicleStateRef={vehicleStateRef}
@@ -661,7 +816,7 @@ export default function App() {
             onNearVehicleChange={setNearVehicle} physicsRef={physicsRef} themeAccent={theme.carAccent} />
           <Player positionRef={playerPositionRef} rotationRef={playerRotationRef} driving={driving} paused={effectivePaused}
             preset={presetById(charChoice.id)} variant={charChoice.variant} showcase={charOpen} />
-          <GameSystems paused={effectivePaused} physicsRef={physicsRef} theme={theme} cb={sysCb} tokenCountRef={tokenCountRef} quality={quality} />
+          <GameSystems paused={effectivePaused} physicsRef={physicsRef} theme={theme} cb={sysCb} tokenCountRef={tokenCountRef} quality={quality} stage={worldStage} />
           <Weather paused={effectivePaused} theme={theme} />
           <Combat enabled={started && !effectivePaused} />
           <Interiors />
@@ -669,7 +824,7 @@ export default function App() {
           <PhotoCapture shotRef={photoShotRef} />
           <FirstFrame onReady={() => setSceneReady(true)} />
           {players.map((pl) => <RemoteAvatar key={pl.playerId} player={pl} />)}
-          <CameraRig target={followRef} camFar={camFar} fp={fpRef} orbit={charOpen} />
+          <CameraRig target={followRef} camFar={camFar} fp={fpRef} orbit={charOpen} sweep={sweepRef} />
           {/* Film grade: bloom + warm grade + grain + vignette + SMAA.
               Phase 5: gated by the quality tier (Low = composer OFF;
               Medium = as Phase 4; High adds SSAO + stronger bloom) and by
@@ -705,6 +860,7 @@ export default function App() {
             </div>
             <div className="minimap-disc"><canvas ref={minimapRef} className="minimap" width={148} height={148} aria-label="Minimap" /></div>
             <div className="health-wrap"><div className="health-bar" style={{ width: `${hud.health}%` }} /><span>{hud.health}</span></div>
+            <div className="stamina-wrap" title="Stamina — sprint, swim and pedal drain it"><div className={`stamina-bar ${hud.stamina <= 20 ? "low" : ""}`} style={{ width: `${hud.stamina}%` }} /></div>
             {hud.bust > 0.2 && <div className="bust-bar"><div style={{ width: `${Math.min(100, (hud.bust / 3) * 100)}%` }} /></div>}
             {hud.eye && <div className={`stealth-eye ${hud.eye}`}>{hud.eye === "open" ? "◉ SEEN" : "◎ HIDDEN"}</div>}
           </div>
@@ -718,7 +874,7 @@ export default function App() {
               </div>
               <div className="cash">${hud.cash.toLocaleString()}</div>
               {hud.lootCount > 0 && <div className="loot-chip" title="Stolen goods — fence them at Coral Pawn or Lina's">STASH ${hud.loot.toLocaleString()} <span>· {hud.lootCount} item{hud.lootCount > 1 ? "s" : ""}</span></div>}
-              {hud.armed && hud.weapon === "pistol" && <div className="ammo-chip" title="Pistol ammo — click or J to fire">PISTOL · {hud.ammo}</div>}
+              {hud.armed && hud.weapon !== "fist" && <div className="ammo-chip" title="Ammo — click or J to fire, Q to cycle weapons">{hud.weapon.toUpperCase()} · {hud.ammo}</div>}
               <div className="hud-meta">Tokens {hud.tokens}/6 · {players.length + 1} player{players.length ? "s" : ""} · GFX {quality.toUpperCase()}</div>
             </div>
             <div className="hud-right-row">
@@ -736,8 +892,13 @@ export default function App() {
               </div>
             )}
             {hud.armed && !driving && (
-              <button type="button" className="weapon-chip" onClick={() => { G.weaponSel = G.weaponSel === "pistol" ? "fist" : "pistol"; }}>
-                <span className="keycap">Q</span>{hud.weapon === "pistol" ? "PISTOL" : "FISTS"}
+              <button type="button" className="weapon-chip" onClick={() => {
+                const order = ["fist", "pistol", "smg", "shotgun"] as const;
+                const owned = order.filter((w) => w === "fist" || G.weaponOwned[w]);
+                G.weaponSel = owned[(owned.indexOf(G.weaponSel) + 1) % owned.length] ?? "fist";
+                syncWeaponMirrors();
+              }}>
+                <span className="keycap">Q</span>{hud.weapon === "fist" ? "FISTS" : hud.weapon.toUpperCase()}
               </button>
             )}
             {driving && <div className="speedo"><div className="speedo-arc" style={{ ["--speed" as string]: `${Math.min(100, hud.speed / 1.4)}%` }} /><strong>{hud.speed}</strong><span>km/h</span></div>}
@@ -753,7 +914,7 @@ export default function App() {
             )}
           </div>
           {banner && <div className={`mission-banner ${banner.ok ? "ok" : "bad"}`}>{banner.text}</div>}
-          <div className="controls"><b>WASD</b> Move <i /><b>E</b> Interact · hold: rob / break in <i /><b>G</b> Garage <i /><b>X</b> Crouch <i /><b>Q</b> Weapon <i /><b>V</b> 1st person <i /><b>U</b> Phone <i /><b>M</b> Map <i /><b>ESC</b> Pause</div>
+          <div className="controls"><b>WASD</b> Move <i /><b>E</b> Interact · hold: rob / buy <i /><b>G</b> Garage <i /><b>M</b> Mods in garage <i /><b>X</b> Crouch <i /><b>Q</b> Weapon <i /><b>B</b> Surrender at 1★ <i /><b>V</b> 1st person <i /><b>U</b> Phone <i /><b>ESC</b> Pause</div>
         </section>
       )}
 
@@ -784,10 +945,49 @@ export default function App() {
       {garageZoneId && (
         <GaragePanel zoneId={garageZoneId} onClose={() => setGarageZoneId(null)} />
       )}
+      <ModMenu open={modOpen} onClose={() => setModOpen(false)} />
+
+      {/* ======== Phase 6 screen flow overlays ======== */}
+      {flow === "splash" && (
+        <div className="splash-screen">
+          <div className="splash-word">HARBOR<span>FALL</span></div>
+          <p className="splash-sub">A Port Sable story</p>
+        </div>
+      )}
+      {flow === "loading" && (
+        <div className="loading-screen">
+          <div className="loading-card glass">
+            <div className="loading-title">HARBOR<span>FALL</span></div>
+            <div className="load-bar big"><div className="load-fill" style={{ width: `${(loadStage / LOAD_STAGE_LABELS.length) * 100}%` }} /></div>
+            <ul className="load-stages">
+              {LOAD_STAGE_LABELS.map((label, i) => (
+                <li key={label} className={i < loadStage ? "done" : i === loadStage ? "active" : ""}>
+                  <span>{i < loadStage ? "✓" : i === loadStage ? "▸" : "·"}</span>{label}
+                </li>
+              ))}
+            </ul>
+            <p className="load-tip">💡 {LOAD_TIPS[tipIdx]}</p>
+          </div>
+        </div>
+      )}
+      {flow === "spawn" && <><div className="letterbox top" /><div className="letterbox bottom" /></>}
+      {areaCard && flow !== "loading" && (
+        <div className="area-card" aria-live="polite">
+          <div className="area-card-title">{areaCard.title}</div>
+          <div className="area-card-sub">{areaCard.sub}</div>
+        </div>
+      )}
+      {fadeOn && <div className="fade-black" aria-hidden="true" />}
+      {respawnScreen && (
+        <div className="respawn-screen">
+          <div className="respawn-title">{respawnScreen === "hospital" ? "SABLE GENERAL" : "HARBOUR PATROL"}</div>
+          <p className="respawn-tip">💡 {LOAD_TIPS[tipIdx]}</p>
+        </div>
+      )}
       {charOpen && (
         <CharacterSelect selectedId={charChoice.id} variant={charChoice.variant} started={started}
           onSelect={pickCharacter} onVariant={pickVariant}
-          onDone={() => { if (started) closeCharSelect(); else { closeCharSelect(); startGame(true); } }} />
+          onDone={() => { if (started) closeCharSelect(); else { closeCharSelect(); startLoad(true); } }} />
       )}
 
       <aside className={`game-panel ${panelOpen ? "open" : ""}`} aria-label="Game panel">
@@ -852,7 +1052,7 @@ export default function App() {
           beginDialogue([{ who: name, text: line }, { who: name, text: hint }], () => {});
         }} />
 
-      {!started && (
+      {(flow === "splash" || flow === "poster") && (
         <div className="start-screen poster-screen">
           {POSTER_PANELS.map((panel, i) => (
             <img key={panel.caption} className={i === posterIdx ? "poster-bg active" : "poster-bg"} src={panel.src} alt="" aria-hidden="true" />
@@ -874,8 +1074,8 @@ export default function App() {
             ) : (
               <>
                 <div className="start-actions">
-                  <button type="button" className="big-btn" onClick={() => startGame(true)}>▶ Play Story</button>
-                  <button type="button" className="big-btn ghost" onClick={() => startGame(false)}>Free Roam</button>
+                  <button type="button" className="big-btn" onClick={() => startLoad(true)}>▶ Play Story</button>
+                  <button type="button" className="big-btn ghost" onClick={() => startLoad(false)}>Free Roam</button>
                   <button type="button" className="big-btn ghost" onClick={() => tryOpenCharSelect()}>Character</button>
                 </div>
                 <p className="press-enter">Press <b>Enter</b> / tap Play to start</p>
@@ -1024,9 +1224,11 @@ export default function App() {
             <dl className="key-list">
               <div><dt>WASD / Arrows</dt><dd>Move</dd></div><div><dt>Shift</dt><dd>Sprint</dd></div>
               <div><dt>Space</dt><dd>Jump</dd></div><div><dt>E / F</dt><dd>Enter car · doors · buy · advance dialogue</dd></div>
-              <div><dt>Click / J</dt><dd>Punch — or fire the pistol once you find one</dd></div>
-              <div><dt>Q / Tab</dt><dd>Weapon selector — fists ↔ pistol</dd></div>
-              <div><dt>X / Ctrl</dt><dd>Crouch — slower, stealthier pickpockets, harder to spot</dd></div>
+              <div><dt>Click / J</dt><dd>Punch — or fire your weapon (SMG auto-fires while held)</dd></div>
+              <div><dt>Q / Tab</dt><dd>Weapon selector — fists · pistol · SMG · shotgun</dd></div>
+              <div><dt>Hold B (1★, unarmed)</dt><dd>Surrender — pay a $100 fine, no cell, no teleport</dd></div>
+              <div><dt>Space near a bench/hedge</dt><dd>Vault over it</dd></div>
+              <div><dt>X / Ctrl</dt><dd>Crouch — stealthier; crouch at a wall/car for cover (cops spot you slower)</dd></div>
               <div><dt>Behind a ped + E</dt><dd>Pickpocket (cash or loot for your stash)</dd></div>
               <div><dt>Hold E</dt><dd>Rob a shop till (3s) · break into a locked car (1.5s)</dd></div>
               <div><dt>G</dt><dd>Garage car select (villa garage / Lina's)</dd></div>
@@ -1037,7 +1239,8 @@ export default function App() {
             <h3>Driving</h3>
             <dl className="key-list">
               <div><dt>WASD / Arrows</dt><dd>Accelerate · brake/reverse · steer</dd></div>
-              <div><dt>Space</dt><dd>Handbrake / drift</dd></div><div><dt>B</dt><dd>Horn</dd></div><div><dt>E / F</dt><dd>Exit car</dd></div>
+              <div><dt>Space</dt><dd>Handbrake / drift</dd></div><div><dt>B</dt><dd>Horn</dd></div><div><dt>E / F</dt><dd>Exit car · board the boat / bicycle</dd></div>
+              <div><dt>M (at a garage)</dt><dd>Lina's mods — respray · engine tune · brakes</dd></div>
               <div><dt>C</dt><dd>Camera near / far</dd></div>
             </dl>
             <h3>Game</h3>

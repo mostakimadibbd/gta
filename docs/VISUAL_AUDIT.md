@@ -250,3 +250,38 @@ can't hold ~27–42 fps.
   cheap, robust motion-blur effect; the existing speed FOV kick
   (+14° at speed) carries the sensation instead. Stated honestly
   rather than faked.
+
+## Phase 6 addendum — new radii, decks and streaming (2026-11-23)
+
+- New collision radii (player-vs-world circle model): **bus 2.2**,
+  **boat 1.9**, **bicycle 0.85** (motorcycle stays 1.0, cars 1.55).
+  Traffic-vs-player uses the same values per kind.
+- **Northgate bounds**: landmass x −118…38, z −296…−186; causeway
+  x −20 ± 9 (road ±6), z −196…−110; world drive clamp now
+  x ±130, z −302…330. Sable Island: centre (−64, 168), r 17.
+- **Parking garage contract**: footprint x −80…−56, z −276…−252.
+  Ground court z > −264 (y 0); deck z ≤ −264 at **y 3.1**; ramp lane
+  x −80…−75 climbing z −256 (y 0) → −268 (y 3.1), smoothstep profile —
+  `groundYAt` is the single source; the visual ramp mesh matches it
+  (box [4.6, 0.3, 13.4] at (−77.5, 1.42, −262), rot.x 0.234). The
+  under-deck is sealed by thin perimeter-wall blockers, NOT a full
+  AABB, because `isBlocked` is height-blind and a full box would
+  wrongly block deck-level driving.
+- **Spike strips**: laid across the roadblock line (offsets ±1.35
+  around the block centre, trigger band |along| < 1.6, |side| < 4.6);
+  effect is the `flatTyre` state (speed cap ±8.5, heading pull +
+  wobble) until repaired (R at a garage, +$40) or via the mod menu.
+- **Streaming radii**: traffic AI + meshes dorm beyond **165u**,
+  reactivate under **140u** (hysteresis); pedestrian movement holds
+  beyond **170u**; far-ped animation tick skip unchanged (120u).
+- **Traffic lights for AI**: `game/lights.ts` mirrors World's lamp
+  cycle exactly (same 8 spots, 12 s cycle, parity offset) — one
+  source of truth per intersection, amber counts as stop.
+- **Faces (B4 honesty)**: face canvases are now 512² with painted
+  eye-socket/cheek/jaw shading, plus crop/bald hair and jacket
+  torsos. These remain *stylised-realistic* procedural rigs — not
+  scans, not photoreal people; the standing honesty line holds.
+- **Physics v3**: `suspension_response` + `resolve_vehicle_collision_v2`
+  exist in C++ and as exact TS mirrors; g++ smoke test passes. The
+  shipped WASM binary was NOT rebuilt this round (no emcc); the
+  loader's per-function fallback makes behaviour identical.

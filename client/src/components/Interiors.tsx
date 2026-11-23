@@ -7,7 +7,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { G, toast } from "../game/store";
+import { G, toast, nowS } from "../game/store";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
 import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE } from "../world";
@@ -61,8 +61,20 @@ export default function Interiors() {
     buildHumanoid({ top: "#1f7a72", bottom: "#2b3440", skin: "#6b4423", hair: "#14100e", topStyle: "hoodie", gender: "m", hairStyle: "cap", cap: "#101216" }),
   ], []);
 
+  // Phase 6 screen flow: door teleports are DELAYED ~130 ms behind a
+  // fade-to-black (App watches G.fadeAt) so entering a room reads as a
+  // transition, not a pop.
+  const pendingGo = useRef<{ x: number; z: number; interior: "" | "garage" | "club"; at: number } | null>(null);
+
   useFrame(({ clock }) => {
     const t = clock.elapsedTime;
+    if (pendingGo.current && t >= pendingGo.current.at) {
+      const pg = pendingGo.current;
+      pendingGo.current = null;
+      G.playerPos.set(pg.x, 0, pg.z);
+      G.followPos.set(pg.x, 0, pg.z);
+      G.interior = pg.interior;
+    }
     if (beams.current) beams.current.rotation.y = t * 0.35;
     dancers.forEach((rig, i) => {
       animateHumanoid(rig, t * 2.2 + i * 1.7, 0.22, t + i);
@@ -78,10 +90,9 @@ export default function Interiors() {
       const px = G.playerPos.x, pz = G.playerPos.z;
       const near = (x: number, z: number, r: number) => (px - x) ** 2 + (pz - z) ** 2 < r * r;
       const go = (x: number, z: number, interior: "" | "garage" | "club") => () => {
-        G.playerPos.set(x, 0, z);
-        G.followPos.set(x, 0, z);
-        G.interior = interior;
+        G.fadeAt = nowS(); // App fades to black…
         sfx.door();
+        pendingGo.current = { x, z, interior, at: t + 0.13 }; // …teleport lands mid-fade
       };
       if (G.interior === "garage") {
         const [x, z] = INTERIORS.garage.exitDoor;

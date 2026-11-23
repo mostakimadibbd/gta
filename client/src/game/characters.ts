@@ -31,7 +31,7 @@ export const CHARACTERS: CharacterPreset[] = [
   },
   {
     id: "darius", name: "Darius Cole", tagline: "Dockyard enforcer with a soft spot for strays.",
-    options: { ...BASE, skin: "#6b4423", hair: "#0e0a07", hairStyle: "flat", topStyle: "tank", build: "broad", tattooSleeve: true, sleeve: "#6b4423", bottom: "#33302a" },
+    options: { ...BASE, skin: "#6b4423", hair: "#0e0a07", hairStyle: "bald", topStyle: "jacket", build: "broad", tattooSleeve: true, sleeve: "#6b4423", bottom: "#33302a" },
     variants: ["#3c4148", "#5d2020", "#274036"],
   },
   {
@@ -41,7 +41,7 @@ export const CHARACTERS: CharacterPreset[] = [
   },
   {
     id: "kenji", name: "Kenji Mori", tagline: "Street racer. Quiet hands, loud engine.",
-    options: { ...BASE, skin: "#f1c27d", hair: "#101216", hairStyle: "flat", topStyle: "tee", build: "slim", sunglasses: true, bottom: "#22252b", sleeve: "#f1c27d" },
+    options: { ...BASE, skin: "#f1c27d", hair: "#101216", hairStyle: "crop", topStyle: "jacket", build: "slim", sunglasses: true, bottom: "#22252b", sleeve: "#f1c27d" },
     variants: ["#22252b", "#7a1f3d", "#20504e"],
   },
   {

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { isBlocked, INTERIORS, groundYAt, isWaterAt, blockersNear, BRIDGE } from "../world";
-import { G } from "../game/store";
+import { isBlocked, INTERIORS, groundYAt, isWaterAt, blockersNear, BRIDGE, VAULT_SPOTS } from "../world";
+import { G, toast, bark } from "../game/store";
 import { sfx } from "../game/audio";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
 import { buildHumanoid, animateHumanoid } from "../humanoid";
@@ -39,6 +39,10 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
 
   const phase = useRef(0);
   const intensity = useRef(0);
+  // ---- Phase 6: vault state + surrender (hold B) tracking ----
+  const vault = useRef<{ t: number; dur: number; fx: number; fz: number; tx: number; tz: number } | null>(null);
+  const bHeldAt = useRef(-1);
+  const surrendered = useRef(false);
   // Phase 5 Step 6: enter-car slide (0.35 s) instead of a teleport-pose swap
   const enterT = useRef(0);
   const enterFrom = useRef(new THREE.Vector3());
@@ -59,8 +63,16 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         keys.current.add(key);
         if (key === " " && !event.repeat) jumpRequested.current = true;
       }
+      // Phase 6 surrender: hold B on foot (in a car B stays the horn)
+      if (key === "b" && !event.repeat && !G.driving) { bHeldAt.current = performance.now() / 1000; surrendered.current = false; }
     };
-    const onKeyUp = (event: KeyboardEvent) => keys.current.delete(normalizeGameKey(event.key));
+    const onKeyUp = (event: KeyboardEvent) => {
+      keys.current.delete(normalizeGameKey(event.key));
+      if (normalizeGameKey(event.key) === "b") {
+        bHeldAt.current = -1;
+        if (G.hold?.label.startsWith("Surrendering")) G.hold = null;
+      }
+    };
     const onBlur = () => keys.current.clear();
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -94,6 +106,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
 
     const activeVehicle = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
     const onMoto = !!activeVehicle && activeVehicle.kind === "motorcycle";
+    const onBike = !!activeVehicle && activeVehicle.kind === "bicycle";
     // enter-car slide: on the driving transition, capture where the player
     // stood and glide to the driver's seat over 0.35 s (Vehicle waits via
     // G.enterAnimT). The bike keeps its instant mount (rider stays visible).
@@ -106,7 +119,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     else if (G.enterAnimT > 0) G.enterAnimT = 0;
     const entering = enterT.current > 0 && !!activeVehicle && !onMoto;
     // the rider stays visible (seated) on the bike; hidden inside cars
-    root.current.visible = !driving || onMoto || entering;
+    root.current.visible = !driving || onMoto || onBike || entering;
 
     if (!driving) {
       const swimmingNow = !G.interior && isWaterAt(positionRef.current.x, positionRef.current.z);
@@ -131,18 +144,69 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
           const r = INTERIORS[G.interior];
           return Math.abs(x - r.cx) < r.w / 2 - 0.55 && Math.abs(z - r.cz) < r.d / 2 - 0.55;
         }
-        if (isWaterAt(x, z)) return Math.abs(x) < 175 && z > -140 && z < 365;
+        if (isWaterAt(x, z)) return Math.abs(x) < 175 && z > -320 && z < 365;
         if (groundYAt(x, z) > 0.05 || groundYAt(positionRef.current.x, positionRef.current.z) > 0.05) {
           return Math.abs(x - BRIDGE.x) <= BRIDGE.halfW + 0.4 && z > 86 && z < 238;
         }
         return !isBlocked(x, z, 0.45);
       };
 
-      if (movement.lengthSq() > 0) {
+      // ---- Phase 6 surrender: hold B at 1★, unarmed, on foot → busted-
+      // lite: an on-the-spot fine, no teleport, no cell (A5) ----
+      if (bHeldAt.current > 0 && !surrendered.current) {
+        if (G.wanted === 1 && G.weaponSel === "fist" && !G.status) {
+          const progress = (tNow - bHeldAt.current) / 1.2;
+          G.hold = { label: "Surrendering…", progress: Math.min(1, progress) };
+          if (progress >= 1) {
+            surrendered.current = true;
+            bHeldAt.current = -1; G.hold = null;
+            const fine = Math.min(100, G.cash);
+            G.finesPaid += fine; G.cash -= fine;
+            G.wanted = 0; G.wantedCooldown = 0; G.bustTimer = 0;
+            for (const c of G.cops) c.active = false;
+            toast("You surrendered — fined $100 on the spot. No chase, no cell.");
+            bark("Harbour Patrol", "Suspect surrendered. Fine issued — move along.");
+            sfx.click();
+          }
+        } else if (G.hold?.label.startsWith("Surrendering")) G.hold = null;
+      }
+
+      // ---- Phase 6 vault: Space near a low blocker (bench / hedge /
+      // planter ≤ ~1.1u) arcs you over it instead of jumping in place ----
+      if (vault.current) {
+        const v = vault.current;
+        v.t += dt;
+        const p = Math.min(1, v.t / v.dur);
+        positionRef.current.x = v.fx + (v.tx - v.fx) * p;
+        positionRef.current.z = v.fz + (v.tz - v.fz) * p;
+        positionRef.current.y = Math.sin(p * Math.PI) * 0.85;
+        if (p >= 1) { vault.current = null; positionRef.current.y = 0; grounded.current = true; sfx.land(); }
+        moving = true;
+      } else if (movement.lengthSq() > 0) {
         moving = true;
         movement.normalize();
-        running = pressed.has("shift") && !swimmingNow && !G.crouched;
-        const speed = (swimmingNow ? 2.4 : running ? 8 : 4.2) * (G.crouched && !swimmingNow ? 0.45 : 1);
+        // stamina gates the sprint (A7): an empty tank means no sprint
+        running = pressed.has("shift") && !swimmingNow && !G.crouched && G.stamina > 2 && !G.exhausted;
+        const limp = G.health < 25 && !swimmingNow; // A7: hurt = slow + hunched (pose below)
+        const speed = (swimmingNow ? 2.4 : running ? 8 : 4.2) * (G.crouched && !swimmingNow ? 0.45 : 1) * (limp ? 0.6 : 1);
+        // vault trigger: moving into a low spot's edge with Space held
+        if (jumpRequested.current && grounded.current && !swimmingNow && !G.interior) {
+          for (const s of VAULT_SPOTS) {
+            const dx = s.x - positionRef.current.x, dz = s.z - positionRef.current.z;
+            const dist = Math.hypot(dx, dz);
+            const reach = Math.max(s.hw, s.hd) + 0.85;
+            if (dist > reach || dist < 0.2) continue;
+            if ((dx * movement.x + dz * movement.z) / dist < 0.55) continue; // must be heading at it
+            const cross = Math.max(s.hw, s.hd) * 2 + 1.1;
+            const tx = positionRef.current.x + movement.x * cross;
+            const tz = positionRef.current.z + movement.z * cross;
+            if (!canStand(tx, tz)) continue;
+            vault.current = { t: 0, dur: 0.38, fx: positionRef.current.x, fz: positionRef.current.z, tx, tz };
+            jumpRequested.current = false;
+            sfx.jump();
+            break;
+          }
+        }
         const fromX = positionRef.current.x, fromZ = positionRef.current.z;
         const nextX = fromX + movement.x * speed * dt;
         const nextZ = fromZ + movement.z * speed * dt;
@@ -167,6 +231,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         root.current.rotation.y = Math.atan2(movement.x, movement.z);
       }
 
+      G.playerSprinting = running && moving && !swimmingNow;
       if (jumpRequested.current) {
         if (grounded.current && !swimmingNow) {
           jumpVelocity.current = 7.5;
@@ -204,7 +269,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       root.current.position.x = THREE.MathUtils.lerp(root.current.position.x, doorX, (1 - ease) * 0.35);
       root.current.position.z = THREE.MathUtils.lerp(root.current.position.z, doorZ, (1 - ease) * 0.35);
       root.current.rotation.set(0, THREE.MathUtils.lerp(root.current.rotation.y, cs.heading, ease), 0);
-    } else if (onMoto && activeVehicle) {
+    } else if ((onMoto || onBike) && activeVehicle) {
       root.current.position.set(activeVehicle.state.x, groundYAt(activeVehicle.state.x, activeVehicle.state.z), activeVehicle.state.z);
       root.current.rotation.set(0, activeVehicle.state.heading, 0);
     } else {
@@ -233,7 +298,7 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
 
     // ---- pose overrides (applied after the base animation) ----
     const crouchPose = G.crouched && !driving && !G.swimming && !onMoto;
-    rig.group.position.y = onMoto ? -0.15 : crouchPose ? -0.48 : 0;
+    rig.group.position.y = onMoto || onBike ? -0.15 : crouchPose ? -0.48 : 0;
     if (crouchPose) {
       // crouch: knees bent, torso pitched — reads ~1.25u tall
       rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.05;
@@ -256,6 +321,18 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       rig.lArm.rotation.x = rig.rArm.rotation.x = -0.85;
       rig.lFore.rotation.x = rig.rFore.rotation.x = -0.25;
       rig.torso.rotation.x = 0.16;
+    } else if (onBike) {
+      // cyclist: legs PEDAL (alternating circles) while the bike rolls,
+      // hands on the bars, torso leaned in (Phase 6, A3)
+      const rolling = Math.abs(activeVehicle?.state.speed ?? 0) > 0.4;
+      const ph = tNow * (rolling ? 9.5 : 0);
+      rig.lThigh.rotation.x = -0.95 + Math.sin(ph) * (rolling ? 0.5 : 0);
+      rig.rThigh.rotation.x = -0.95 + Math.sin(ph + Math.PI) * (rolling ? 0.5 : 0);
+      rig.lShin.rotation.x = 0.85 + Math.max(0, -Math.sin(ph)) * 0.4;
+      rig.rShin.rotation.x = 0.85 + Math.max(0, Math.sin(ph)) * 0.4;
+      rig.lArm.rotation.x = rig.rArm.rotation.x = -0.72;
+      rig.lFore.rotation.x = rig.rFore.rotation.x = -0.18;
+      rig.torso.rotation.x = 0.3;
     } else if (G.swimming) {
       // paddle strokes + flutter kick, head up out of the water
       const s1 = Math.sin(tNow * 3.4), s2 = Math.sin(tNow * 3.4 + Math.PI);
@@ -288,6 +365,28 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
           rig.rArm.rotation.x = -2.2 * s;
           rig.rFore.rotation.x = -0.3 * s;
         }
+      }
+      // ---- Phase 6 pose layers (after the base poses) ----
+      if (vault.current) {
+        // vault arc: legs tucked forward, arms swinging over the obstacle
+        const p = Math.min(1, vault.current.t / vault.current.dur);
+        const tuck = Math.sin(p * Math.PI);
+        rig.lThigh.rotation.x = -1.15 * tuck; rig.rThigh.rotation.x = -0.85 * tuck;
+        rig.lShin.rotation.x = 1.2 * tuck; rig.rShin.rotation.x = 1.0 * tuck;
+        rig.lArm.rotation.x = -1.7 * tuck; rig.rArm.rotation.x = -1.4 * tuck;
+        rig.torso.rotation.x = 0.22 * tuck;
+      }
+      if (tNow < G.eatingUntil) {
+        // vendor food: right hand to mouth, small bites (A4)
+        rig.rArm.rotation.x = -1.85 + Math.sin(tNow * 7) * 0.08;
+        rig.rFore.rotation.x = -0.55;
+        rig.head.rotation.x = 0.14;
+      }
+      if (G.health < 25 && grounded.current) {
+        // limp (A7): hunched torso, head down — pairs with the speed cut
+        rig.torso.rotation.x += 0.23;
+        rig.head.rotation.x += 0.17;
+        rig.lArm.rotation.z = 0.16; rig.rArm.rotation.z = -0.16;
       }
     }
   });

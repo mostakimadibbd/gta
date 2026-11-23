@@ -51,7 +51,7 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
 
   const storeCurrent = () => {
     if (!current || G.storedCars.length >= 6) return;
-    G.storedCars.push({ kind: current.kind, color: current.color, name: CAR_MODELS[current.kind].name, damage: Math.round(current.damage), fuel: Math.round(current.fuel), brokenWindow: current.brokenWindow });
+    G.storedCars.push({ kind: current.kind, color: current.color, name: CAR_MODELS[current.kind].name, damage: Math.round(current.damage), fuel: Math.round(current.fuel), brokenWindow: current.brokenWindow, tuneLvl: current.tuneLvl ?? 0, brakeLvl: current.brakeLvl ?? 0, flatTyre: current.flatTyre ?? false });
     persistStoredCars();
     current.storedAway = true;
     current.state = { x: 0, z: -500, heading: 0, speed: 0 };
@@ -65,7 +65,7 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
     if (!stored) return;
     // swap: the car you're sitting in goes into storage in its place
     if (current && G.storedCars.length <= 6) {
-      G.storedCars[idx] = { kind: current.kind, color: current.color, name: CAR_MODELS[current.kind].name, damage: Math.round(current.damage), fuel: Math.round(current.fuel), brokenWindow: current.brokenWindow };
+      G.storedCars[idx] = { kind: current.kind, color: current.color, name: CAR_MODELS[current.kind].name, damage: Math.round(current.damage), fuel: Math.round(current.fuel), brokenWindow: current.brokenWindow, tuneLvl: current.tuneLvl ?? 0, brakeLvl: current.brakeLvl ?? 0, flatTyre: current.flatTyre ?? false };
       current.storedAway = true;
       current.state = { x: 0, z: -500, heading: 0, speed: 0 };
       G.driving = false; G.activeCarId = -1;
@@ -82,12 +82,14 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
         state: { x: zone.exitX, z: zone.exitZ, heading: zone.exitHeading, speed: 0 },
         stolen: false, damage: stored.damage, fuel: stored.fuel,
         brokenWindow: stored.brokenWindow, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
+        flatTyre: stored.flatTyre ?? false, tuneLvl: stored.tuneLvl ?? 0, brakeLvl: stored.brakeLvl ?? 0, pitchVel: 0, rollVel: 0,
       });
       car = G.cars[G.cars.length - 1];
     } else {
       car.storedAway = false;
       car.state = { x: zone.exitX, z: zone.exitZ, heading: zone.exitHeading, speed: 0 };
       car.damage = stored.damage; car.fuel = stored.fuel; car.brokenWindow = stored.brokenWindow;
+      car.flatTyre = stored.flatTyre ?? false; car.tuneLvl = stored.tuneLvl ?? 0; car.brakeLvl = stored.brakeLvl ?? 0;
     }
     sfx.door();
     onClose();

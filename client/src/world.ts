@@ -21,9 +21,54 @@ export const houses: House[] = [];
 export interface TreeSpot { x: number; z: number; scale: number; }
 export interface PropSpot { x: number; z: number; kind: "bench" | "hydrant" | "crate"; rot: number; }
 
+// ================================================================
+// Phase 6 — NORTHGATE + SABLE ISLAND. Northgate is a third district
+// NORTH of Port Sable (north = −z), reached by a land causeway at
+// x = −20 that runs under the PORT SABLE hillside sign. Landmass
+// x ∈ [−118, 38], z ∈ [−296, −186]; grid roads along Z at
+// x ∈ {−84, −52, −20}, along X at z ∈ {−216, −248, −280}.
+// Sable Island sits in the bay (swim / boat): lighthouse + 2 houses.
+// ================================================================
+export const NORTH = { x0: -118, x1: 38, z0: -296, z1: -186 };
+export const NORTH_ROAD_X = [-84, -52, -20];
+export const NORTH_ROAD_Z = [-216, -248, -280];
+export const CAUSEWAY = { x: -20, halfW: 9, z0: -196, z1: -110 };
+export const ISLAND = { x: -64, z: 168, r: 17 };
+export const inNorth = (x: number, z: number) => x >= NORTH.x0 && x <= NORTH.x1 && z >= NORTH.z0 && z <= NORTH.z1;
+export const onCauseway = (x: number, z: number) => Math.abs(x - CAUSEWAY.x) <= CAUSEWAY.halfW && z >= CAUSEWAY.z0 && z <= CAUSEWAY.z1;
+export const onIsland = (x: number, z: number) => (x - ISLAND.x) ** 2 + (z - ISLAND.z) ** 2 < ISLAND.r * ISLAND.r;
+/** Northgate parking garage: open court (south half, y 0) + upper deck
+ * (north half, y 3.1) reached by a ramp lane on the west edge. */
+export const PARK_GARAGE = { x0: -80, x1: -56, z0: -276, z1: -252, deckH: 3.1, deckZ: -264, rampX0: -80, rampX1: -75, rampZTop: -268, rampZBot: -256 };
+export const DEALERSHIP = { x: -36, z: -243, name: "Sable Motors Northgate" };
+export const GUN_STORE = { x: 22.5, z: -222, name: "Sable Arms" };
+export const VENDOR = { x: 28.5, z: 12, name: "Harbour Wraps" }; // Market Row food stall (24h)
+export const HOSPITAL_DOOR = { x: -97, z: 103 };
+export const BUS_STOPS: { x: number; z: number }[] = [
+  { x: 27.7, z: -30 }, { x: -67.7, z: 14 }, { x: 34, z: 67.7 },
+];
+/** Cars the Northgate dealership sells (delivered to your garage). */
+export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv"; color: string; price: number }[] = [
+  { kind: "coupe", color: "#3f7fae", price: 4200 },
+  { kind: "supercar", color: "#c22e2e", price: 9800 },
+  { kind: "suv", color: "#2e4a5a", price: 3600 },
+];
+/** Northgate mansion row (west edge, gated) — visuals in World.tsx. */
+export const NORTH_MANSIONS: { x: number; z: number; color: string; roof: string }[] = [
+  { x: -104, z: -200, color: "#ece7db", roof: "#2e3438" },
+  { x: -104, z: -218, color: "#e2dccb", roof: "#7a3b2e" },
+  { x: -104, z: -236, color: "#dfe8ee", roof: "#274b5e" },
+  { x: -104, z: -254, color: "#efe3c2", roof: "#5d4a38" },
+  { x: -104, z: -272, color: "#e8dfc8", roof: "#14524f" },
+  { x: -104, z: -288, color: "#ece7db", roof: "#3c4147" },
+];
+
 // District names (original): Docks (south), Market Row (centre),
 // Lantern Park (NE), Gull Heights (north), Ferry Quarter (west), East Yards (east)
 export function districtAt(x: number, z: number): string {
+  if (onIsland(x, z)) return "Sable Island";
+  if (inNorth(x, z)) return "Northgate";
+  if (z < -118 && onCauseway(x, z)) return "Northgate Causeway";
   if (z >= 190) return "Coral Shores";
   if (z > 118 && Math.abs(x - 60) < 18) return "Bay Bridge";
   if (z > 90) return "The Docks";
@@ -81,8 +126,18 @@ export const CORAL = { x0: 28, x1: 112, z0: 196, z1: 324 };
 export const CORAL_ROAD_X = [40, 72, 104];
 export const CORAL_ROAD_Z = [224, 264, 304];
 
-/** Ground height — 0 everywhere except the bridge causeway profile. */
+/** Ground height — 0 except the bridge causeway profile and the
+ * Northgate parking-garage deck/ramp (Phase 6). */
 export function groundYAt(x: number, z: number): number {
+  const pg = PARK_GARAGE;
+  if (x >= pg.x0 && x <= pg.x1 && z >= pg.z0 && z <= pg.z1) {
+    if (x >= pg.rampX0 && x <= pg.rampX1 && z >= pg.rampZTop && z <= pg.rampZBot) {
+      const s = Math.max(0, Math.min(1, (pg.rampZBot - z) / (pg.rampZBot - pg.rampZTop)));
+      return pg.deckH * s * s * (3 - 2 * s); // smoothstep ramp, same idiom as the bridge
+    }
+    if (z <= pg.deckZ) return pg.deckH;
+    return 0;
+  }
   if (Math.abs(x - BRIDGE.x) > BRIDGE.halfW + 1.6) return 0;
   const south = (z - (BRIDGE.z0 - BRIDGE.ramp)) / BRIDGE.ramp; // 0→1 up the south ramp
   const north = ((BRIDGE.z1 + BRIDGE.rampN) - z) / BRIDGE.rampN; // 1→0 down the shorter north ramp (lands before Coral's z=224 road)
@@ -96,6 +151,7 @@ export function isWaterAt(x: number, z: number): boolean {
   if (onBridge(x, z)) return false;
   if (z <= WATER_Z && Math.abs(x) <= WORLD_BOUND + 8 && z >= -WORLD_BOUND - 8) return false; // Port Sable land
   if (inCoral(x, z)) return false;
+  if (inNorth(x, z) || onCauseway(x, z) || onIsland(x, z)) return false; // Phase 6 land
   return true;
 }
 
@@ -129,6 +185,40 @@ for (const wx of [44, 84, 100]) {
 for (const c of CORAL_ROAD_X) for (let t = 206; t <= 318; t += 24) lamps.push([c + 7, 0, t], [c - 7, 0, t]);
 for (const c of CORAL_ROAD_Z) for (let t = 34; t <= 108; t += 24) lamps.push([t, 0, c + 7], [t, 0, c - 7]);
 
+// ================================================================
+// Phase 6 — Northgate generation: luxury blocks between the grid
+// roads. Blocks B (dealership) and C (parking garage) are custom
+// structures (world data below + World.tsx), so generation skips
+// them; block E is the hotel. Island houses join `houses`.
+// ================================================================
+for (const [bx, bz] of [[-68, -232], [-36, -264], [9, -264]] as [number, number][]) {
+  const spots: [number, number][] = [[-9, -9], [9, -9], [-9, 9], [9, 9]];
+  for (const [ox, oz] of spots) {
+    if (rnd() < 0.08) { trees.push({ x: bx + ox, z: bz + oz, scale: 0.8 + rnd() * 0.4 }); continue; }
+    const w = 9 + rnd() * 5, d = 9 + rnd() * 5;
+    buildings.push({
+      x: bx + ox, z: bz + oz, width: w, depth: d,
+      height: 10 + rnd() * 20,
+      color: palette[Math.floor(rnd() * palette.length)],
+      roof: roofs[Math.floor(rnd() * roofs.length)],
+      district: "Northgate",
+    });
+  }
+  props.push({ x: bx - 15, z: bz - 15, kind: "bench", rot: rnd() * 3 });
+  props.push({ x: bx + 15, z: bz + 15, kind: "hydrant", rot: 0 });
+}
+// Hotel Northgate (block E) + the Sable Motors showroom block
+buildings.push({ x: 9, z: -236, width: 20, depth: 11, height: 17, color: "#c2ab7d", roof: "#12303f", district: "Northgate" });
+buildings.push({ x: 9, z: -221, width: 14, depth: 8, height: 11, color: "#a87c52", roof: "#14524f", district: "Northgate" });
+buildings.push({ x: -36, z: -226, width: 17, depth: 9, height: 6.5, color: "#4a6d7c", roof: "#274b5e", district: "Northgate" });
+// Sable Island cottages (rendered by the shared houses builder)
+houses.push({ x: -70, z: 162, rot: 0.4, color: "#e6ddcb", roof: "#8a4a3a" });
+houses.push({ x: -58, z: 176, rot: -0.7, color: "#cfdde8", roof: "#4a5a6a" });
+// Northgate lamps + palms (boulevard rows along the x = −20 spine)
+for (const c of NORTH_ROAD_X) for (let t = -288; t <= -194; t += 24) lamps.push([c + 7, 0, t], [c - 7, 0, t]);
+for (const c of NORTH_ROAD_Z) for (let t = -110; t <= 30; t += 24) lamps.push([t, 0, c + 7], [t, 0, c - 7]);
+
+
 // ---- Downtown skyline: tall glass towers on free spots of central blocks
 // (generated building spots are (-9,-9), (9,-9), (0,10); towers use (9,10)).
 const towerBlocks: [number, number][] = [[0, 0], [-40, 0], [40, 0], [0, -40], [0, 40], [-40, -40], [40, 40], [-40, 40], [40, -40]];
@@ -148,6 +238,9 @@ for (const bz of [-40, 0, 40]) {
 // ---- Palm trees: beach row + harbour boulevard (visual only, thin trunks
 // are excluded from isBlocked so they never trap the player)
 export const palms: { x: number; z: number; scale: number; lean: number }[] = [];
+// Phase 6: Northgate boulevard palms + Sable Island palms
+for (let t = -286; t <= -196; t += 19) { palms.push({ x: -27.6, z: t, scale: 0.95 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); palms.push({ x: -12.4, z: t + 9, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); }
+palms.push({ x: -58, z: 158, scale: 1.05, lean: 0.14 }, { x: -71, z: 180, scale: 0.95, lean: -0.12 });
 // Coral palms: boulevard rows + beach row
 for (let x = 34; x <= 110; x += 19) { palms.push({ x, z: 217.5, scale: 0.95 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); palms.push({ x: x + 8, z: 230.5, scale: 0.9 + rnd() * 0.3, lean: (rnd() - 0.5) * 0.2 }); }
 for (let x = 33; x <= 108; x += 16) palms.push({ x, z: 201, scale: 1 + rnd() * 0.35, lean: (rnd() - 0.5) * 0.22 });
@@ -169,6 +262,7 @@ for (let x = -105; x <= 105; x += 15) trees.push({ x, z: 120 + rnd() * 4, scale:
 export function isOnRoad(x: number, z: number): boolean {
   if (onBridge(x, z)) return true;
   if (inCoral(x, z)) return CORAL_ROAD_X.some((c) => Math.abs(x - c) < ROAD_WIDTH / 2) || CORAL_ROAD_Z.some((c) => Math.abs(z - c) < ROAD_WIDTH / 2);
+  if (inNorth(x, z) || onCauseway(x, z)) return NORTH_ROAD_X.some((c) => Math.abs(x - c) < ROAD_WIDTH / 2) || NORTH_ROAD_Z.some((c) => Math.abs(z - c) < ROAD_WIDTH / 2) || onCauseway(x, z);
   return ROAD_COORDS.some((c) => Math.abs(x - c) < ROAD_WIDTH / 2 || Math.abs(z - c) < ROAD_WIDTH / 2);
 }
 
@@ -209,6 +303,11 @@ export const CAR_MODELS: Record<CarSpawn["kind"], { name: string; topSpeed: numb
   suv: { name: "Ferry Rover", topSpeed: 160, handling: 52 },
   classic: { name: "Dune Classic '74", topSpeed: 150, handling: 50 },
   motorcycle: { name: "Sable Stinger", topSpeed: 208, handling: 82 },
+  // ---- Phase 6 fleet additions ----
+  bus: { name: "Sable Cityliner", topSpeed: 96, handling: 35 },
+  taxi: { name: "Sable Cab", topSpeed: 150, handling: 60 },
+  bicycle: { name: "Shoreline Cruiser", topSpeed: 28, handling: 70 },
+  boat: { name: "Sable Skiff 240", topSpeed: 88, handling: 55 },
 };
 // ---- Phase 2: hillside scenic overlook (final mood-board image) ----
 export const OVERLOOK = { x: -102, z: -114 };
@@ -220,6 +319,26 @@ export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[]
   { x: 44, z: 117, hw: 7.6, hd: 4.6 },   // Club Solace exterior
   { x: 48, z: 218, hw: 5, hd: 3.4 },     // Coral Shores Goods (register shop)
   { x: 88, z: 218, hw: 5, hd: 3.4 },     // Coral Pawn shop
+  // ---- Phase 6 ----
+  { x: 27, z: -222, hw: 3.5, hd: 5.5 },  // Sable Arms gun store (Northgate)
+  { x: -52, z: 158, hw: 1.7, hd: 1.7 },  // Sable Island lighthouse
+  // parking-garage perimeter walls: they seal the under-deck bays at
+  // ground level AND act as the deck-2 guard walls (see VISUAL_AUDIT)
+  { x: -65.5, z: -263.6, hw: 9.5, hd: 0.45 },  // deck south wall
+  { x: -55.6, z: -270, hw: 0.45, hd: 6.4 },    // deck east wall
+  { x: -68, z: -276.4, hw: 12, hd: 0.45 },     // deck north wall
+  { x: -80.4, z: -272, hw: 0.45, hd: 4.4 },    // deck west wall (above the ramp)
+  // Northgate mansion row footprints
+  ...NORTH_MANSIONS.map((m) => ({ x: m.x, z: m.z, hw: 5.2, hd: 4.2 })),
+];
+
+/** Low obstacles the player can VAULT over with Space (Phase 6, A7):
+ * park/sidewalk benches + the mansion hedges. hw/hd are trigger AABBs. */
+export const VAULT_SPOTS: { x: number; z: number; hw: number; hd: number }[] = [
+  ...props.filter((p) => p.kind === "bench").map((p) => ({ x: p.x, z: p.z, hw: 1.05, hd: 1.05 })),
+  { x: MANSION.x, z: MANSION.z + 5.6, hw: 6.5, hd: 0.6 },
+  { x: MANSION.x - 6.8, z: MANSION.z, hw: 0.6, hd: 5.5 },
+  { x: MANSION.x + 6.8, z: MANSION.z, hw: 0.6, hd: 5.5 },
 ];
 export const GARAGE_EXT_DOOR = { x: -25, z: 100.6 }; // prompt point, street side
 export const CLUB_EXT_DOOR = { x: 44, z: 110.2 };    // prompt point, beach side
@@ -247,7 +366,7 @@ export function isBlocked(x: number, z: number, radius: number): boolean {
     if (Math.abs(x - BRIDGE.x) > BRIDGE.halfW + 1.6) return true;
   } else {
     const inMain = Math.abs(x) <= WORLD_BOUND + 8 && z >= -WORLD_BOUND - 8 && z <= WATER_Z + 6;
-    if (!inMain && !inCoral(x, z)) return true;
+    if (!inMain && !inCoral(x, z) && !inNorth(x, z) && !onCauseway(x, z) && !onIsland(x, z)) return true;
   }
   for (const b of buildings) {
     if (Math.abs(x - b.x) < b.width / 2 + radius && Math.abs(z - b.z) < b.depth / 2 + radius) return true;
@@ -281,7 +400,7 @@ export function nearestIntersection(x: number, z: number): [number, number] {
 }
 
 // ---- Drivable parked cars (original model names, Harborfall range) ----
-export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle"; owned: boolean; }
+export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat"; owned: boolean; }
 export const CAR_SPAWNS: CarSpawn[] = [
   { id: 0, x: 3, z: 106, heading: Math.PI, color: "#1f7a72", model: "Sable Sprinter", kind: "sedan", owned: true },   // Rayan's own car at the pier
   { id: 1, x: -17, z: -40, heading: Math.PI / 2, color: "#d99a3d", model: "Harbor Hauler", kind: "pickup", owned: false },
@@ -300,4 +419,14 @@ export const CAR_SPAWNS: CarSpawn[] = [
   { id: 13, x: 78, z: 261, heading: -Math.PI / 2, color: "#8a3324", model: "Pico Hatch", kind: "hatch", owned: false },
   { id: 14, x: 101, z: 290, heading: Math.PI, color: "#2e4a5a", model: "Coral Coupe", kind: "coupe", owned: false },
   { id: 15, x: 58, z: 301, heading: 0, color: "#946b2d", model: "Yardbird V8", kind: "muscle", owned: false },
+  // ---- Phase 6: Northgate parked cars + the new vehicle classes ----
+  { id: 16, x: -30, z: -222, heading: 0, color: "#e8e8e8", model: "Meridian Sedan", kind: "sedan", owned: false },
+  { id: 17, x: -58, z: -242, heading: Math.PI / 2, color: "#d99a3d", model: "Coral Coupe", kind: "coupe", owned: false },
+  { id: 18, x: 24, z: -242, heading: Math.PI, color: "#4a6b8a", model: "Ferry Rover", kind: "suv", owned: false },
+  { id: 19, x: -90, z: -230, heading: 0, color: "#5c6650", model: "Pico Hatch", kind: "hatch", owned: false },
+  { id: 20, x: 96, z: 96, heading: -Math.PI / 2, color: "#2e7fb8", model: "Sable Cityliner", kind: "bus", owned: false }, // city bus at the docks depot
+  { id: 21, x: 13, z: -27, heading: Math.PI / 2, color: "#f2b134", model: "Sable Cab", kind: "taxi", owned: false },     // taxi rank, Market Row
+  { id: 22, x: 16, z: 116, heading: 0.4, color: "#c22e2e", model: "Shoreline Cruiser", kind: "bicycle", owned: false }, // beach bike
+  { id: 23, x: 72, z: -72, heading: -0.6, color: "#274268", model: "Shoreline Cruiser", kind: "bicycle", owned: false }, // Lantern Park bike
+  { id: 24, x: 4, z: 134.5, heading: Math.PI, color: "#e8ecef", model: "Sable Skiff 240", kind: "boat", owned: false }, // speedboat off the pier
 ];

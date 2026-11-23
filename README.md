@@ -44,6 +44,25 @@ corrupt harbour boss's debt ledger.
 - **Audio / SFX + opening theme** — all WebAudio-synthesised, no audio files. The start screen plays **"Port Sable Sunset"**, an original opening theme composed for Harborfall (sunset synth-jazz: warm pads, sub bass, soft drums, sax-style lead — written for this game, not copied from any other game's music); it fades out when you press Play. In-game SFX: engine hum tied to speed, police siren wail while wanted, crash impact + thud, car horn (**B** on keyboard, HORN button on touch), door, jump/land, tyre skid, wanted-star sting, dialogue blips, UI clicks, pickup/cash chimes, mission-complete jingle, BUSTED sting and fail tone. **N** mutes everything, theme included.
 - **Multiplayer (optional)** — WebSocket rooms via the Python server;
   remote players render in your city. Single-player needs no server.
+- **Phase 6 — "Proper Game"** — a third district, **Northgate** (causeway
+  north: mansion row, hotel, Sable Motors dealership, Sable Arms, a
+  two-deck parking garage you can drive up), **Sable Island** (lighthouse,
+  cottages, dock) in the bay, and a real game-flow: splash → poster →
+  **staged loading screen** (honest progress from real construction
+  stages) → cinematic spawn-in sweep with district title cards.
+  Traffic now **obeys the traffic lights**, queues, and swells at rush
+  hour; new rides: **city bus** (with a working route), **taxi**,
+  **bicycle** (pedal it — costs stamina) and a **speedboat** with wake.
+  Police round 2: **spike strips** at 4★ roadblocks, **surrender**
+  (hold B at 1★), heli searchlight at night, disguise-lite heat decay.
+  Combat round 2: **SMG + shotgun** with per-weapon ammo (Q cycles four
+  slots), recoil, muzzle light, cover. Player systems: **stamina**,
+  **skills** (Driving/Shooting/Stamina, phone Stats app), **vaulting**,
+  limp + slow regen, food stall and hospital heals. **Lina's mods**
+  (M in a garage): resprays, engine tunes, brakes. Ambient world
+  events, shop hours, and a third character-realism pass (512² painted
+  faces, crop/bald hair, jackets). C++ physics v3 source (suspension
+  spring/damper + collision friction) with TS mirror + g++ smoke test.
 
 ## Personal themes
 
@@ -80,6 +99,12 @@ saved in `localStorage` and applies identically on web and desktop.
 | C | Camera near/far |
 | N | Mute / unmute |
 | R | Respawn when busted/wasted · restart current mission |
+| Q / Tab | Cycle weapon — fists · pistol · SMG · shotgun |
+| Click / J (hold for SMG) | Punch / fire weapon |
+| Hold B (on foot, 1★, unarmed) | Surrender — $100 fine, no cell |
+| Space near a bench / hedge | Vault over it |
+| M (in a car, at a garage) | Lina's mod menu (elsewhere: big map) |
+| E at shop counters | Tap: browse · hold: buy (dealership, Sable Arms, pawn) |
 | Mouse drag / wheel | Orbit / zoom camera |
 
 ### Play on your phone
@@ -189,3 +214,10 @@ Unsigned installers may trigger SmartScreen/Gatekeeper first-run prompts.
 - Story is text dialogue with full subtitles (no voice acting);
   progress/cash/theme/quality persist in `localStorage` on the
   device you play on.
+- Phase 6 honesty: the physics **WASM binary was not rebuilt** this
+  round (no Emscripten toolchain here) — the v3 C++ source and its
+  exact TypeScript mirror ship, the g++ smoke test passes, and the
+  loader falls back per-function, so gameplay is identical. Faces are
+  higher-resolution *painted* canvases on stylised-realistic rigs —
+  still not scanned people. The loading bar counts real construction
+  stages, never a timer.

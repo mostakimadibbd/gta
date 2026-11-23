@@ -183,6 +183,80 @@ void separation_force(double x, double z,
   output[1] = clamp(fz, -2.4, 2.4);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 6 Tier B5 additions — kept API-stable: everything above is untouched.
+// ---------------------------------------------------------------------------
+
+// Suspension response: spring/damper body-motion model replacing the direct
+// pitch/roll targets of step_vehicle_v2 for presentation smoothing.
+//   in:  accel, steer, speed, previous pitch/roll and their velocities, dt
+//   out: [pitch, roll, pitchVel, rollVel]
+void suspension_response(double accel, double steer, double speed,
+                         double prev_pitch, double prev_roll,
+                         double prev_pitch_vel, double prev_roll_vel,
+                         double delta_time, double* output) {
+  const double dt = clamp(delta_time, 0.0, 0.1);
+  const double target_pitch = clamp(-accel * 0.0028, -0.055, 0.06);
+  const double target_roll = clamp(steer * std::fabs(speed) * 0.0042, -0.095, 0.095) *
+                             (speed < 0.0 ? -1.0 : 1.0);
+  double pitch = prev_pitch;
+  double roll = prev_roll;
+  double pitch_vel = prev_pitch_vel;
+  double roll_vel = prev_roll_vel;
+  {
+    const double acc = 52.0 * (target_pitch - pitch) - 11.0 * pitch_vel;
+    pitch_vel += acc * dt;
+    pitch += pitch_vel * dt;
+  }
+  {
+    const double acc = 52.0 * (target_roll - roll) - 11.0 * roll_vel;
+    roll_vel += acc * dt;
+    roll += roll_vel * dt;
+  }
+  output[0] = pitch; output[1] = roll; output[2] = pitch_vel; output[3] = roll_vel;
+}
+
+// Vehicle-vs-vehicle circle collision v2: everything resolve_vehicle_collision
+// does, plus tangential friction applied after the normal impulse.
+//   in:  a(x,z,vx,vz,radius) b(x,z,vx,vz,radius)
+//   out: a(x,z,vx,vz) b(x,z,vx,vz) damage (impact severity, ~0..22)
+void resolve_vehicle_collision_v2(double ax, double az, double avx, double avz,
+                                  double ar, double bx, double bz, double bvx,
+                                  double bvz, double br, double* output) {
+  double dx = bx - ax; double dz = bz - az;
+  const double min_dist = ar + br;
+  double dist = std::sqrt(dx * dx + dz * dz);
+  double damage = 0.0;
+  if (dist < min_dist) {
+    if (dist < 0.0001) { dx = 1.0; dz = 0.0; dist = 1.0; }
+    const double nx = dx / dist; const double nz = dz / dist;
+    const double push = (min_dist - dist) * 0.5;
+    ax -= nx * push; az -= nz * push;
+    bx += nx * push; bz += nz * push;
+    // relative velocity along the normal; negative = approaching
+    const double rvn = (bvx - avx) * nx + (bvz - avz) * nz;
+    double impulse = 0.0;
+    if (rvn < 0.0) {
+      impulse = -(1.0 + 0.35) * rvn * 0.5; // restitution 0.35, m=1 each
+      avx -= impulse * nx; avz -= impulse * nz;
+      bvx += impulse * nx; bvz += impulse * nz;
+      damage = clamp(-rvn * 2.1, 0.0, 22.0);
+    }
+    // tangential friction, using the relative velocity after the normal impulse
+    if (rvn < 0.0) {
+      const double tx = -nz; const double tz = nx;
+      const double rvx = bvx - avx; const double rvz = bvz - avz;
+      const double rvt = rvx * tx + rvz * tz;
+      const double jt = clamp(-rvt * 0.5, -0.45 * impulse, 0.45 * impulse);
+      avx -= jt * tx; avz -= jt * tz;
+      bvx += jt * tx; bvz += jt * tz;
+    }
+  }
+  output[0] = ax; output[1] = az; output[2] = avx; output[3] = avz;
+  output[4] = bx; output[5] = bz; output[6] = bvx; output[7] = bvz;
+  output[8] = damage;
+}
+
 void step_pedestrian(double x, double z, double heading, double speed,
                      double target_x, double target_z, double threat_x,
                      double threat_z, double flee, double walk_speed,

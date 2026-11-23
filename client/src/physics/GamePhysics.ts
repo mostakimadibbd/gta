@@ -8,6 +8,8 @@ export interface PhysicsEngine {
   stepVehicle(state: VehicleState, throttle: number, steering: number, handbrake: boolean, deltaTime: number): VehicleState;
   stepVehicleV2(state: VehicleState, throttle: number, steering: number, handbrake: boolean, deltaTime: number): VehicleStepV2;
   resolveVehicleCollision(a: BodyCircle, b: BodyCircle): { a: BodyCircle; b: BodyCircle; damage: number };
+  suspensionResponse(accel: number, steer: number, speed: number, prev: { pitch: number; roll: number; pitchVel: number; rollVel: number }, dt: number): { pitch: number; roll: number; pitchVel: number; rollVel: number };
+  resolveVehicleCollisionV2(a: BodyCircle, b: BodyCircle): { a: BodyCircle; b: BodyCircle; damage: number };
   sweptAabb(x0: number, z0: number, x1: number, z1: number, radius: number, boxX: number, boxZ: number, halfW: number, halfD: number): number;
   separationForce(x: number, z: number, others: { x: number; z: number }[], radius: number): { x: number; z: number };
   distanceSquared(ax: number, az: number, bx: number, bz: number): number;
@@ -90,6 +92,58 @@ export const fallbackPhysics: PhysicsEngine = {
         avx -= impulse * nx; avz -= impulse * nz;
         bvx += impulse * nx; bvz += impulse * nz;
         damage = clamp(-rvn * 2.1, 0, 22);
+      }
+    }
+    return { a: { ...a, x: ax, z: az, vx: avx, vz: avz }, b: { ...b, x: bx, z: bz, vx: bvx, vz: bvz }, damage };
+  },
+  // --- Phase 6 Tier B5: exact TS mirrors of the new C++ exports ------------
+  suspensionResponse(accel, steer, speed, prev, dtRaw) {
+    const dt = clamp(dtRaw, 0, 0.1);
+    const targetPitch = clamp(-accel * 0.0028, -0.055, 0.06);
+    const targetRoll = clamp(steer * Math.abs(speed) * 0.0042, -0.095, 0.095) * (speed < 0 ? -1 : 1);
+    let pitch = prev.pitch;
+    let roll = prev.roll;
+    let pitchVel = prev.pitchVel;
+    let rollVel = prev.rollVel;
+    {
+      const acc = 52.0 * (targetPitch - pitch) - 11.0 * pitchVel;
+      pitchVel += acc * dt;
+      pitch += pitchVel * dt;
+    }
+    {
+      const acc = 52.0 * (targetRoll - roll) - 11.0 * rollVel;
+      rollVel += acc * dt;
+      roll += rollVel * dt;
+    }
+    return { pitch, roll, pitchVel, rollVel };
+  },
+  resolveVehicleCollisionV2(a, b) {
+    let ax = a.x, az = a.z, avx = a.vx, avz = a.vz;
+    let bx = b.x, bz = b.z, bvx = b.vx, bvz = b.vz;
+    let dx = bx - ax; let dz = bz - az;
+    const minDist = a.radius + b.radius;
+    let dist = Math.sqrt(dx * dx + dz * dz);
+    let damage = 0;
+    if (dist < minDist) {
+      if (dist < 0.0001) { dx = 1; dz = 0; dist = 1; }
+      const nx = dx / dist; const nz = dz / dist;
+      const push = (minDist - dist) * 0.5;
+      ax -= nx * push; az -= nz * push; bx += nx * push; bz += nz * push;
+      const rvn = (bvx - avx) * nx + (bvz - avz) * nz;
+      let impulse = 0;
+      if (rvn < 0) {
+        impulse = -(1 + 0.35) * rvn * 0.5;
+        avx -= impulse * nx; avz -= impulse * nz;
+        bvx += impulse * nx; bvz += impulse * nz;
+        damage = clamp(-rvn * 2.1, 0, 22);
+      }
+      if (rvn < 0) {
+        const tx = -nz; const tz = nx;
+        const rvx = bvx - avx; const rvz = bvz - avz;
+        const rvt = rvx * tx + rvz * tz;
+        const jt = clamp(-rvt * 0.5, -0.45 * impulse, 0.45 * impulse);
+        avx -= jt * tx; avz -= jt * tz;
+        bvx += jt * tx; bvz += jt * tz;
       }
     }
     return { a: { ...a, x: ax, z: az, vx: avx, vz: avz }, b: { ...b, x: bx, z: bz, vx: bvx, vz: bvz }, damage };
@@ -210,6 +264,30 @@ export async function loadPhysicsEngine(): Promise<PhysicsEngine> {
         },
       };
     } catch { v2 = null; }
+    // Phase 6 Tier B5 exports: their OWN try/catch — an older .wasm won't
+    // have them, so fall back to the exact TS mirrors for just these two.
+    let b5: Pick<PhysicsEngine, "suspensionResponse" | "resolveVehicleCollisionV2"> | null = null;
+    try {
+      const suspension = module.cwrap("suspension_response", null, Array(10).fill("number"));
+      const resolveV2 = module.cwrap("resolve_vehicle_collision_v2", null, Array(12).fill("number"));
+      const h = module.HEAPF64;
+      b5 = {
+        suspensionResponse(accel, steer, speed, prev, dt) {
+          suspension(accel, steer, speed, prev.pitch, prev.roll, prev.pitchVel, prev.rollVel, dt, out4);
+          const i = out4 / Float64Array.BYTES_PER_ELEMENT;
+          return { pitch: h[i], roll: h[i + 1], pitchVel: h[i + 2], rollVel: h[i + 3] };
+        },
+        resolveVehicleCollisionV2(a, b) {
+          resolveV2(a.x, a.z, a.vx, a.vz, a.radius, b.x, b.z, b.vx, b.vz, b.radius, out9);
+          const i = out9 / Float64Array.BYTES_PER_ELEMENT;
+          return {
+            a: { ...a, x: h[i], z: h[i + 1], vx: h[i + 2], vz: h[i + 3] },
+            b: { ...b, x: h[i + 4], z: h[i + 5], vx: h[i + 6], vz: h[i + 7] },
+            damage: h[i + 8],
+          };
+        },
+      };
+    } catch { b5 = null; }
     const fb = fallbackPhysics;
     return {
       source: "wasm",
@@ -220,6 +298,8 @@ export async function loadPhysicsEngine(): Promise<PhysicsEngine> {
       },
       stepVehicleV2: v2?.stepVehicleV2 ?? fb.stepVehicleV2,
       resolveVehicleCollision: v2?.resolveVehicleCollision ?? fb.resolveVehicleCollision,
+      suspensionResponse: b5?.suspensionResponse ?? fb.suspensionResponse,
+      resolveVehicleCollisionV2: b5?.resolveVehicleCollisionV2 ?? fb.resolveVehicleCollisionV2,
       sweptAabb: v2?.sweptAabb ?? fb.sweptAabb,
       separationForce: v2?.separationForce ?? fb.separationForce,
       collideAabb(x, z, r, bx, bz, hw, hd) { return (collide(x, z, r, bx, bz, hw, hd) as number) > 0.5; },

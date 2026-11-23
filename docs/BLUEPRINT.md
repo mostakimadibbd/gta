@@ -153,9 +153,67 @@ materials, filmic light — inside the web stack instead.
 - ✅ **Phase 2** — weather, police LOS/search + roadblocks + witnesses, damage & fuel, smartphone, NPC life, overlook + bay bridge, visual realism overhaul, character realism rebuild, poster loading screen, theme-song upgrade (this release)
 - ✅ **Phase 3** — visual round 2 (rounded sculpted cars, post-processing grade, facade/ground/prop detail, skyline ring) + rideable motorcycle, two enterable interiors (garage + club), swimming, first-person camera, combat lite (punch + pistol), buyable villa with garage save (this release)
 - ✅ **Phase 4** — UI realism overhaul (dark glass), garage car selection, character select (6 presets), C++ physics v2 + vehicle collisions, drivable Bay Bridge + Coral Shores (second city), theft system (pickpocket/robberies/break-ins/pawn), gyro steering, PDF deltas (crouch, photo mode, shake/FOV settings), Visual Upgrade V1–V7 (audit doc, normal maps, weathering, vehicle interiors, water/palm motion, debrief screen + weapon selector, far-ped tick skip) (this release)
-- ⬜ **Phase 4.5** — traffic obeys lights, rush hour, gamepad, side activities (races, taxi, tow)
+- 🟡 **Phase 4.5** — traffic obeys lights ✅ and rush hour ✅ landed in Phase 6; still open: gamepad, side activities (races, taxi jobs, tow)
 - ✅ **Phase 5 (shipped as the realistic-visuals + story/UI round)** — quality tiers, equirect env + water shader + SSAO, CC0 PBR route, clearcoat cars + headlight beams, character material/animation pass, deepened story + 2 side arcs + Ch.5 choice, cinematic subtitles, UI redesign. Still open from the original Phase 5 list: more interiors, customisation, NPC memory, businesses, 6-star design review
-- ⬜ **Phase 6** — multiplayer co-op, map expansion
+- ✅ **Phase 6 — "Proper Game" (this release)** — Northgate district + causeway + Sable Island; traffic obeys lights + queues + rush hour + reckless driver; bus (route + stops) / taxi / bicycle / speedboat; NPC destinations, phone-peds, dog walker, vendor, rain shelter, night club drift; police spike strips, surrender, heli searchlight, disguise-lite; SMG + shotgun, 4-slot Q, recoil, muzzle light, cover; stamina, skills + phone Stats, vault, limp, food/hospital heals; vehicle mods (B1); random world events (B2); shop hours (B3); character realism pass 3 (B4); C++ physics v3 source + TS mirror + smoke test (B5, WASM binary not rebuilt — no emcc); full game-flow pipeline (splash → staged loading → spawn sweep → streaming → area cards → respawn screens). Detailed 500-list mapping in §15.
+- ⬜ **Phase 7 candidates** — multiplayer co-op missions, gamepad, races/taxi/tow side activities, more interiors, player businesses, NPC memory, 6-star review
 
-**Status tally (recounted Phase 5):** ✅ Done 78 · 🟡 Partial 7 · ⬜ Planned 14
+**Status tally (recounted Phase 6):** ✅ Done 88 · 🟡 Partial 6 · ⬜ Planned 12 — the §15 ledger below is the detailed, per-category account of the user's 500-feature list; tallies there are grouped, not 1:1 item counts.
 *QA note (PDF §QA): each release is accepted against build-pass + in-game smoke checks of the new systems; a formal written QA checklist pass is tracked as a Phase 5 item.*
+
+## 15. The 500-feature list — mapped (Phase 6)
+
+The user's expansion brief listed ~500 desired features in 12
+categories. This is the honest ledger: ✅ in the game today, 🟡 partial
+or simplified, ⬜ not yet. Grouped by his categories — nothing here is
+marked done that isn't playable.
+
+1. **Open World & Map** — ✅ three districts (Port Sable, Coral Shores,
+   Northgate) + Sable Island, causeway + bay bridge, drivable parking
+   garage (2 decks), minimap + big map covering all of it, district
+   names/cards. 🟡 interiors: 2 pocket rooms + open parking decks (not
+   full building interiors). ⬜ countryside/airport expansion, enterable
+   buildings generally.
+2. **Player & Character** — ✅ 6 presets × 3 variants, crouch/stealth,
+   swimming, vaulting, limp, stamina, skills, first-person, photo mode.
+   🟡 faces/hair improved (512² painted faces, crop/bald, jackets) —
+   still stylised rigs. ⬜ clothing shops, haircuts, tattoos as player
+   choices.
+3. **Vehicles & Transportation** — ✅ 14 car classes + motorcycle +
+   bicycle + bus + taxi + speedboat, damage/fuel, garages, mods
+   (respray/tune/brakes), break-ins. 🟡 boat is one skiff class.
+   ⬜ planes/helicopter piloting, trains, vehicle interiors beyond dash.
+4. **Traffic & Road** — ✅ signal obedience, queueing, rush-hour
+   density, reckless driver, honking, bus route with stops, parking.
+   ⬜ traffic accidents with lasting wreck state, roadworks events.
+5. **NPC & Pedestrian AI** — ✅ destinations (shops/benches/bus stops),
+   sitting, phone-peds with night screen glow, dog walker, vendor,
+   rain hurry/shelter, night club drift, flee/witness/report pipeline.
+   ⬜ NPC memory of the player, conversations beyond barks, schedules
+   tied to named NPCs.
+6. **Police & Wanted** — ✅ LOS + last-known search, roadblocks, spike
+   strips, surrender, heli (+ night searchlight ≥3★), disguise-lite
+   decay, witness delay. 🟡 stars cap at 5 (6-star design review open).
+   ⬜ police boats, K9, arrest animations.
+7. **Combat & Weapons** — ✅ fists, pistol, SMG (auto), shotgun
+   (5-pellet), per-weapon ammo, 4-slot Q, recoil + muzzle light, hit
+   flinch/fall, crouch cover. ⬜ melee weapons, thrown, weapon mods,
+   aiming mode (shots are facing-based hitscan).
+8. **Missions & Story** — ✅ 6 chapters, 2 side arcs, Ch.5 choice,
+   repeatables, debriefs, subtitles. ⬜ post-story mission packs,
+   heists, branching beyond Ch.5.
+9. **Economy / Businesses** — ✅ cash, bank phone app, garages, villa,
+   dealership purchases, weapon shops, pawn fencing, mods, heals/food.
+   🟡 shops keep hours (23:00–07:00 closed). ⬜ owning businesses,
+   stock/property income, employees.
+10. **Activities** — ✅ tokens, photo mode, random world events
+    (crash scene, AI police chase, street performer, breakdown),
+    swimming, island trips. ⬜ races, taxi/tow jobs, fishing, gym.
+11. **Smartphone / Interface** — ✅ phone apps incl. Stats, staged
+    loading screen, splash, spawn sweep, area title cards, respawn
+    mini-screens, door fades, no-select solid HUD. ⬜ in-phone internet,
+    camera gallery persistence.
+12. **World Simulation** — ✅ day cycle, weather system, shop hours,
+    rush hours, streaming activation (traffic dormancy 165/140u, ped
+    tick skip), ambient events. ⬜ seasons, persistent world state
+    across sessions beyond saves, dynamic construction.

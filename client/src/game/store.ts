@@ -3,15 +3,39 @@
 import * as THREE from "three";
 import { sfx } from "./audio";
 import { CAR_SPAWNS, PIER_SPAWN, MANSION } from "../world";
+import type { CarSpawn } from "../world";
 import type { VehicleState } from "../physics/GamePhysics";
 
-export interface NpcCar extends VehicleState { axis: "x" | "z"; dir: 1 | -1; lane: number; color: string; stopped: number; fleeing: number; side: "main" | "coral"; steerVis: number; pitch: number; damage: number; }
-export interface Ped { x: number; z: number; heading: number; speed: number; axis: "x" | "z"; dir: 1 | -1; side: number; color: string; fleeUntil: number; swing: number; zone: string; active: boolean; downUntil: number; area: "main" | "coral"; }
+export interface NpcCar extends VehicleState {
+  axis: "x" | "z"; dir: 1 | -1; lane: number; color: string; stopped: number; fleeing: number;
+  side: "main" | "coral" | "north"; steerVis: number; pitch: number; damage: number;
+  // ---- Phase 6: per-car kind + traffic-light / rush-hour / bus state ----
+  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
+  rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
+  busRoute?: boolean; wp?: number; stopT?: number;
+}
+export interface Ped {
+  x: number; z: number; heading: number; speed: number; axis: "x" | "z"; dir: 1 | -1; side: number; color: string;
+  fleeUntil: number; swing: number; zone: string; active: boolean; downUntil: number; area: "main" | "coral" | "north";
+  // ---- Phase 6 NPC life: destinations, sit/phone/shelter modes ----
+  destX?: number; destZ?: number; mode?: "walk" | "sit" | "phone" | "shelter";
+  waitUntil?: number; hasDog?: boolean; flinchUntil?: number;
+}
 export interface Cop extends VehicleState { active: boolean; lightPhase: number; pitch: number; roll: number; }
 export type WeatherKind = "Clear" | "Cloudy" | "Rain" | "Storm" | "Fog";
 export type CrimeKind = "steal" | "hit" | "ped" | "reckless" | "assault" | "shoot" | "theft" | "robbery";
 export interface StashItem { type: string; name: string; value: number; }
-export interface StoredCar { kind: string; color: string; name: string; damage: number; fuel: number; brokenWindow: boolean; }
+export interface StoredCar { kind: string; color: string; name: string; damage: number; fuel: number; brokenWindow: boolean; tuneLvl?: number; brakeLvl?: number; flatTyre?: boolean; }
+/** Player-fleet car: a CarSpawn plus live state. Phase 6 fields are
+ * optional so older creation sites (garage take-out, saves) stay valid. */
+export interface PlayerCar {
+  id: number; x: number; z: number; heading: number; color: string; model: string;
+  kind: CarSpawn["kind"]; owned: boolean;
+  state: VehicleState; stolen: boolean; damage: number; fuel: number; brokenWindow: boolean;
+  pitch: number; roll: number; steerVis: number; storedAway: boolean;
+  flatTyre?: boolean; tuneLvl?: number; brakeLvl?: number; pitchVel?: number; rollVel?: number;
+}
+export type WeaponKind = "pistol" | "smg" | "shotgun";
 export interface MissionResult { ok: boolean; title: string; reward: number; items: number; timeLeft: number; reason: string; at: number; }
 export interface PendingCrime { kind: CrimeKind; due: number; }
 export const nowS = () => (typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000);
@@ -22,7 +46,7 @@ export const G = {
   followPos: new THREE.Vector3(PIER_SPAWN.x, 0, PIER_SPAWN.z),
   driving: false,
   activeCarId: -1,
-  cars: CAR_SPAWNS.map((s, i) => ({ ...s, state: { x: s.x, z: s.z, heading: s.heading, speed: 0 } as VehicleState, stolen: false, damage: 0, fuel: 58 + ((i * 29) % 38), brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false })),
+  cars: CAR_SPAWNS.map((s, i): PlayerCar => ({ ...s, state: { x: s.x, z: s.z, heading: s.heading, speed: 0 } as VehicleState, stolen: false, damage: 0, fuel: 58 + ((i * 29) % 38), brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false, flatTyre: false, tuneLvl: 0, brakeLvl: 0, pitchVel: 0, rollVel: 0 })),
   traffic: [] as NpcCar[],
   peds: [] as Ped[],
   cops: [] as Cop[],
@@ -63,7 +87,20 @@ export const G = {
   swimming: false,
   interior: "" as "" | "garage" | "club",
   armed: false,
-  ammo: 0,
+  ammo: 0, // legacy mirror of the SELECTED weapon's ammo (HUD compat)
+  // ---- Phase 6: stamina / skills / weapon inventory / misc state ----
+  stamina: 100, // 0..100; sprint/swim/cycling drain it (A7)
+  exhausted: false, // latched at 0 until stamina recovers past 20
+  skills: { driving: 0, shooting: 0, stamina: 0 }, // 0..100, persisted
+  skillShootAcc: 0, // shots fired toward the next Shooting point
+  weaponOwned: { pistol: false, smg: false, shotgun: false } as Record<WeaponKind, boolean>,
+  weaponAmmo: { pistol: 0, smg: 0, shotgun: 0 } as Record<WeaponKind, number>,
+  eatingUntil: 0, // hand-to-mouth pose window (vendor food)
+  playerSprinting: false, // set by Player each frame (stamina drain input)
+  bikePedalling: false, // set by Vehicle each frame (stamina drain input)
+  inCover: false, // crouched against a wall/car (police sight + bust relief)
+  fadeAt: 0, // nowS() of the last interior-door fade request (App overlay)
+  eventNow: null as null | { kind: string; x: number; z: number; tipped?: boolean }, // live random event (B2)
   punchT: -9, // nowS() of the last punch (drives the arm-swing animation)
   shotFx: { t: -9, mx: 0, mz: 0, hx: 0, hz: 0, hit: false }, // muzzle→hit fx
   promptText: "",
@@ -80,7 +117,7 @@ export const G = {
   garageZone: null as null | { id: string; label: string }, // garage zone the player is standing in
   requestCharSelect: false, // phone/pause → App opens the character select
   photoMode: false,
-  weaponSel: "fist" as "fist" | "pistol",
+  weaponSel: "fist" as "fist" | WeaponKind,
   missionResult: null as null | MissionResult, // debrief panel data (Visual V6)
   robbedUntil: {} as Record<string, number>, // register id → G.timeS when it can be robbed again
   settings: {
@@ -113,8 +150,15 @@ export function persistSavedCar(c: SavedCar | null) {
 export function persistInventory() { try { localStorage.setItem("harborfall-stash", JSON.stringify(G.inventory)); } catch { /* ignore */ } }
 export function persistStoredCars() { try { localStorage.setItem("harborfall-stored-cars", JSON.stringify(G.storedCars)); } catch { /* ignore */ } }
 export function persistSettings() { try { localStorage.setItem("harborfall-settings", JSON.stringify(G.settings)); } catch { /* ignore */ } }
+export function persistSkills() { try { localStorage.setItem("harborfall-skills", JSON.stringify(G.skills)); } catch { /* ignore */ } }
+/** Keep the legacy `armed`/`ammo` HUD mirrors in step with the weapon inventory. */
+export function syncWeaponMirrors() {
+  G.armed = G.weaponOwned.pistol || G.weaponOwned.smg || G.weaponOwned.shotgun;
+  G.ammo = G.weaponSel === "fist" ? 0 : G.weaponAmmo[G.weaponSel];
+}
 export const stashTotal = () => G.inventory.reduce((a, i) => a + i.value, 0);
 try {
+  const skills = localStorage.getItem("harborfall-skills"); if (skills) G.skills = { ...G.skills, ...(JSON.parse(skills) as Partial<typeof G.skills>) };
   const stash = localStorage.getItem("harborfall-stash"); if (stash) G.inventory = JSON.parse(stash) as StashItem[];
   const stored = localStorage.getItem("harborfall-stored-cars"); if (stored) G.storedCars = (JSON.parse(stored) as StoredCar[]).slice(0, 6);
   const st = localStorage.getItem("harborfall-settings"); if (st) G.settings = { ...G.settings, ...(JSON.parse(st) as Partial<typeof G.settings>) };

@@ -302,12 +302,31 @@ const faceCache = new Map<string, THREE.CanvasTexture>();
 export function faceTexture(variant: "m" | "f" | "beard"): THREE.CanvasTexture {
   const hit = faceCache.get(variant);
   if (hit) return hit;
-  const [c, g] = canvas(128, 128);
+  // Phase 6 (B4): painted at 512² (drawn in 128-space via scale) with
+  // proper facial shading — eye sockets, cheek hollows, jaw shadow.
+  const [c, g] = canvas(512, 512);
+  g.scale(4, 4);
   g.clearRect(0, 0, 128, 128);
   // soft shading: cheek/jaw shadows + nose bridge shading
   const sh = g.createRadialGradient(64, 74, 12, 64, 74, 62);
   sh.addColorStop(0, "rgba(120,70,40,0)"); sh.addColorStop(1, "rgba(120,70,40,0.20)");
   g.fillStyle = sh; g.fillRect(0, 0, 128, 128);
+  // eye sockets: soft shadow bowls the eyes sit in
+  g.fillStyle = "rgba(110,60,35,0.20)";
+  for (const cx of [41, 87]) { g.beginPath(); g.ellipse(cx, 47, 13, 8, 0, 0, Math.PI * 2); g.fill(); }
+  // cheek hollows + jaw shadow + forehead sheen
+  g.fillStyle = "rgba(110,60,35,0.13)";
+  g.beginPath(); g.ellipse(30, 66, 9, 13, 0.25, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(98, 66, 9, 13, -0.25, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "rgba(110,60,35,0.15)";
+  g.beginPath(); g.ellipse(64, 106, 26, 9, 0, 0, Math.PI * 2); g.fill(); // jaw/chin shadow
+  const sheen = g.createLinearGradient(0, 6, 0, 34);
+  sheen.addColorStop(0, "rgba(255,235,210,0.13)"); sheen.addColorStop(1, "rgba(255,235,210,0)");
+  g.fillStyle = sheen; g.fillRect(14, 4, 100, 32);
+  // smile lines
+  g.strokeStyle = "rgba(110,60,35,0.22)"; g.lineWidth = 1.1;
+  g.beginPath(); g.moveTo(47, 80); g.quadraticCurveTo(50, 87, 54, 90); g.stroke();
+  g.beginPath(); g.moveTo(81, 80); g.quadraticCurveTo(78, 87, 74, 90); g.stroke();
   g.fillStyle = "rgba(120,70,40,0.16)";
   g.beginPath(); g.ellipse(64, 58, 5, 12, 0, 0, Math.PI * 2); g.fill(); // nose shading
   // brows

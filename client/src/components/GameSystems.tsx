@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, bark } from "../game/store";
+import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, persistSkills, bark, toast } from "../game/store";
 import { M, currentTarget, endMission, persist, effectivePayout } from "../game/missionState";
 import { gates, type QualityTier } from "../game/quality";
 import { pushPhoneMsg } from "../game/phone";
-import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, districtAt, isBlocked, MANSION_DRIVE, groundYAt, CAR_MODELS } from "../world";
+import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, NORTH_ROAD_X, NORTH_ROAD_Z, BUS_STOPS, REGISTERS, PAWN_SHOP, DEALERSHIP, VENDOR, districtAt, isBlocked, inNorth, onIsland, MANSION_DRIVE, groundYAt, CAR_MODELS, props as WORLD_PROPS } from "../world";
+import { lightAllows } from "../game/lights";
 import { glowTexture } from "../textures";
 import { fallbackPhysics, type PhysicsEngine } from "../physics/GamePhysics";
 import type { GameTheme } from "../themes";
@@ -27,6 +28,10 @@ const PED_OUTFITS = [
   { gender: "f" as const, topStyle: "hoodie" as const, bottom: "#40342a", bottomStyle: "jeans" as const, skin: "#c68863", hair: "#4a2f1a", hairStyle: "ponytail" as const, sunglasses: false, cap: undefined, tattoo: false, necklace: false },
   { gender: "m" as const, topStyle: "tee" as const, bottom: "#274268", bottomStyle: "shorts" as const, skin: "#f1c27d", hair: "#777777", hairStyle: "cap" as const, sunglasses: false, cap: "#274268", tattoo: false, necklace: true },
   { gender: "f" as const, topStyle: "varsity" as const, bottom: "#2b3440", bottomStyle: "jeans" as const, skin: "#ffdbac", hair: "#2d1d12", hairStyle: "bun" as const, sunglasses: true, cap: undefined, tattoo: false, necklace: false },
+  // Phase 6 (B4): jacket torsos + crop/bald hair join the rotation
+  { gender: "m" as const, topStyle: "jacket" as const, bottom: "#23272e", bottomStyle: "jeans" as const, skin: "#8d5524", hair: "#14100e", hairStyle: "crop" as const, sunglasses: false, cap: undefined, tattoo: false, necklace: false },
+  { gender: "m" as const, topStyle: "jacket" as const, bottom: "#3a3f4a", bottomStyle: "jeans" as const, skin: "#c68863", hair: "#20242a", hairStyle: "bald" as const, sunglasses: true, cap: undefined, tattoo: false, necklace: false },
+  { gender: "f" as const, topStyle: "jacket" as const, bottom: "#274268", bottomStyle: "jeans" as const, skin: "#f1c27d", hair: "#b5522a", hairStyle: "crop" as const, sunglasses: false, cap: undefined, tattoo: false, necklace: true },
 ];
 
 export interface SysCallbacks {
@@ -41,6 +46,42 @@ const PED_COLORS = ["#e2574c", "#f2b134", "#39b56a", "#3d8bfd", "#ff7f50", "#2ec
 const rndRoad = () => ROAD_COORDS[Math.floor(Math.random() * ROAD_COORDS.length)];
 const headingFor = (axis: "x" | "z", dir: number) => (axis === "x" ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : dir > 0 ? 0 : Math.PI);
 
+// ---- Phase 6: pedestrian destinations per area (A4). Benches and bus
+// stops are "sit" spots; shops/park/beach are stroll targets. ----------
+interface Waypoint { x: number; z: number; sit?: boolean; }
+const BENCH_WPS: Waypoint[] = WORLD_PROPS.filter((p) => p.kind === "bench").map((p) => ({ x: p.x, z: p.z, sit: true }));
+const WAYPOINTS: Record<"main" | "coral" | "north", Waypoint[]> = {
+  main: [
+    ...BENCH_WPS.slice(0, 10),
+    ...BUS_STOPS.map((s) => ({ x: s.x, z: s.z, sit: true })),
+    ...REGISTERS.filter((r) => r.id !== "coral").map((r) => ({ x: r.x, z: r.z + 3 })),
+    { x: 80, z: -80 }, { x: 0, z: 114 }, { x: 44, z: 108 }, { x: -25, z: 97 }, { x: 8, z: 117 },
+  ],
+  coral: [
+    { x: PAWN_SHOP.x, z: PAWN_SHOP.z + 3 }, { x: 48, z: 216 }, { x: 70, z: 206 },
+    { x: 56, z: 244 }, { x: 88, z: 284 }, { x: 100, z: 214 },
+  ],
+  north: [
+    { x: DEALERSHIP.x, z: DEALERSHIP.z }, { x: 9, z: -228 }, { x: -68, z: -254 },
+    { x: -95, z: -240 }, { x: -36, z: -258 }, { x: 20, z: -222 }, { x: -20, z: -200 },
+  ],
+};
+/** Shelter spots peds huddle at when it rains (awnings / doorways). */
+const SHELTERS: Waypoint[] = [
+  { x: 28.5, z: 10 }, { x: -28.5, z: -6 }, { x: 10, z: 28.5 }, { x: -10, z: -28.5 },
+  { x: 44, z: 110 }, { x: -25, z: 100 }, { x: VENDOR.x, z: VENDOR.z },
+];
+const pickDest = (area: "main" | "coral" | "north") => {
+  const list = WAYPOINTS[area];
+  return list[Math.floor(Math.random() * list.length)];
+};
+// Bus route (A3): rectangle loop on the ±60 grid roads; stops at the two
+// route-side bus stops + a depot pause at the SE corner.
+const BUS_ROUTE: { x: number; z: number; stop?: boolean }[] = [
+  { x: 60, z: -60 }, { x: 60, z: 60 }, { x: 34, z: 60, stop: true }, { x: -60, z: 60 },
+  { x: -60, z: 14, stop: true }, { x: -60, z: -60 }, { x: 20, z: -60 },
+];
+
 function initWorld() {
   if (G.traffic.length === 0) {
     for (let i = 0; i < 12; i++) {
@@ -50,7 +91,8 @@ function initWorld() {
       G.traffic.push({
         x: axis === "x" ? along : fixed + lane, z: axis === "x" ? fixed + lane : along,
         heading: headingFor(axis, dir), speed: 8, axis, dir, lane, color: TRAFFIC_COLORS[i], stopped: 0, fleeing: 0,
-        side: "main", steerVis: 0, pitch: 0, damage: 0,
+        side: "main", steerVis: 0, pitch: 0, damage: 0, kind: TRAFFIC_KINDS[i % TRAFFIC_KINDS.length], fixed,
+        reckless: i === 5, blockedT: 0, dormant: false,
       });
     }
     // Coral Shores traffic — its own loop on the far grid (Phase 4)
@@ -62,19 +104,62 @@ function initWorld() {
       G.traffic.push({
         x: axis === "x" ? along : fixed + lane, z: axis === "x" ? fixed + lane : along,
         heading: headingFor(axis, dir), speed: 8, axis, dir, lane, color: TRAFFIC_COLORS[(i + 5) % TRAFFIC_COLORS.length], stopped: 0, fleeing: 0,
-        side: "coral", steerVis: 0, pitch: 0, damage: 0,
+        side: "coral", steerVis: 0, pitch: 0, damage: 0, kind: TRAFFIC_KINDS[(i + 3) % TRAFFIC_KINDS.length], fixed, blockedT: 0, dormant: false,
       });
     }
+    // ---- Phase 6: Northgate loop traffic (5) on the northern grid ----
+    for (let i = 0; i < 5; i++) {
+      const axis = i % 2 === 0 ? "x" : "z"; const dir = (i % 4 < 2 ? 1 : -1) as 1 | -1;
+      const fixed = axis === "x" ? NORTH_ROAD_Z[i % 3] : NORTH_ROAD_X[i % 3];
+      const along = (axis === "x" ? -100 : -286) + ((i * 41) % 120);
+      const lane = dir > 0 ? 2.8 : -2.8;
+      G.traffic.push({
+        x: axis === "x" ? along : fixed + lane, z: axis === "x" ? fixed + lane : along,
+        heading: headingFor(axis, dir), speed: 8, axis, dir, lane, color: TRAFFIC_COLORS[(i + 2) % TRAFFIC_COLORS.length], stopped: 0, fleeing: 0,
+        side: "north", steerVis: 0, pitch: 0, damage: 0, kind: i === 1 ? "taxi" : TRAFFIC_KINDS[(i + 6) % TRAFFIC_KINDS.length], fixed, blockedT: 0, dormant: false,
+      });
+    }
+    // ---- Phase 6: a second traffic taxi on the main grid ----
+    G.traffic.push({
+      x: -40, z: 22.8, heading: 0, speed: 8, axis: "z", dir: 1, lane: 2.8, color: "#f2b134", stopped: 0, fleeing: 0,
+      side: "main", steerVis: 0, pitch: 0, damage: 0, kind: "taxi", fixed: -40, blockedT: 0, dormant: false,
+    });
+    // ---- Phase 6: the city bus on its rectangle route (A3) ----
+    G.traffic.push({
+      x: 60, z: 0, heading: 0, speed: 0, axis: "z", dir: 1, lane: 0, color: "#2e7fb8", stopped: 0, fleeing: 0,
+      side: "main", steerVis: 0, pitch: 0, damage: 0, kind: "bus", fixed: 60, busRoute: true, wp: 1, stopT: 0, blockedT: 0, dormant: false,
+    });
+    // ---- Phase 6: rush-hour reserve — parked at kerbs off-peak, they
+    // pull out and join the flow at the morning/evening peaks (A2) ----
+    const parkSpots: [number, number, "x" | "z", 1 | -1][] = [
+      [-100, -54.6, "x", 1], [20, 65.4, "x", -1], [60, -114.6, "x", 1],
+      [-45.4, -20, "z", 1], [105.4, 40, "z", -1], [-114.6, 80, "x", -1],
+    ];
+    parkSpots.forEach(([along, fixedPos, axis, dir], i) => {
+      const x = axis === "x" ? along : fixedPos, z = axis === "x" ? fixedPos : along;
+      const laneOff = dir > 0 ? 2.8 : -2.8;
+      // the `fixed` turn-coordinate is the road under the parking lane
+      const snapped = ROAD_COORDS.reduce((a, b) => (Math.abs(b - (fixedPos - laneOff)) < Math.abs(a - (fixedPos - laneOff)) ? b : a), ROAD_COORDS[0]);
+      G.traffic.push({
+        x, z, heading: headingFor(axis, dir), speed: 0, axis, dir, lane: laneOff,
+        color: TRAFFIC_COLORS[(i + 7) % TRAFFIC_COLORS.length], stopped: 0, fleeing: 0,
+        side: "main", steerVis: 0, pitch: 0, damage: 0, kind: TRAFFIC_KINDS[(i + 4) % TRAFFIC_KINDS.length],
+        fixed: snapped,
+        rushOnly: true, parked: true, parkX: x, parkZ: z, parkHeading: headingFor(axis, dir), blockedT: 0, dormant: false,
+      });
+    });
   }
   if (G.peds.length === 0) {
     for (let i = 0; i < 14; i++) {
       const axis = i % 2 === 0 ? "x" : "z"; const dir = (i % 3 === 0 ? -1 : 1) as 1 | -1;
       const fixed = rndRoad(); const along = -105 + (i * 29) % 210; const side = i % 2 === 0 ? 7.6 : -7.6;
       const px0 = axis === "x" ? along : fixed + side, pz0 = axis === "x" ? fixed + side : along;
+      const d0 = pickDest("main");
       G.peds.push({
         x: px0, z: pz0,
         heading: headingFor(axis, dir), speed: 0, axis, dir, side, color: PED_COLORS[i % PED_COLORS.length], fleeUntil: 0, swing: Math.random() * 6,
         zone: districtAt(px0, pz0), active: true, downUntil: 0, area: "main",
+        destX: d0.x, destZ: d0.z, mode: "walk", waitUntil: 0, hasDog: i === 3, flinchUntil: 0,
       });
     }
     for (let i = 0; i < 6; i++) {
@@ -82,20 +167,36 @@ function initWorld() {
       const fixed = axis === "x" ? CORAL_ROAD_Z[i % 3] : CORAL_ROAD_X[i % 3];
       const along = (axis === "x" ? 40 : 208) + ((i * 23) % 64); const side = i % 2 === 0 ? 7.6 : -7.6;
       const px0 = axis === "x" ? along : fixed + side, pz0 = axis === "x" ? fixed + side : along;
+      const d0 = pickDest("coral");
       G.peds.push({
         x: px0, z: pz0,
         heading: headingFor(axis, dir), speed: 0, axis, dir, side, color: PED_COLORS[(i + 3) % PED_COLORS.length], fleeUntil: 0, swing: Math.random() * 6,
         zone: "Coral Shores", active: true, downUntil: 0, area: "coral",
+        destX: d0.x, destZ: d0.z, mode: "walk", waitUntil: 0, flinchUntil: 0,
+      });
+    }
+    // ---- Phase 6: Northgate pedestrians (5) ----
+    const northSpawns: [number, number][] = [[-100, -232], [-70, -262], [-36, -250], [-8, -226], [16, -262]];
+    for (let i = 0; i < 5; i++) {
+      const [px0, pz0] = northSpawns[i];
+      const d0 = pickDest("north");
+      G.peds.push({
+        x: px0, z: pz0,
+        heading: i * 1.3, speed: 0, axis: "x", dir: 1, side: 7.6, color: PED_COLORS[(i + 5) % PED_COLORS.length], fleeUntil: 0, swing: Math.random() * 6,
+        zone: "Northgate", active: true, downUntil: 0, area: "north",
+        destX: d0.x, destZ: d0.z, mode: "walk", waitUntil: 0, flinchUntil: 0,
       });
     }
   }
   if (G.cops.length === 0) for (let i = 0; i < 6; i++) G.cops.push({ x: 0, z: -140, heading: 0, speed: 0, active: false, lightPhase: i * 0.7, pitch: 0, roll: 0 });
 }
 
-export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountRef, quality }: {
+export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountRef, quality, stage }: {
   paused: boolean; physicsRef: MutableRefObject<PhysicsEngine>; theme: GameTheme;
   cb: MutableRefObject<SysCallbacks>; tokenCountRef: MutableRefObject<number>;
   quality: QualityTier;
+  /** Phase 6 staged loading: traffic/peds/cops only mount at stage ≥4. */
+  stage: number;
 }) {
   initWorld();
   const trafficRefs = useRef<Array<THREE.Group | null>>([]);
@@ -124,6 +225,44 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   const roadblock = useRef<{ x: number; z: number; hx: number; hz: number; ox: number; oz: number; active: boolean; cooldown: number }>({ x: 0, z: 0, hx: 1, hz: 0, ox: 0, oz: 1, active: false, cooldown: 0 });
   const rbRefs = useRef<Array<THREE.Group | null>>([]);
   const rbHitCd = useRef(0);
+  // ---- Phase 6 additions: spike strips, the dog, event rigs, player
+  // vitals accumulators, disguise-lite memory, phone glow sprites ----
+  const spikeRef = useRef<THREE.Group>(null);
+  const spikeCd = useRef(0);
+  const dogRig = useMemo(() => {
+    const g = new THREE.Group();
+    const bodyM = new THREE.MeshStandardMaterial({ color: "#8a6a45", roughness: 0.9 });
+    const darkM = new THREE.MeshStandardMaterial({ color: "#5d4526", roughness: 0.9 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.3, 0.24), bodyM); body.position.y = 0.36;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 0.2), bodyM); head.position.set(0.33, 0.5, 0);
+    const snout = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 0.12), darkM); snout.position.set(0.47, 0.46, 0);
+    const ear = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.1), darkM); ear.position.set(0.28, 0.62, 0);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.05), darkM); tail.position.set(-0.33, 0.46, 0); tail.rotation.z = 0.7;
+    g.add(body, head, snout, ear, tail);
+    for (const [lx, lz] of [[0.18, 0.09], [0.18, -0.09], [-0.18, 0.09], [-0.18, -0.09]]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.05), darkM);
+      leg.position.set(lx, 0.12, lz); g.add(leg);
+    }
+    return g;
+  }, []);
+  const dogRef = useRef<THREE.Group>(null);
+  // the wrap vendor — a static figure behind the Market Row stall (A4)
+  const vendorRig = useMemo(() => buildHumanoid({ top: "#c96a2c", bottom: "#2b3440", skin: "#8d5524", hair: "#14100e", topStyle: "tee", gender: "m", hairStyle: "cap", cap: "#f5f2ea" }), []);
+  const phoneGlowRefs = useRef<Array<THREE.Sprite | null>>([]);
+  const eventRigs = useMemo(() => [
+    buildHumanoid({ top: "#8a5a2b", bottom: "#2b3440", skin: "#e0ac69", hair: "#20242a", topStyle: "tee", gender: "m", hairStyle: "flat" }),
+    buildHumanoid({ top: "#2e6b8a", bottom: "#e8e4da", skin: "#f1c27d", hair: "#b5522a", topStyle: "crop", bottomStyle: "shorts", gender: "f", hairStyle: "bun" }),
+    buildHumanoid({ top: "#274268", bottom: "#232c38", skin: "#c68863", hair: "#14100e", topStyle: "hoodie", gender: "m", hairStyle: "cap", cap: "#2b6cb0" }),
+    buildHumanoid({ top: "#e8e4da", bottom: "#5c4a32", skin: "#8d5524", hair: "#14100e", topStyle: "tank", gender: "f", hairStyle: "ponytail" }),
+    buildHumanoid({ top: "#c9a227", bottom: "#274268", skin: "#ffdbac", hair: "#4a2f1a", topStyle: "varsity", gender: "m", hairStyle: "flat" }),
+  ], []);
+  const eventRefs = useRef<Array<THREE.Group | null>>([]);
+  const eventCarRef = useRef<THREE.Group>(null);
+  const eventState = useRef<{ kind: string; x: number; z: number; heading: number; until: number; barked: boolean } | null>(null);
+  const eventTimer = useRef(50);
+  const vitals = useRef({ driveAcc: 0, sprintAcc: 0, stamDelay: 0, lastHealth: 100, lastShotAcc: 0, hurtAt: -99 });
+  const disguise = useRef<{ carId: number; district: string }>({ carId: -2, district: "" });
+  const heliDisc = useRef<THREE.Mesh>(null);
   // ---- Phase 2 NPC-life vignettes: seated + talking humanoids ----
   const vignettes = useMemo(() => {
     const mk = (o: Parameters<typeof buildHumanoid>[0]) => buildHumanoid(o);
@@ -203,34 +342,122 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     const pz = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.z : G.playerPos.z;
     const pSpeed = G.driving ? Math.abs(G.cars[G.activeCarId]?.state.speed ?? 0) : 0;
 
-    // ---- traffic AI (Port Sable + Coral Shores loops) ----
+    // ---- traffic AI (Port Sable + Coral + Northgate loops) ----
+    // Phase 6 (A2): traffic obeys the cycling signals, queues behind
+    // stopped cars, rush-hour reserves join at the peaks, one reckless
+    // driver runs reds and weaves, and the stream DORMS beyond 165u
+    // (streaming) until the player comes back within 140u.
     honkCd.current = Math.max(0, honkCd.current - dt);
     crashCd.current = Math.max(0, crashCd.current - dt);
+    const hourNow = (G.dayTime * 24 + 6) % 24;
+    const rush = (hourNow >= 7 && hourNow < 9.5) || (hourNow >= 16.5 && hourNow < 19);
     for (const car of G.traffic) {
+      const ti = G.traffic.indexOf(car);
+      const distP = Math.hypot(car.x - px, car.z - pz);
+      // streaming dormancy (hysteresis 165 / 140)
+      if (!car.dormant && distP > 165) car.dormant = true;
+      else if (car.dormant && distP < 140) car.dormant = false;
+      if (car.dormant) { car.speed = 0; continue; }
       const prevSpeed = car.speed;
-      const prevHeading = car.heading;
-      if (car.stopped > 0) { car.stopped -= dt; car.speed = Math.max(0, car.speed - 20 * dt); }
-      else {
-        // stop if player car is close ahead (+ brake & honk, Phase 4)
-        const dx = px - car.x, dz = pz - car.z;
-        const ahead = car.axis === "x" ? Math.sign(dx) === car.dir && Math.abs(dz) < 6 && Math.abs(dx) < 9
-                                      : Math.sign(dz) === car.dir && Math.abs(dx) < 6 && Math.abs(dz) < 9;
-        const target = ahead && G.driving ? 0 : car.fleeing > 0 ? 13 : 8.5;
-        car.speed += THREE.MathUtils.clamp(target - car.speed, -14 * dt, 6 * dt);
-        if (ahead && G.driving && car.speed > 2 && honkCd.current <= 0 && Math.random() < 0.3) { sfx.horn(); honkCd.current = 2.5; }
+      // ---- the bus follows its waypoint route and dwells at stops ----
+      if (car.busRoute) {
+        if ((car.stopT ?? 0) > 0) {
+          car.stopT = (car.stopT ?? 0) - dt; car.speed = Math.max(0, car.speed - 16 * dt);
+        } else {
+          const wp = BUS_ROUTE[car.wp ?? 1];
+          const dx = wp.x - car.x, dz = wp.z - car.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist < 3.2) {
+            if (wp.stop) car.stopT = 4.5;
+            car.wp = ((car.wp ?? 1) + 1) % BUS_ROUTE.length;
+          }
+          const desired = Math.atan2(dx, dz);
+          let turn = desired - car.heading;
+          turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+          car.heading += THREE.MathUtils.clamp(turn, -1.1 * dt, 1.1 * dt);
+          car.steerVis = THREE.MathUtils.clamp(turn * 1.6, -0.7, 0.7);
+          const tgt = dist > 26 ? 10.5 : 7;
+          car.speed += THREE.MathUtils.clamp(tgt - car.speed, -10 * dt, 3.5 * dt);
+          car.x += Math.sin(car.heading) * car.speed * dt;
+          car.z += Math.cos(car.heading) * car.speed * dt;
+        }
+        car.pitch += (THREE.MathUtils.clamp(-(car.speed - prevSpeed) / Math.max(dt, 0.001) * 0.0028, -0.05, 0.055) - car.pitch) * Math.min(1, dt * 6);
+        if (trafficSteerRefs[ti]) trafficSteerRefs[ti].current = car.steerVis;
+        if (trafficBrakeRefs.current[ti]) trafficBrakeRefs.current[ti].current = car.speed < 1.5 || (car.stopT ?? 0) > 0;
+        continue;
+      }
+      // ---- rush-hour reserve: parked off-peak, driving at the peaks ----
+      if (car.rushOnly) {
+        if (!rush && !car.parked && distP > 60) {
+          car.parked = true; car.x = car.parkX ?? car.x; car.z = car.parkZ ?? car.z;
+          car.heading = car.parkHeading ?? car.heading; car.speed = 0;
+        } else if (rush && car.parked) {
+          car.parked = false;
+          // pull out into the lane on its fixed road
+          if (car.axis === "x") car.z = (car.fixed ?? 0) + car.lane; else car.x = (car.fixed ?? 0) + car.lane;
+          car.heading = headingFor(car.axis, car.dir);
+        }
+        if (car.parked) { car.speed = 0; continue; }
       }
       if (car.fleeing > 0) car.fleeing -= dt;
+      // --- decide whether to stop: lights, queue, player, damage ---
+      let wantStop = false;
+      if (car.stopped > 0) { car.stopped -= dt; wantStop = true; }
+      // signal obedience on the signalled Port Sable grid (reckless runs reds)
+      if (car.side === "main" && !car.reckless && car.fleeing <= 0) {
+        const fx = car.axis === "z" ? Math.sin(car.heading) : 0, fz = car.axis === "x" ? Math.cos(car.heading) : 0;
+        void fx; void fz;
+        const fwd = car.axis === "x" ? car.x * car.dir : car.z * car.dir;
+        for (const c of ROAD_COORDS) {
+          const rel = c * car.dir - fwd; // distance to the stop line along travel
+          if (rel > 0.5 && rel < 7.5) {
+            const ix = car.axis === "x" ? c : (car.fixed ?? 0), iz = car.axis === "x" ? (car.fixed ?? 0) : c;
+            if (!lightAllows(ix, iz, car.axis, t)) { wantStop = true; break; }
+          }
+        }
+      }
+      // queue behind any same-lane car stopped ahead
+      for (const other of G.traffic) {
+        if (other === car || other.dormant || other.side !== car.side) continue;
+        const odx = other.x - car.x, odz = other.z - car.z;
+        const alongQ = car.axis === "x" ? odx * car.dir : odz * car.dir;
+        const sideQ = car.axis === "x" ? Math.abs(odz) : Math.abs(odx);
+        if (alongQ > 1 && alongQ < 8.5 && sideQ < 2.6 && other.speed < car.speed + 0.5) { wantStop = true; break; }
+      }
+      // player ahead: brake; blocked >3 s in your lane → lean on the horn
+      const dx = px - car.x, dz = pz - car.z;
+      const aheadP = car.axis === "x" ? Math.sign(dx) === car.dir && Math.abs(dz) < 6 && Math.abs(dx) < 9
+                                      : Math.sign(dz) === car.dir && Math.abs(dx) < 6 && Math.abs(dz) < 9;
+      if (aheadP && G.driving) {
+        wantStop = true;
+        if (pSpeed < 1) {
+          car.blockedT = (car.blockedT ?? 0) + dt;
+          if (car.blockedT > 3 && honkCd.current <= 0) { sfx.horn(); honkCd.current = 1.6; }
+        } else car.blockedT = 0;
+        if (car.speed > 2 && honkCd.current <= 0 && Math.random() < 0.3) { sfx.horn(); honkCd.current = 2.5; }
+      } else car.blockedT = 0;
+      const cruise = car.kind === "taxi" ? 10 : car.fleeing > 0 ? 13 : 8.5;
+      const target = wantStop ? 0 : cruise;
+      car.speed += THREE.MathUtils.clamp(target - car.speed, (wantStop ? -16 : -8) * dt, 5 * dt);
+      if (car.speed < 0.02 && wantStop) car.speed = 0;
       if (car.axis === "x") car.x += car.dir * car.speed * dt; else car.z += car.dir * car.speed * dt;
+      // the reckless one weaves inside the lane (A2 colour)
+      if (car.reckless && car.speed > 3) {
+        const weave = Math.sin(t * 1.7 + ti) * 0.9;
+        if (car.axis === "x") car.z = (car.fixed ?? 0) + car.lane + weave; else car.x = (car.fixed ?? 0) + car.lane + weave;
+      }
       // turn at intersections (road lists are per-city)
-      const crossRoads = car.side === "coral" ? (car.axis === "x" ? CORAL_ROAD_X : CORAL_ROAD_Z) : ROAD_COORDS;
+      const crossRoads = car.side === "coral" ? (car.axis === "x" ? CORAL_ROAD_X : CORAL_ROAD_Z)
+        : car.side === "north" ? (car.axis === "x" ? NORTH_ROAD_X : NORTH_ROAD_Z) : ROAD_COORDS;
       const alongNow = car.axis === "x" ? car.x : car.z;
       const nearRoad = crossRoads.find((c) => Math.abs(alongNow - c) < 1.2);
-      if (nearRoad !== undefined && Math.random() < 0.012) {
+      if (nearRoad !== undefined && Math.random() < 0.012 && car.speed > 1) {
         const along = car.axis === "x" ? car.x : car.z;
         car.axis = car.axis === "x" ? "z" : "x";
         car.dir = (Math.random() > 0.5 ? 1 : -1) as 1 | -1;
         const fixed = nearRoad - car.lane + (car.dir > 0 ? 2.8 : -2.8);
         car.lane = car.dir > 0 ? 2.8 : -2.8;
+        car.fixed = nearRoad;
         if (car.axis === "x") { car.z = fixed; car.x = along; } else { car.x = fixed; car.z = along; }
         car.heading = headingFor(car.axis, car.dir);
         car.steerVis = 0.75 * car.dir;
@@ -240,22 +467,29 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           car.dir = (car.dir * -1) as 1 | -1; car.lane = car.dir > 0 ? 2.8 : -2.8; car.heading = headingFor(car.axis, car.dir);
           car.x = THREE.MathUtils.clamp(car.x, 33, 107); car.z = THREE.MathUtils.clamp(car.z, 201, 319);
         }
+      } else if (car.side === "north") {
+        if (car.x < -114 || car.x > 34 || car.z < -292 || car.z > -190) {
+          car.dir = (car.dir * -1) as 1 | -1; car.lane = car.dir > 0 ? 2.8 : -2.8; car.heading = headingFor(car.axis, car.dir);
+          car.x = THREE.MathUtils.clamp(car.x, -112, 32); car.z = THREE.MathUtils.clamp(car.z, -290, -192);
+        }
       } else if (Math.abs(car.x) > 112 || Math.abs(car.z) > 112) { car.dir = (car.dir * -1) as 1 | -1; car.lane = car.dir > 0 ? 2.8 : -2.8; car.heading = headingFor(car.axis, car.dir); car.x = THREE.MathUtils.clamp(car.x, -110, 110); car.z = THREE.MathUtils.clamp(car.z, -110, 110); }
       car.heading = headingFor(car.axis, car.dir);
       // presentation: pitch from acceleration, wheel steer decays after turns
       car.pitch += (THREE.MathUtils.clamp(-(car.speed - prevSpeed) / Math.max(dt, 0.001) * 0.0028, -0.05, 0.055) - car.pitch) * Math.min(1, dt * 6);
       car.steerVis += (0 - car.steerVis) * Math.min(1, dt * 5);
-      void prevHeading;
-      const ti = G.traffic.indexOf(car);
       if (trafficSteerRefs[ti]) trafficSteerRefs[ti].current = car.steerVis;
-      if (trafficBrakeRefs.current[ti]) trafficBrakeRefs.current[ti].current = car.stopped > 0 || car.speed < 1.5;
+      if (trafficBrakeRefs.current[ti]) trafficBrakeRefs.current[ti].current = wantStop || car.speed < 1.5;
     }
     // ---- pedestrians: density breathes with the time of day (Blueprint §2) —
-    // downtown/Market Row crowds thin out late at night; the beach peaks at dusk.
+    // downtown/Market Row crowds thin out late at night; the beach peaks at
+    // dusk. Phase 6 (A2/A4): rush hours pack the pavements; at night the
+    // survivors drift toward the club strip; in rain everyone hurries.
     const elevNow = Math.sin(G.dayTime * Math.PI * 2 - Math.PI / 2);
+    const raining = G.rainAmt > 0.25;
     G.peds.forEach((ped, i) => {
       let frac = elevNow > 0.05 ? 1 : 0.45; // deep night: under half the walkers
       if (ped.zone === "The Docks") frac = elevNow > -0.35 && elevNow < 0.55 ? 1 : 0.55; // dusk beach crowd
+      if (rush) frac = Math.min(1, frac + 0.25); // morning/evening pavement peaks
       ped.active = ((i * 7) % G.peds.length) / G.peds.length < frac;
     });
     const phys = physicsRef.current ?? fallbackPhysics;
@@ -264,11 +498,49 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // knocked down (punch/gunfire): lies still, then gets up and flees
       if (t < ped.downUntil) { ped.speed = 0; continue; }
       const threatD2 = (ped.x - px) ** 2 + (ped.z - pz) ** 2;
+      // streaming: beyond 170u a ped holds position (mesh still poses cheaply)
+      if (threatD2 > 170 ** 2) { ped.speed = 0; continue; }
       const flee = (G.driving && pSpeed > 5 && threatD2 < 15 ** 2) || (G.wanted > 0 && threatD2 < 10 ** 2) || t < ped.fleeUntil;
-      const ahead = 14;
-      const tx = ped.axis === "x" ? ped.x + ped.dir * ahead : ped.x;
-      const tz = ped.axis === "z" ? ped.z + ped.dir * ahead : ped.z;
-      const next = phys.stepPedestrian(ped, tx, tz, px, pz, flee, 1.6, dt);
+      // ---- Phase 6 destination brain (A4) ----
+      if (ped.mode === undefined) { ped.mode = "walk"; ped.destX = ped.x; ped.destZ = ped.z; ped.waitUntil = 0; }
+      if (flee) ped.mode = "walk";
+      else if (raining && ped.mode !== "shelter") {
+        // rain: break for the nearest awning and huddle there a while
+        let best = SHELTERS[0]; let bd = Infinity;
+        for (const s of SHELTERS) { const d = (s.x - ped.x) ** 2 + (s.z - ped.z) ** 2; if (d < bd) { bd = d; best = s; } }
+        ped.mode = "shelter"; ped.destX = best.x; ped.destZ = best.z;
+      } else if (!raining && ped.mode === "shelter" && t > (ped.waitUntil ?? 0)) {
+        ped.mode = "walk"; const d = pickDest(ped.area); ped.destX = d.x; ped.destZ = d.z;
+      }
+      let tx: number, tz: number, arriveR = 1.6;
+      if (ped.mode === "sit") {
+        if (t > (ped.waitUntil ?? 0)) { ped.mode = "walk"; const d = pickDest(ped.area); ped.destX = d.x; ped.destZ = d.z; }
+        tx = ped.destX ?? ped.x; tz = ped.destZ ?? ped.z; arriveR = 0.4;
+      } else if (ped.mode === "phone") {
+        if (t > (ped.waitUntil ?? 0)) { ped.mode = "walk"; const d = pickDest(ped.area); ped.destX = d.x; ped.destZ = d.z; }
+        tx = ped.x; tz = ped.z; // standing still, head down at the screen
+      } else {
+        // walking to a destination (or fleeing): night drifts club-ward
+        if (ped.mode === "walk" && ped.destX !== undefined) {
+          const dd = Math.hypot((ped.destX) - ped.x, (ped.destZ ?? ped.z) - ped.z);
+          if (dd < 1.4) {
+            const wps = WAYPOINTS[ped.area];
+            const atSit = wps.some((w) => w.sit && Math.abs(w.x - (ped.destX ?? 0)) < 0.1 && Math.abs(w.z - (ped.destZ ?? 0)) < 0.1);
+            if (atSit && !raining) { ped.mode = "sit"; ped.waitUntil = t + 14 + Math.random() * 26; }
+            else if (Math.random() < 0.3 && !raining) { ped.mode = "phone"; ped.waitUntil = t + 5 + Math.random() * 7; }
+            else {
+              let d = pickDest(ped.area);
+              if (elevNow <= 0.05 && ped.area === "main" && Math.random() < 0.5) d = { x: -34 + Math.random() * 10, z: -14 + Math.random() * 8 }; // club strip
+              ped.destX = d.x; ped.destZ = d.z;
+            }
+          }
+        }
+        tx = flee ? (ped.axis === "x" ? ped.x + ped.dir * 14 : ped.x) : (ped.destX ?? ped.x);
+        tz = flee ? (ped.axis === "z" ? ped.z + ped.dir * 14 : ped.z) : (ped.destZ ?? ped.z);
+      }
+      const walkBase = ped.mode === "shelter" ? 2.6 : raining ? 2.2 : 1.6; // rain = hurry
+      const next = phys.stepPedestrian(ped, tx, tz, px, pz, flee, walkBase, dt);
+      const arrived = ped.mode !== "phone" && Math.hypot(tx - ped.x, tz - ped.z) < arriveR;
       if (!isBlocked(next.x, next.z, 0.4)) { ped.x = next.x; ped.z = next.z; }
       // separation steering (C++ physics): peds keep personal space
       const near: { x: number; z: number }[] = [];
@@ -283,9 +555,13 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         const sx = ped.x + f.x * dt * 0.85, sz = ped.z + f.z * dt * 0.85;
         if (!isBlocked(sx, sz, 0.4)) { ped.x = sx; ped.z = sz; }
       }
-      ped.heading = next.heading; ped.speed = next.speed; ped.swing += dt * (2 + ped.speed * 2.4);
+      ped.heading = ped.mode === "phone" || ped.mode === "sit" ? ped.heading : next.heading;
+      ped.speed = (ped.mode === "phone" || ped.mode === "sit" || arrived) ? 0 : next.speed;
+      ped.swing += dt * (2 + ped.speed * 2.4);
       if (ped.area === "coral") {
         if (ped.x < 31 || ped.x > 109 || ped.z < 200 || ped.z > 320) ped.dir = (ped.dir * -1) as 1 | -1;
+      } else if (ped.area === "north") {
+        if (ped.x < -114 || ped.x > 34 || ped.z < -292 || ped.z > -190) { const d = pickDest("north"); ped.destX = d.x; ped.destZ = d.z; ped.mode = "walk"; }
       } else if (Math.abs(ped.x) > 114 || Math.abs(ped.z) > 118) { ped.dir = (ped.dir * -1) as 1 | -1; }
       // hit by player car
       if (G.driving && hitCooldown.current <= 0 && threatD2 < 2.2 ** 2 && pSpeed > 4) {
@@ -307,7 +583,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     };
     let seen = false;
     if (want > 0) {
-      const sightR = 58 * (1 - G.fogAmt * 0.45) * (1 - G.rainAmt * 0.15) * (G.crouched && !G.driving ? 0.85 : 1);
+      // crouch-behind-cover (A6): crouched against a wall/car shrinks the
+      // sight radius further — G.inCover is computed in the vitals block
+      const sightR = 58 * (1 - G.fogAmt * 0.45) * (1 - G.rainAmt * 0.15) * (G.crouched && !G.driving ? (G.inCover ? 0.62 : 0.85) : 1);
       for (const cop of G.cops) {
         if (!cop.active) continue;
         const d = Math.hypot(cop.x - px, cop.z - pz);
@@ -325,6 +603,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         if (pz > 150) { // Coral Shores pursuit — spawn on the far shore grid
           cop.x = THREE.MathUtils.clamp(px + Math.sin(ang) * 40, 34, 106);
           cop.z = THREE.MathUtils.clamp(pz + Math.cos(ang) * 40, 204, 316);
+        } else if (inNorth(px, pz) || onIsland(px, pz)) { // Northgate pursuit (A1)
+          cop.x = THREE.MathUtils.clamp(px + Math.sin(ang) * 42, -112, 32);
+          cop.z = THREE.MathUtils.clamp(pz + Math.cos(ang) * 42, -290, -192);
         } else {
           cop.x = THREE.MathUtils.clamp(px + Math.sin(ang) * 46, -108, 108);
           cop.z = THREE.MathUtils.clamp(pz + Math.cos(ang) * 46, -108, 112);
@@ -387,7 +668,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const me = () => toBody(mine.state.x, mine.state.z, mine.state.heading, mine.state.speed, myR);
       for (const tc of G.traffic) {
         if ((tc.x - mine.state.x) ** 2 + (tc.z - mine.state.z) ** 2 > 4.2 ** 2) continue;
-        const res = physEng.resolveVehicleCollision(me(), toBody(tc.x, tc.z, tc.heading, tc.speed, 1.55));
+        const res = physEng.resolveVehicleCollisionV2(me(), toBody(tc.x, tc.z, tc.heading, tc.speed, tc.kind === "bus" ? 2.2 : 1.55));
         if (res.damage > 0 || (res.b.x !== tc.x || res.b.z !== tc.z)) {
           tc.x = res.b.x; tc.z = res.b.z;
           tc.speed = Math.max(0, Math.min(13, res.b.vx * Math.sin(tc.heading) + res.b.vz * Math.cos(tc.heading)));
@@ -398,7 +679,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       for (const cop of G.cops) {
         if (!cop.active) continue;
         if ((cop.x - mine.state.x) ** 2 + (cop.z - mine.state.z) ** 2 > 4.2 ** 2) continue;
-        const res = physEng.resolveVehicleCollision(me(), toBody(cop.x, cop.z, cop.heading, cop.speed, 1.55));
+        const res = physEng.resolveVehicleCollisionV2(me(), toBody(cop.x, cop.z, cop.heading, cop.speed, 1.55));
         cop.x = res.b.x; cop.z = res.b.z;
         cop.speed = Math.max(0, Math.min(25, res.b.vx * Math.sin(cop.heading) + res.b.vz * Math.cos(cop.heading)));
         applyHit(res, () => undefined, false);
@@ -407,7 +688,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         if (oi === G.activeCarId || other.state.speed !== 0) return;
         if ((other.state.x - mine.state.x) ** 2 + (other.state.z - mine.state.z) ** 2 > 4.2 ** 2) return;
         const keepX = other.state.x, keepZ = other.state.z;
-        const res = physEng.resolveVehicleCollision(me(), toBody(other.state.x, other.state.z, other.state.heading, 0, other.kind === "motorcycle" ? 1.0 : 1.55));
+        const res = physEng.resolveVehicleCollisionV2(me(), toBody(other.state.x, other.state.z, other.state.heading, 0, other.kind === "motorcycle" ? 1.0 : other.kind === "bus" ? 2.2 : other.kind === "bicycle" ? 0.85 : other.kind === "boat" ? 1.9 : 1.55));
         other.state.x = keepX; other.state.z = keepZ; // parked cars don't roll away
         if (res.damage > 0) {
           mine.state.x = res.a.x + (res.b.x - keepX); mine.state.z = res.a.z + (res.b.z - keepZ);
@@ -461,10 +742,15 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     });
     if (want > 0) {
       const nearestCop = Math.min(...G.cops.filter((c) => c.active).map((c) => Math.hypot(c.x - px, c.z - pz)), 999);
-      if (!seen) { G.wantedCooldown += dt; if (G.wantedCooldown > 11) { G.wanted -= 1; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup("Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
-      // busted: cop close + player slow (unchanged rule, cleaner condition)
+      // disguise-lite (A5): while seen, remember the car + district; while
+      // UNSEEN, heat bleeds faster if you've swapped either since
+      if (seen) disguise.current = { carId: G.activeCarId, district: districtAt(px, pz) };
+      const disguised = disguise.current.carId !== -2 && (G.activeCarId !== disguise.current.carId || districtAt(px, pz) !== disguise.current.district);
+      if (!seen) { G.wantedCooldown += dt * (disguised ? 1.6 : 1); if (G.wantedCooldown > 11) { G.wanted -= 1; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup(disguised ? "New wheels, new district — heat lost faster" : "Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
+      // busted: cop close + player slow (unchanged rule, cleaner condition;
+      // crouched in cover slows the grab — A6)
       if (nearestCop < 7.5 && pSpeed < 2.5) {
-        G.bustTimer += dt;
+        G.bustTimer += dt * (G.inCover ? 0.6 : 1);
         if (G.bustTimer > 3) { G.status = "busted"; G.statusTimer = 0; sfx.busted(); bark("Harbour Patrol", "Suspect in custody. Repeat — suspect in custody."); }
       } else G.bustTimer = Math.max(0, G.bustTimer - dt * 1.5);
     } else G.bustTimer = 0;
@@ -511,7 +797,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           // Phase 4: parking at the villa also files the car in the stored
           // garage list (selectable from either garage, max 6)
           if (G.storedCars.length < 6 && !G.storedCars.some((s) => s.kind === car.kind && s.color === car.color)) {
-            G.storedCars.push({ kind: car.kind, color: car.color, name: CAR_MODELS[car.kind].name, damage: Math.round(car.damage), fuel: Math.round(car.fuel), brokenWindow: car.brokenWindow });
+            G.storedCars.push({ kind: car.kind, color: car.color, name: CAR_MODELS[car.kind].name, damage: Math.round(car.damage), fuel: Math.round(car.fuel), brokenWindow: car.brokenWindow, tuneLvl: car.tuneLvl ?? 0, brakeLvl: car.brakeLvl ?? 0, flatTyre: car.flatTyre ?? false });
             persistStoredCars();
           }
           cb.current.popup("Car saved in your villa garage — it'll be here next visit.");
@@ -524,6 +810,128 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const o = G.objective;
       beam.current.visible = !!o && M.phase === "play";
       if (o) { beam.current.position.set(o.x, 0, o.z); beam.current.rotation.y = t * 0.8; }
+    }
+    // ================= Phase 6: player vitals — stamina, skills, cover,
+    // health regen (A7) + spike strips (A5) + random events (B2) ========
+    {
+      const v = vitals.current;
+      const poolMul = G.skills.stamina >= 50 ? 0.8 : 1; // +25% effective pool
+      let drain = 0;
+      if (G.playerSprinting) drain = 14;
+      else if (G.swimming) drain = 9;
+      else if (G.bikePedalling) drain = 8;
+      if (drain > 0) {
+        v.stamDelay = 0.7;
+        G.stamina = Math.max(0, G.stamina - drain * poolMul * dt);
+        v.sprintAcc += dt;
+        if (v.sprintAcc > 20) { v.sprintAcc = 0; if (G.skills.stamina < 100) { G.skills.stamina += 1; persistSkills(); } }
+        if (G.stamina <= 0) G.exhausted = true;
+      } else {
+        v.stamDelay = Math.max(0, v.stamDelay - dt);
+        if (v.stamDelay <= 0) G.stamina = Math.min(100, G.stamina + 10 * dt);
+        if (G.exhausted && G.stamina > 20) G.exhausted = false;
+      }
+      // skills by use: driving time + trigger time
+      if (G.driving && pSpeed > 3) {
+        v.driveAcc += dt;
+        if (v.driveAcc > 25) { v.driveAcc = 0; if (G.skills.driving < 100) { G.skills.driving += 1; persistSkills(); } }
+      }
+      if (G.skillShootAcc >= 10) {
+        G.skillShootAcc -= 10;
+        if (G.skills.shooting < 100) { G.skills.shooting += 1; persistSkills(); }
+      }
+      // health: slow regen to 50 only, and only once you've been out of
+      // harm's way for 5 s (a fresh hit restarts the wait)
+      if (G.health < v.lastHealth) { v.lastHealth = G.health; v.hurtAt = t; }
+      if (G.health < 50 && !G.status && t - v.hurtAt > 5) {
+        G.health = Math.min(50, G.health + 1.5 * dt);
+        v.lastHealth = G.health;
+      }
+      // cover: crouched with a solid blocker within 1.3u on any side
+      G.inCover = false;
+      if (G.crouched && !G.driving && !G.interior) {
+        for (const [ox, oz] of [[1.15, 0], [-1.15, 0], [0, 1.15], [0, -1.15]]) {
+          if (isBlocked(G.playerPos.x + ox, G.playerPos.z + oz, 0.3)) { G.inCover = true; break; }
+        }
+        if (!G.inCover) for (const c of G.cars) {
+          if ((c.state.x - G.playerPos.x) ** 2 + (c.state.z - G.playerPos.z) ** 2 < 2.6 ** 2) { G.inCover = true; break; }
+        }
+      }
+    }
+    // ---- spike strips at 4★+ roadblocks (A5): run them over and the
+    // tyre lets go — pull, wobble and a hard speed cap until repaired ----
+    spikeCd.current = Math.max(0, spikeCd.current - dt);
+    if (rb.active && G.driving && spikeCd.current <= 0) {
+      const mine = G.cars[G.activeCarId];
+      if (mine && !mine.flatTyre && pSpeed > 3) {
+        const alongRb = (mine.state.x - rb.x) * rb.hx + (mine.state.z - rb.z) * rb.hz;
+        const sideRb = (mine.state.x - rb.x) * rb.ox + (mine.state.z - rb.z) * rb.oz;
+        if (Math.abs(alongRb) < 1.6 && Math.abs(sideRb) < 4.6) {
+          mine.flatTyre = true;
+          spikeCd.current = 3;
+          sfx.pop();
+          toast("Spike strip! Tyre shredded — limp to a garage (R to repair).");
+          bark("Dispatch", "Spikes deployed — suspect vehicle is running on a rim.");
+        }
+      }
+    }
+    if (spikeRef.current) {
+      spikeRef.current.visible = rb.active;
+      if (rb.active) {
+        spikeRef.current.position.set(rb.x, groundYAt(rb.x, rb.z) + 0.06, rb.z);
+        spikeRef.current.rotation.y = Math.atan2(rb.ox, rb.oz);
+      }
+    }
+    // ---- random world events (B2): one ambient scene at a time ----
+    {
+      const ev = eventState.current;
+      if (ev && (t > ev.until || Math.hypot(ev.x - px, ev.z - pz) > 150)) {
+        eventState.current = null;
+        if (G.eventNow) G.eventNow = null;
+        if (ev.kind === "chase") { const c5 = G.cops[5]; if (c5 && G.wanted === 0) c5.active = false; }
+      }
+      if (!eventState.current && !M.active) {
+        eventTimer.current -= dt;
+        if (eventTimer.current <= 0) {
+          eventTimer.current = 45 + Math.random() * 35;
+          const kind = (["crash", "chase", "performer", "breakdown"] as const)[Math.floor(Math.random() * 4)];
+          const spots: Record<string, [number, number, number]> = {
+            crash: [44, -38, 0.8], chase: [0, 0, 0], performer: [14, 112, 0], breakdown: [-64, 44, 2.2],
+          };
+          const [ex, ez, eh] = spots[kind];
+          eventState.current = { kind, x: ex, z: ez, heading: eh, until: t + (kind === "chase" ? 26 : 100), barked: false };
+          if (kind === "performer") G.eventNow = { kind: "performer", x: ex, z: ez, tipped: false };
+          if (kind === "chase") {
+            const c5 = G.cops[5];
+            if (c5) { c5.active = true; c5.x = px + 30; c5.z = pz - 20; c5.speed = 10; }
+          }
+        }
+      }
+      const evNow = eventState.current;
+      if (evNow && !evNow.barked && Math.hypot(evNow.x - px, evNow.z - pz) < 42) {
+        evNow.barked = true;
+        if (evNow.kind === "crash") bark("Bystander", "Two cars kissed at the lights — nobody's hurt, everyone's shouting.");
+        else if (evNow.kind === "performer") bark("Performer", "Tips keep the music playing, friend!");
+        else if (evNow.kind === "breakdown") bark("Stranded driver", "She just died on me… anyone know a mechanic?");
+        else if (evNow.kind === "chase") bark("Dispatch", "Unit 5 in pursuit of a fleeing vehicle — not our suspect.");
+      }
+      // the chase event: cop 5 tails a phantom runner ahead of the player
+      if (evNow?.kind === "chase" && G.wanted === 0) {
+        const c5 = G.cops[5];
+        if (c5?.active) {
+          const tx2 = px + Math.sin(t * 0.11) * 55, tz2 = pz + Math.cos(t * 0.11) * 55;
+          const dx2 = tx2 - c5.x, dz2 = tz2 - c5.z;
+          const dd = Math.hypot(dx2, dz2);
+          const des = Math.atan2(dx2, dz2);
+          let trn = des - c5.heading; trn = Math.atan2(Math.sin(trn), Math.cos(trn));
+          c5.heading += THREE.MathUtils.clamp(trn, -2.2 * dt, 2.2 * dt);
+          c5.speed += THREE.MathUtils.clamp((dd > 12 ? 17 : 10) - c5.speed, -14 * dt, 8 * dt);
+          const nx2 = c5.x + Math.sin(c5.heading) * c5.speed * dt, nz2 = c5.z + Math.cos(c5.heading) * c5.speed * dt;
+          if (!isBlocked(nx2, nz2, 1.3)) { c5.x = nx2; c5.z = nz2; }
+          c5.lightPhase += dt * 7;
+          evNow.x = c5.x; evNow.z = c5.z;
+        }
+      }
     }
     syncMeshes(t);
     function failMission(reason: string) {
@@ -562,7 +970,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     }
     function syncMeshes(tt: number) {
       frameNo.current += 1;
-      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.position.set(c.x, groundYAt(c.x, c.z), c.z); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, 0); } });
+      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.visible = !c.dormant; g.position.set(c.x, groundYAt(c.x, c.z), c.z); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, 0); } });
       const reportT = performance.now() / 1000;
       G.peds.forEach((pd, i) => {
         const g = pedRefs.current[i]; if (!g) return;
@@ -573,10 +981,84 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         const rig = pedRigs[i];
         // Visual V7: far peds (>120u) animate every 3rd frame
         const far = (pd.x - G.followPos.x) ** 2 + (pd.z - G.followPos.z) ** 2 > 120 ** 2;
-        if (rig && !down && (!far || (frameNo.current + i) % 3 === 0)) animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
+        if (rig && !down && (!far || (frameNo.current + i) % 3 === 0)) {
+          animateHumanoid(rig, pd.swing * 1.7, Math.min(1, Math.abs(pd.speed) / 1.7), tt);
+          // ---- Phase 6 life poses (A4/A6) ----
+          if (pd.mode === "sit") {
+            rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.45;
+            rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
+            rig.group.position.y = -0.42;
+          } else rig.group.position.y = 0;
+          if (pd.mode === "phone") {
+            rig.head.rotation.x = 0.52; // head down at the screen
+            rig.rArm.rotation.x = -0.85; rig.rFore.rotation.x = -0.5;
+            rig.lArm.rotation.x = -0.55; rig.lFore.rotation.x = -0.45;
+          }
+          if (pd.mode === "shelter") rig.torso.rotation.x = 0.14; // huddled
+          if (tt < (pd.flinchUntil ?? 0)) {
+            // gunfire hit reaction: arms thrown up, body recoils (A6)
+            rig.lArm.rotation.x = -2.6; rig.rArm.rotation.x = -2.4;
+            rig.torso.rotation.x = -0.28;
+          }
+        }
+        // phone screen glow — visible at night while a ped is scrolling
+        const glow = phoneGlowRefs.current[i];
+        if (glow) {
+          const nightF = 1 - THREE.MathUtils.clamp(Math.sin(G.dayTime * Math.PI * 2 - Math.PI / 2) * 1.6 + 0.35, 0, 1);
+          glow.visible = pd.active && !down && pd.mode === "phone" && nightF > 0.25;
+          if (glow.visible) glow.position.set(pd.x + Math.sin(pd.heading) * 0.34, 1.18, pd.z + Math.cos(pd.heading) * 0.34);
+        }
         const marker = reportRefs.current[i];
         if (marker) marker.visible = pd.active && !down && G.reportingPed === i && reportT < G.witnessUntil;
       });
+      // the dog trots beside its owner (A4)
+      if (dogRef.current) {
+        const owner = G.peds.find((p) => p.hasDog);
+        if (owner && owner.active && tt >= owner.downUntil) {
+          dogRef.current.visible = true;
+          const ox = owner.x + Math.cos(owner.heading) * 0.85, oz = owner.z - Math.sin(owner.heading) * 0.85;
+          dogRef.current.position.set(ox, groundYAt(ox, oz), oz);
+          dogRef.current.rotation.y = owner.heading + Math.PI / 2 + Math.sin(tt * 2.2) * 0.12;
+          dogRef.current.position.y += Math.abs(Math.sin(tt * 7)) * 0.03 * Math.min(1, owner.speed);
+        } else dogRef.current.visible = false;
+      }
+      // ---- random-event presentation (B2): rigs + car placed per kind ----
+      {
+        const ev = eventState.current;
+        const showRigs = !!ev && (ev.kind === "crash" || ev.kind === "performer" || ev.kind === "breakdown");
+        eventRefs.current.forEach((g, ri) => {
+          if (!g) return;
+          const rig = eventRigs[ri];
+          const use = showRigs && (ev!.kind === "performer" ? ri < 5 : ri < 3);
+          g.visible = use;
+          if (!use) return;
+          const ang = (ri / 5) * Math.PI * 2 + 0.4;
+          const rr = ev!.kind === "performer" ? 2.6 : 2 + ri * 0.8;
+          const ex = ev!.kind === "performer" ? ev!.x + Math.sin(ang) * rr : ev!.x + 2.4 + ri * 1.1;
+          const ez = ev!.kind === "performer" ? ev!.z + Math.cos(ang) * rr : ev!.z + 1.6 - ri * 0.7;
+          g.position.set(ex, groundYAt(ex, ez), ez);
+          g.rotation.y = Math.atan2(ev!.x - ex, ev!.z - ez);
+          animateHumanoid(rig, tt * 1.2 + ri, 0, tt + ri * 1.7);
+          if (ev!.kind === "performer" && ri === 4) {
+            // the performer: arms up, swaying to their own music
+            rig.lArm.rotation.x = -2.9 + Math.sin(tt * 2.4) * 0.25;
+            rig.rArm.rotation.x = -2.7 + Math.cos(tt * 2.1) * 0.25;
+            rig.torso.rotation.z = Math.sin(tt * 1.8) * 0.08;
+          }
+          if (ev!.kind === "breakdown" && ri === 0) {
+            rig.torso.rotation.x = 0.5; // bent over the engine bay
+            rig.rArm.rotation.x = -0.9;
+          }
+        });
+        if (eventCarRef.current) {
+          const showCar = !!ev && (ev.kind === "crash" || ev.kind === "breakdown");
+          eventCarRef.current.visible = showCar;
+          if (showCar && ev) {
+            eventCarRef.current.position.set(ev.x, groundYAt(ev.x, ev.z), ev.z);
+            eventCarRef.current.rotation.y = ev.heading + (ev.kind === "crash" ? 0.5 : 0);
+          }
+        }
+      }
       // NPC-life vignettes: seated figures (sit pose re-applied after idle anim)
       for (const v of vignettes.seated) {
         animateHumanoid(v.rig, 0, 0, tt);
@@ -593,9 +1075,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         birdRef.current.rotation.y = tt * 0.045;
         birdRef.current.children.forEach((b, i) => { b.position.y = 24 + Math.sin(tt * 1.6 + i * 1.3) * 1.6; b.rotation.z = Math.sin(tt * 6 + i) * 0.35; });
       }
-      // police helicopter at high heat: slow orbit above the player
+      // police helicopter: slow orbit above the player at high heat; at
+      // night from 3★ its SEARCHLIGHT cone sweeps the ground (A5)
       if (heliRef.current) {
-        const show = G.wanted >= 4;
+        const nightNow = Math.sin(G.dayTime * Math.PI * 2 - Math.PI / 2) < -0.15;
+        const show = G.wanted >= 4 || (G.wanted >= 3 && nightNow);
         heliRef.current.visible = show;
         if (show) {
           const hx = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.x : G.playerPos.x;
@@ -603,7 +1087,16 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           heliRef.current.position.set(hx + Math.sin(tt * 0.35) * 11, 17 + Math.sin(tt * 0.8) * 1.3, hz + Math.cos(tt * 0.35) * 11);
           heliRef.current.rotation.y = tt * 0.35 + Math.PI / 2;
           if (heliRotor.current) heliRotor.current.rotation.y = tt * 30;
-        }
+          if (heliDisc.current) {
+            heliDisc.current.visible = nightNow;
+            if (nightNow) {
+              const sx = hx + Math.sin(tt * 0.9) * 6, sz = hz + Math.cos(tt * 0.7) * 6;
+              heliDisc.current.position.set(sx, groundYAt(sx, sz) + 0.12, sz);
+              const m = heliDisc.current.material as THREE.MeshBasicMaterial;
+              m.opacity = 0.16 + Math.sin(tt * 5) * 0.03;
+            }
+          }
+        } else if (heliDisc.current) heliDisc.current.visible = false;
       }
       let nearestCop: { d: number; i: number } | null = null;
       G.cops.forEach((c, i) => {
@@ -654,32 +1147,66 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         shadow-mapSize-width={gates.shadowMapSize(quality)} shadow-mapSize-height={gates.shadowMapSize(quality)}
         shadow-radius={gates.shadowRadius(quality)}
         shadow-camera-left={-55} shadow-camera-right={55} shadow-camera-top={55} shadow-camera-bottom={-55} shadow-bias={-0.0002} shadow-normalBias={0.02} />
-      {/* traffic — detailed bodies, classes cycle like the mood board */}
-      {G.traffic.map((c, i) => (
+      {/* traffic — detailed bodies; Phase 6 mounts only at load stage ≥4
+          (staged construction) and each car renders its OWN kind now */}
+      {stage >= 4 && G.traffic.map((c, i) => (
         <group key={i} ref={(n) => { trafficRefs.current[i] = n; }} position={[c.x, 0, c.z]}>
-          <CarBody kind={TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} steerRef={trafficSteerRefs[i]} liveDamage={() => G.traffic[i].damage} brakeRef={trafficBrakeRefs.current[i]} beams />
+          <CarBody kind={c.kind ?? TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} steerRef={trafficSteerRefs[i]} liveDamage={() => G.traffic[i].damage} brakeRef={trafficBrakeRefs.current[i]} beams />
         </group>
       ))}
       {/* pedestrians — articulated humanoids with outfit variety */}
-      {G.peds.map((pd, i) => (
-        <group key={i} ref={(n) => { pedRefs.current[i] = n; }} position={[pd.x, 0, pd.z]}>
-          {pedRigs[i] && <primitive object={pedRigs[i].group} />}
-          {/* witness "!" marker while this ped is calling in a crime */}
-          <group ref={(n) => { reportRefs.current[i] = n; }} position={[0, 2.2, 0]} visible={false}>
-            <mesh><boxGeometry args={[0.09, 0.34, 0.09]} /><meshBasicMaterial color="#ffb703" /></mesh>
-            <mesh position={[0, -0.28, 0]}><boxGeometry args={[0.09, 0.09, 0.09]} /><meshBasicMaterial color="#ffb703" /></mesh>
+      {stage >= 4 && G.peds.map((pd, i) => (
+        <group key={i}>
+          <group ref={(n) => { pedRefs.current[i] = n; }} position={[pd.x, 0, pd.z]}>
+            {pedRigs[i] && <primitive object={pedRigs[i].group} />}
+            {/* witness "!" marker while this ped is calling in a crime */}
+            <group ref={(n) => { reportRefs.current[i] = n; }} position={[0, 2.2, 0]} visible={false}>
+              <mesh><boxGeometry args={[0.09, 0.34, 0.09]} /><meshBasicMaterial color="#ffb703" /></mesh>
+              <mesh position={[0, -0.28, 0]}><boxGeometry args={[0.09, 0.09, 0.09]} /><meshBasicMaterial color="#ffb703" /></mesh>
+            </group>
           </group>
+          {/* phone screen glow (night, phone-mode peds) — world-positioned */}
+          <sprite ref={(n) => { phoneGlowRefs.current[i] = n; }} visible={false} scale={[0.55, 0.55, 1]}>
+            <spriteMaterial map={glowTex} color="#bcd8ff" transparent opacity={0.5} depthWrite={false} blending={THREE.AdditiveBlending} />
+          </sprite>
         </group>
       ))}
+      {/* the dog (A4) + street vendor figure at the Market Row stall */}
+      {stage >= 4 && <primitive object={dogRig} ref={dogRef} />}
+      {stage >= 4 && (
+        <group position={[VENDOR.x + 1.1, 0, VENDOR.z + 0.6]} rotation={[0, -2.2, 0]}>
+          <primitive object={vendorRig.group} />
+        </group>
+      )}
       {/* roadblock patrol cars (spawned at 4+ stars, positioned in useFrame) */}
-      {[0, 1].map((i) => (
+      {stage >= 4 && [0, 1].map((i) => (
         <group key={`rb${i}`} ref={(n) => { rbRefs.current[i] = n; }} visible={false}>
           <CarBody kind="sedan" color="#12161c" police />
           <mesh position={[0, 1.44, -0.1]}><boxGeometry args={[1.05, 0.16, 0.4]} /><meshStandardMaterial color="#ff3333" emissive="#ff2222" emissiveIntensity={1.6} /></mesh>
         </group>
       ))}
+      {/* spike strip laid between the roadblock cars (A5) */}
+      <group ref={spikeRef} visible={false}>
+        <mesh><boxGeometry args={[0.5, 0.07, 9.4]} /><meshStandardMaterial color="#1c1f24" roughness={0.6} metalness={0.3} /></mesh>
+        {[-4, -3, -2, -1, 0, 1, 2, 3, 4].map((s) => (
+          <mesh key={s} position={[0, 0.09, s]} rotation={[0, 0, 0.5]}><coneGeometry args={[0.06, 0.16, 4]} /><meshStandardMaterial color="#c8ccd2" metalness={0.8} roughness={0.3} /></mesh>
+        ))}
+      </group>
+      {/* random-event cast + car (B2) */}
+      {stage >= 4 && eventRigs.map((rig, ri) => (
+        <group key={`ev${ri}`} ref={(n) => { eventRefs.current[ri] = n; }} visible={false}>
+          <primitive object={rig.group} />
+        </group>
+      ))}
+      {stage >= 4 && (
+        <group ref={eventCarRef} visible={false}>
+          <CarBody kind="hatch" color="#8a4c4c" />
+          {/* raised hood for the breakdown scene (hidden tilt for crash) */}
+          <mesh position={[0, 0.95, 1.55]} rotation={[-0.7, 0, 0]}><boxGeometry args={[1.5, 0.06, 0.9]} /><meshStandardMaterial color="#6d3a3a" roughness={0.6} /></mesh>
+        </group>
+      )}
       {/* NPC-life vignettes: benches + seated figures, talking pairs */}
-      {vignettes.seated.map((v, i) => (
+      {stage >= 4 && vignettes.seated.map((v, i) => (
         <group key={`seat${i}`}>
           <group position={[v.pos[0], 0, v.pos[1]]} rotation={[0, v.pos[2] + Math.PI, 0]}>
             <mesh position={[0, 0.46, 0.28]} receiveShadow><boxGeometry args={[1.9, 0.09, 0.5]} /><meshStandardMaterial color="#6d4c33" roughness={0.9} /></mesh>
@@ -691,7 +1218,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           </group>
         </group>
       ))}
-      {vignettes.talking.map((v, i) => (
+      {stage >= 4 && vignettes.talking.map((v, i) => (
         <group key={`talk${i}`} position={[v.pos[0], 0, v.pos[1]]} rotation={[0, v.face, 0]}>
           <primitive object={v.rig.group} />
         </group>
@@ -709,7 +1236,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         })}
       </group>
       {/* police — sedan body with livery + flashing light bar */}
-      {G.cops.map((_c, i) => (
+      {stage >= 4 && G.cops.map((_c, i) => (
         <group key={i} ref={(n) => { copRefs.current[i] = n; }} visible={false}>
           <CarBody kind="sedan" color="#12161c" police steerRef={copSteerRefs[i]} />
           <mesh position={[-0.45, 1.44, -0.1]} ref={(n) => { (copLights.current[i] ??= [null, null])[0] = n; }}>
@@ -744,6 +1271,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           <meshBasicMaterial color="#ffeeb0" transparent opacity={0.16} side={THREE.DoubleSide} depthWrite={false} />
         </mesh>
       </group>
+      {/* heli searchlight pool on the ground (night, ≥3★ — A5) */}
+      <mesh ref={heliDisc} visible={false} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[4.6, 20]} />
+        <meshBasicMaterial color="#ffedb5" transparent opacity={0.16} depthWrite={false} />
+      </mesh>
       {/* objective marker: glowing pillar + ring */}
       <group ref={beam} visible={false}>
         <mesh position={[0, 14, 0]}><cylinderGeometry args={[1.1, 1.1, 28, 12, 1, true]} /><meshBasicMaterial color="#ffb703" transparent opacity={0.35} side={THREE.DoubleSide} depthWrite={false} /></mesh>

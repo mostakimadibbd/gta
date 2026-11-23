@@ -28,7 +28,7 @@ emcc "$ROOT_DIR/src/cpp/physics.cpp" \
   -s EXPORT_ES6=1 \
   -s ENVIRONMENT=web \
   -s ALLOW_MEMORY_GROWTH=1 \
-  -s 'EXPORTED_FUNCTIONS=["_malloc","_free","_step_vehicle","_distance_squared","_collide_aabb","_resolve_aabb","_step_pedestrian","_step_vehicle_v2","_resolve_vehicle_collision","_swept_aabb","_separation_force"]' \
+  -s 'EXPORTED_FUNCTIONS=["_malloc","_free","_step_vehicle","_distance_squared","_collide_aabb","_resolve_aabb","_step_pedestrian","_step_vehicle_v2","_resolve_vehicle_collision","_swept_aabb","_separation_force","_suspension_response","_resolve_vehicle_collision_v2"]' \
   -s 'EXPORTED_RUNTIME_METHODS=["cwrap","HEAPF64"]' \
   -o "$OUTPUT_DIR/physics.js"
 

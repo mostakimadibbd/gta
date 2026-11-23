@@ -4,28 +4,47 @@
 // only writes the HUD prompt when Interiors left it empty.
 import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { G, addCrime, toast, stashTotal, bark } from "../game/store";
-import { GARAGE_ZONES, REGISTERS, PAWN_SHOP, INTERIORS } from "../world";
+import { G, addCrime, toast, stashTotal, bark, syncWeaponMirrors, persistStoredCars } from "../game/store";
+import { GARAGE_ZONES, REGISTERS, PAWN_SHOP, INTERIORS, DEALERSHIP, DEALER_CARS, CAR_MODELS, GUN_STORE, VENDOR, HOSPITAL_DOOR } from "../world";
 import { sfx } from "../game/audio";
 import { giveCash, giveItem, rollLootItem, sellStash } from "../game/theft";
+import { pushPhoneMsg } from "../game/phone";
 
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+/** In-game clock hour (matches the phone): dayTime 0 = 06:00. */
+export const gameHour = () => Math.floor((G.dayTime * 24 + 6) % 24);
+/** Market Row shops + the pawn keep hours (B3): closed 23:00–07:00. */
+export const shopsClosed = () => { const h = gameHour(); return h >= 23 || h < 7; };
+
+interface GunItem { label: string; price: number; apply: () => void; }
+const GUN_ITEMS: GunItem[] = [
+  { label: "SMG", price: 650, apply: () => { G.weaponOwned.smg = true; G.weaponAmmo.smg = Math.min(240, G.weaponAmmo.smg + 60); G.weaponSel = "smg"; } },
+  { label: "Shotgun", price: 450, apply: () => { G.weaponOwned.shotgun = true; G.weaponAmmo.shotgun = Math.min(240, G.weaponAmmo.shotgun + 12); G.weaponSel = "shotgun"; } },
+  { label: "Pistol ammo ×24", price: 60, apply: () => { G.weaponAmmo.pistol = Math.min(240, G.weaponAmmo.pistol + 24); } },
+  { label: "SMG ammo ×60", price: 90, apply: () => { G.weaponAmmo.smg = Math.min(240, G.weaponAmmo.smg + 60); } },
+  { label: "Shotgun shells ×12", price: 70, apply: () => { G.weaponAmmo.shotgun = Math.min(240, G.weaponAmmo.shotgun + 12); } },
+];
 
 export default function Interactions() {
   const myPrompt = useRef("");
   const eDownAt = useRef(-1);
   const robTarget = useRef("");
+  // ---- Phase 6 shop browsing: tap E cycles, hold E (0.9 s) buys ----
+  const browseCtx = useRef<"" | "dealer" | "gun" | "pawn">("");
+  const dealerIdx = useRef(0);
+  const gunIdx = useRef(0);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "e" && !e.repeat) eDownAt.current = performance.now() / 1000;
-      // R — repair at a garage while sitting in the car
+      // R — repair at a garage while sitting in the car (Phase 6: a
+      // spiked flat tyre is a $40 line item on the same job)
       if (e.key.toLowerCase() === "r" && !e.repeat && G.driving && G.garageZone) {
         const car = G.cars[G.activeCarId];
-        if (car && (car.damage > 1 || car.brokenWindow)) {
-          const cost = Math.ceil(car.damage * 1.2) + (car.brokenWindow ? 25 : 0);
+        if (car && (car.damage > 1 || car.brokenWindow || car.flatTyre)) {
+          const cost = Math.ceil(car.damage * 1.2) + (car.brokenWindow ? 25 : 0) + (car.flatTyre ? 40 : 0);
           if (G.cash >= cost) {
-            G.cash -= cost; car.damage = 0; car.brokenWindow = false;
+            G.cash -= cost; car.damage = 0; car.brokenWindow = false; car.flatTyre = false;
             toast(`Repaired at ${G.garageZone.label} — $${cost}`);
             sfx.fuel();
           } else toast(`Repair costs $${cost} — not enough cash.`);
@@ -33,7 +52,16 @@ export default function Interactions() {
       }
     };
     const up = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e") { eDownAt.current = -1; if (G.hold?.label.startsWith("Robbing")) G.hold = null; }
+      if (e.key.toLowerCase() === "e") {
+        // a short tap at a shop counter = browse to the next item
+        if (browseCtx.current && eDownAt.current > 0 && performance.now() / 1000 - eDownAt.current < 0.35) {
+          if (browseCtx.current === "dealer") dealerIdx.current = (dealerIdx.current + 1) % DEALER_CARS.length;
+          else gunIdx.current = (gunIdx.current + 1) % GUN_ITEMS.length;
+          sfx.click();
+        }
+        eDownAt.current = -1;
+        if (G.hold?.label.startsWith("Robbing") || G.hold?.label.startsWith("Buying")) G.hold = null;
+      }
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
@@ -43,6 +71,7 @@ export default function Interactions() {
   useFrame(() => {
     const t = G.timeS;
     const px = G.playerPos.x, pz = G.playerPos.z;
+    browseCtx.current = ""; // re-derived below when on foot near a counter
 
     // ---- garage zone tracking (drives the G key + repair, read by App) ----
     let zone: (typeof GARAGE_ZONES)[number] | null = null;
@@ -71,9 +100,9 @@ export default function Interactions() {
       if (G.driving) {
         // repair offer while parked in a garage zone
         const car = G.cars[G.activeCarId];
-        if (zone && car && (car.damage > 1 || car.brokenWindow)) {
-          const cost = Math.ceil(car.damage * 1.2) + (car.brokenWindow ? 25 : 0);
-          prompt = `R — Repair at ${zone.label} ($${cost})`;
+        if (zone && car && (car.damage > 1 || car.brokenWindow || car.flatTyre)) {
+          const cost = Math.ceil(car.damage * 1.2) + (car.brokenWindow ? 25 : 0) + (car.flatTyre ? 40 : 0);
+          prompt = `R — Repair at ${zone.label} ($${cost})${car.flatTyre ? " · incl. new tyre" : ""}`;
         }
         if (G.hold?.label.startsWith("Robbing")) G.hold = null;
       } else if (!G.interior) {
@@ -95,6 +124,45 @@ export default function Interactions() {
         let reg: (typeof REGISTERS)[number] | null = null;
         for (const r of REGISTERS) if ((r.x - px) ** 2 + (r.z - pz) ** 2 < 2.1 ** 2) { reg = r; break; }
         const atPawn = (PAWN_SHOP.x - px) ** 2 + (PAWN_SHOP.z - pz) ** 2 < 2.4 ** 2;
+        const closed = shopsClosed();
+        // ---- Phase 6 counters: dealership / gun store / pawn weapons ----
+        const atDealer = (DEALERSHIP.x - px) ** 2 + (DEALERSHIP.z - pz) ** 2 < 3.2 ** 2;
+        const atGun = (GUN_STORE.x - px) ** 2 + (GUN_STORE.z - pz) ** 2 < 2.6 ** 2;
+        const atVendor = (VENDOR.x - px) ** 2 + (VENDOR.z - pz) ** 2 < 2.4 ** 2;
+        const atHospital = (HOSPITAL_DOOR.x - px) ** 2 + (HOSPITAL_DOOR.z - pz) ** 2 < 3 ** 2;
+        const ev = G.eventNow;
+        const atPerformer = !!ev && ev.kind === "performer" && !ev.tipped && (ev.x - px) ** 2 + (ev.z - pz) ** 2 < 3 ** 2;
+        browseCtx.current = atDealer ? "dealer" : atGun ? "gun" : atPawn && !closed && stashTotal() <= 0 ? "pawn" : "";
+        // hold E at a counter = buy the browsed item (0.9 s)
+        if (browseCtx.current && eDownAt.current > 0) {
+          const isDealer = browseCtx.current === "dealer";
+          const label = isDealer ? CAR_MODELS[DEALER_CARS[dealerIdx.current].kind].name : GUN_ITEMS[gunIdx.current].label;
+          const price = isDealer ? DEALER_CARS[dealerIdx.current].price : GUN_ITEMS[gunIdx.current].price;
+          const progress = (performance.now() / 1000 - eDownAt.current) / 0.9;
+          G.hold = { label: `Buying ${label} — $${price}…`, progress: Math.min(1, progress) };
+          if (progress >= 1) {
+            eDownAt.current = -1; G.hold = null;
+            if (G.cash < price) { toast(`${label} costs $${price} — not enough cash.`); sfx.dryFire(); }
+            else if (isDealer) {
+              if (G.storedCars.length >= 6) toast("Your garage is full (6) — store or sell a car first.");
+              else {
+                const dc = DEALER_CARS[dealerIdx.current];
+                G.cash -= price;
+                G.storedCars.push({ kind: dc.kind, color: dc.color, name: CAR_MODELS[dc.kind].name, damage: 0, fuel: 90, brokenWindow: false });
+                persistStoredCars();
+                pushPhoneMsg("Sable Motors", `🚗 ${CAR_MODELS[dc.kind].name} delivered to your garage. Press G at a garage to take it out.`);
+                toast(`${CAR_MODELS[dc.kind].name} bought — delivered to your garage`);
+                sfx.cash();
+              }
+            } else {
+              G.cash -= price;
+              GUN_ITEMS[gunIdx.current].apply();
+              syncWeaponMirrors();
+              toast(`${label} bought — $${price}`);
+              sfx.register();
+            }
+          }
+        } else if (G.hold?.label.startsWith("Buying")) G.hold = null;
 
         if (pickIdx >= 0) {
           const victim = G.peds[pickIdx];
@@ -119,7 +187,8 @@ export default function Interactions() {
           };
         } else if (reg) {
           const robbed = (G.robbedUntil[reg.id] ?? 0) > t;
-          if (robbed) { prompt = `${reg.name} — the till is empty (robbed today)`; warn = true; }
+          if (closed) { prompt = `${reg.name} — closed (opens 07:00)`; warn = true; }
+          else if (robbed) { prompt = `${reg.name} — the till is empty (robbed today)`; warn = true; }
           else {
             prompt = `Hold E — Rob ${reg.name}`;
             // hold-to-rob progress (3s)
@@ -141,8 +210,53 @@ export default function Interactions() {
           }
         } else if (atPawn) {
           const total = stashTotal();
-          if (total > 0) { prompt = `E — Sell stash at Coral Pawn ($${total})`; act = () => sellStash("Coral Pawn"); }
-          else { prompt = "Coral Pawn — fences stolen goods. Your stash is empty."; warn = true; }
+          if (closed) { prompt = "Coral Pawn — closed (opens 07:00)"; warn = true; }
+          else if (total > 0) { prompt = `E — Sell stash at Coral Pawn ($${total})`; act = () => sellStash("Coral Pawn"); }
+          else {
+            const gi = GUN_ITEMS[gunIdx.current];
+            prompt = `E — Pawn counter: ${gi.label} $${gi.price} (tap E browse · hold E buy)`;
+          }
+        } else if (atDealer) {
+          const dc = DEALER_CARS[dealerIdx.current];
+          prompt = `E — ${CAR_MODELS[dc.kind].name} $${dc.price.toLocaleString()} at Sable Motors (tap E browse · hold E buy)`;
+        } else if (atGun) {
+          const gi = GUN_ITEMS[gunIdx.current];
+          prompt = `E — Sable Arms: ${gi.label} $${gi.price} (tap E browse · hold E buy)`;
+        } else if (atVendor) {
+          // street food — the vendor keeps harbour hours: always open (B3)
+          if (G.health >= 99.5) { prompt = "Harbour Wraps — you're full. The wraps keep till late."; warn = true; }
+          else {
+            prompt = "E — Harbour wrap ($10) — heals 40";
+            act = () => {
+              if (G.cash < 10) { toast("A wrap costs $10 — you're short."); return; }
+              G.cash -= 10;
+              G.health = Math.min(100, G.health + 40);
+              G.eatingUntil = t + 1.4;
+              sfx.eat();
+              toast("Harbour wrap eaten — +40 health");
+            };
+          }
+        } else if (atHospital) {
+          if (G.health >= 99.5) { prompt = "Sable General — you're in good shape."; warn = true; }
+          else {
+            prompt = "E — Sable General: full treatment ($50)";
+            act = () => {
+              if (G.cash < 50) { toast("Treatment costs $50 — not enough cash."); return; }
+              G.cash -= 50; G.finesPaid += 50;
+              G.health = 100;
+              sfx.cash();
+              toast("Sable General patched you up — full health");
+            };
+          }
+        } else if (atPerformer) {
+          prompt = "E — Tip the performer ($5)";
+          act = () => {
+            if (G.cash < 5) { toast("No coins for the hat."); return; }
+            G.cash -= 5;
+            if (G.eventNow) G.eventNow.tipped = true;
+            bark("Performer", "Bless you! Port Sable's got soul, friend.");
+            sfx.cash();
+          };
         } else if (zone) {
           prompt = `G — Garage · ${zone.label}`;
         }

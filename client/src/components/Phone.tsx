@@ -21,7 +21,7 @@ interface Props {
   onPhotoMode: () => void;
   onChangeCharacter: () => void;
 }
-type AppId = "home" | "contacts" | "messages" | "bank" | "music" | "settings" | "garage" | "stash";
+type AppId = "home" | "contacts" | "messages" | "bank" | "music" | "settings" | "garage" | "stash" | "stats";
 const APPS: { id: AppId | "map" | "camera"; icon: string; label: string }[] = [
   { id: "contacts", icon: "◉", label: "Contacts" },
   { id: "messages", icon: "✉", label: "Messages" },
@@ -30,6 +30,7 @@ const APPS: { id: AppId | "map" | "camera"; icon: string; label: string }[] = [
   { id: "map", icon: "⌖", label: "Maps" },
   { id: "garage", icon: "▣", label: "Garage" },
   { id: "stash", icon: "⚿", label: "Stash" },
+  { id: "stats", icon: "▤", label: "Stats" },
   { id: "camera", icon: "◎", label: "Camera" },
   { id: "settings", icon: "⚙", label: "Settings" },
 ];
@@ -118,6 +119,28 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <p className="phone-tip">Solano's ledger can't touch this account. Probably.</p>
           </div>
         )}
+        {app === "stats" && (
+          <div>
+            <p className="phone-note">Skills grow by doing. Perks unlock at 50.</p>
+            {([
+              ["Driving", G.skills.driving, "50+: handbrake slides 10% less — tidier drifts"],
+              ["Shooting", G.skills.shooting, "50+: weapon spread tightens 15%"],
+              ["Stamina", G.skills.stamina, "50+: stamina pool effectively +25%"],
+            ] as const).map(([label, val, perk]) => (
+              <div key={label} className="phone-stat">
+                <div className="phone-stat-head"><span>{label}</span><b>{Math.floor(val)}/100</b></div>
+                <div className="phone-stat-bar"><div style={{ width: `${Math.min(100, val)}%` }} /></div>
+                <small>{val >= 50 ? `✓ ${perk}` : perk}</small>
+              </div>
+            ))}
+            <div className="phone-row"><span>Stamina now</span><b>{Math.round(G.stamina)}%</b></div>
+            <div className="phone-row"><span>Lifetime earned</span><b>${G.lifetimeEarned.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Fines &amp; fees paid</span><b>${G.finesPaid.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Cars in garages</span><b>{G.storedCars.length}</b></div>
+            <div className="phone-row"><span>Weapons owned</span><b>{Object.values(G.weaponOwned).filter(Boolean).length}/3</b></div>
+          </div>
+        )}
+
         {app === "music" && (
           <div className="phone-page">
             <h3>SableSounds</h3>

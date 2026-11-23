@@ -27,10 +27,11 @@ import CarBody from "./CarBody";
  * (break-ins mutate G.cars outside React). Damage/steer stay ref-driven. */
 function LiveCarBody({ index, steerRef, brakeRef }: { index: number; steerRef: MutableRefObject<number>; brakeRef: MutableRefObject<boolean> }) {
   const [, setTick] = useState(0);
-  const last = useRef(G.cars[index].brokenWindow);
+  const last = useRef(`${G.cars[index].brokenWindow}|${G.cars[index].color}`);
   useFrame(() => {
-    const bw = G.cars[index].brokenWindow;
-    if (bw !== last.current) { last.current = bw; setTick((t) => t + 1); }
+    // re-render on window smash AND on respray (Phase 6 mods change colour)
+    const sig = `${G.cars[index].brokenWindow}|${G.cars[index].color}`;
+    if (sig !== last.current) { last.current = sig; setTick((t) => t + 1); }
   });
   const c = G.cars[index];
   return <CarBody kind={c.kind} color={c.color} carIndex={index} steerRef={steerRef} liveDamage={() => G.cars[index].damage} brokenWindow={c.brokenWindow} interior brakeRef={brakeRef} spotLights />;
@@ -51,6 +52,12 @@ export default function Vehicle(p: Props) {
     Array.from({ length: 22 }, () => ({ life: 0, x: 0, y: -10, z: 0 })));
   const puffIdx = useRef(0);
   const spawnAcc = useRef(0);
+  // ---- Phase 6: speedboat wake foam pool (flat sprites on the water) ----
+  const wakeRefs = useRef<Array<THREE.Sprite | null>>([]);
+  const wakes = useRef<Array<{ life: number; x: number; z: number }>>(
+    Array.from({ length: 16 }, () => ({ life: 0, x: 0, z: 0 })));
+  const wakeIdx = useRef(0);
+  const wakeAcc = useRef(0);
   const skidCd = useRef(0);
   const puffTex = glowTexture();
   // Phase 4: shared steering ref (front wheels + cabin wheel), break-in hold
@@ -71,8 +78,14 @@ export default function Vehicle(p: Props) {
     };
     const nearestCar = (): number => {
       const pl = refs.current.playerPositionRef.current;
-      let best = -1; let bestD = 3.6 ** 2;
-      G.cars.forEach((c, i) => { const d = (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2; if (d < bestD) { bestD = d; best = i; } });
+      let best = -1; let bestD = 0;
+      G.cars.forEach((c, i) => {
+        // the speedboat is boarded from the pier edge / while swimming —
+        // it gets a longer reach than a kerbside car door
+        const reach = c.kind === "boat" ? 5.4 : 3.6;
+        const d = (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2;
+        if (d < reach ** 2 && (best < 0 || d < bestD)) { bestD = d; best = i; }
+      });
       return best;
     };
     const breakInEligible = (i: number) => {
@@ -129,9 +142,11 @@ export default function Vehicle(p: Props) {
     if (G.driving && !paused && !G.dialogueActive && G.activeCarId >= 0 && G.enterAnimT <= 0) {
       const car = G.cars[G.activeCarId];
       const k = keys.current;
+      const isBike = car.kind === "bicycle";
+      const isBoat = car.kind === "boat";
       // ---- Phase 2: damage + fuel shape the driving (arcade-forgiving) ----
-      const wrecked = car.damage >= 100;
-      const empty = car.fuel <= 0;
+      const wrecked = !isBike && !isBoat && car.damage >= 100;
+      const empty = !isBike && !isBoat && car.fuel <= 0;
       if (wrecked && !warnedRef.current.wrecked) { warnedRef.current.wrecked = true; toast("WRECKED — this car is done. Get out (E) and find another ride."); }
       if (empty && !warnedRef.current.empty) { warnedRef.current.empty = true; toast("Out of fuel! Coast to a stop and find another car — fuel stations refill runners."); }
       const power = wrecked || empty ? 0 : car.damage > 60 ? 0.55 : car.damage > 35 ? 0.82 : 1;
@@ -141,39 +156,101 @@ export default function Vehicle(p: Props) {
       const keySteer = Number(k.has("a")) - Number(k.has("d"));
       const steering = keySteer !== 0 ? keySteer : gyroSteer();
       steerRef.current = steering;
-      const stepped = physicsRef.current.stepVehicleV2(car.state, throttle, steering, k.has(" "), delta);
-      const next = stepped.state;
-      car.pitch += (stepped.pitch - car.pitch) * Math.min(1, dt * 7); // weight transfer (C++ v2)
-      car.roll += (stepped.roll - car.roll) * Math.min(1, dt * 7);
-      // ---- Phase 3: motorcycle character — harder launch, higher top end,
-      // tighter turning (heading bias applied post-step, arcade style) ----
-      if (car.kind === "motorcycle") {
-        if (throttle > 0 && !wrecked && !empty) next.speed = Math.min(29, next.speed + 7.5 * dt * throttle);
-        const sf = THREE.MathUtils.clamp(Math.abs(next.speed) / 4, 0.18, 1);
-        next.heading += steering * 2.0 * sf * dt * (next.speed < 0 ? -1 : 1);
-      }
-      next.x = THREE.MathUtils.clamp(next.x, -122, 122);
-      next.z = THREE.MathUtils.clamp(next.z, -122, 330);
-      // bridge causeway: stay on the deck corridor while elevated
-      if (groundYAt(next.x, next.z) > 0.05 || groundYAt(car.state.x, car.state.z) > 0.05) {
-        next.x = THREE.MathUtils.clamp(next.x, BRIDGE.x - BRIDGE.halfW + 0.6, BRIDGE.x + BRIDGE.halfW - 0.6);
-      }
-      const hitsWater = isWaterAt(next.x, next.z) && groundYAt(next.x, next.z) <= 0.05;
-      if (hitsWater || isBlocked(next.x, next.z, 1.3)) {
-        if (!wasBlocked.current && Math.abs(car.state.speed) > 6) {
-          G.eventQueue.push("shake", "hitwall"); G.health = Math.max(0, G.health - 4);
-          car.damage = Math.min(100, car.damage + Math.min(18, Math.abs(car.state.speed) * 0.9));
-          sfx.crash();
+      const prevSpeed = car.state.speed;
+      const prevHeading = car.state.heading;
+      let next = { ...car.state };
+      if (isBike) {
+        // ---- Phase 6 bicycle: pedal power, stamina-capped (A3/A7) ----
+        G.bikePedalling = throttle > 0 && G.stamina > 1;
+        const top = G.stamina > 1 ? 7.6 : 3.1; // exhausted legs barely turn the pedals
+        if (throttle > 0) next.speed = Math.min(top, next.speed + 5.5 * dt);
+        else if (throttle < 0) next.speed = Math.max(-2, next.speed - 6 * dt);
+        next.speed -= next.speed * 1.1 * dt; // rolling drag
+        if (Math.abs(next.speed) < 0.04 && throttle === 0) next.speed = 0;
+        next.heading += steering * 1.7 * dt * THREE.MathUtils.clamp(Math.abs(next.speed) / 3, 0, 1) * (next.speed < 0 ? -1 : 1);
+        next.x += Math.sin(next.heading) * next.speed * dt;
+        next.z += Math.cos(next.heading) * next.speed * dt;
+        if (isBlocked(next.x, next.z, 0.85) || isWaterAt(next.x, next.z)) { next.x = car.state.x; next.z = car.state.z; next.speed = 0; }
+      } else if (isBoat) {
+        // ---- Phase 6 speedboat: water-only drive, buoyancy in the render
+        // loop below. Beaching (bow touches land) stops the boat dead;
+        // reverse backs it off the shore. ----
+        if (throttle > 0) next.speed = Math.min(14.5, next.speed + 4.6 * dt);
+        else if (throttle < 0) next.speed = Math.max(-4.5, next.speed - 3.6 * dt);
+        next.speed -= next.speed * 0.45 * dt; // water drag
+        if (Math.abs(next.speed) < 0.03 && throttle === 0) next.speed = 0;
+        next.heading += steering * 0.55 * dt * THREE.MathUtils.clamp(Math.abs(next.speed) / 6, 0.2, 1) * (next.speed < 0 ? -1 : 1);
+        next.x += Math.sin(next.heading) * next.speed * dt;
+        next.z += Math.cos(next.heading) * next.speed * dt;
+        if (!isWaterAt(next.x, next.z)) {
+          if (next.speed > 0) { next.x = car.state.x; next.z = car.state.z; next.speed = 0; if (!wasBlocked.current) toast("Beached! Reverse (S) to back off the shore."); wasBlocked.current = true; }
+          else { next.x = car.state.x; next.z = car.state.z; next.speed = Math.min(0, next.speed); }
+        } else wasBlocked.current = false;
+        // wake foam spawns behind a moving boat (pool below)
+        if (Math.abs(next.speed) > 3) {
+          wakeAcc.current += dt;
+          while (wakeAcc.current > 0.07) {
+            wakeAcc.current -= 0.07;
+            const w = wakes.current[wakeIdx.current % wakes.current.length];
+            wakeIdx.current += 1;
+            w.life = 1;
+            w.x = next.x - Math.sin(next.heading) * 2.4 + (Math.random() - 0.5) * 0.8;
+            w.z = next.z - Math.cos(next.heading) * 2.4 + (Math.random() - 0.5) * 0.8;
+          }
         }
-        wasBlocked.current = true;
-        next.x = car.state.x; next.z = car.state.z; next.speed = -car.state.speed * 0.25;
-      } else wasBlocked.current = false;
+      } else {
+        const stepped = physicsRef.current.stepVehicleV2(car.state, throttle, steering, k.has(" "), delta);
+        next = stepped.state;
+        // Phase 6 (B5): suspension spring/damper (C++ v3) smooths the
+        // weight transfer instead of the old direct lerp.
+        const sr = physicsRef.current.suspensionResponse((next.speed - prevSpeed) / Math.max(dt, 0.001), steering, next.speed,
+          { pitch: car.pitch, roll: car.roll, pitchVel: car.pitchVel ?? 0, rollVel: car.rollVel ?? 0 }, dt);
+        car.pitch = sr.pitch; car.roll = sr.roll; car.pitchVel = sr.pitchVel; car.rollVel = sr.rollVel;
+        // ---- Phase 3: motorcycle character — harder launch, higher top end,
+        // tighter turning (heading bias applied post-step, arcade style) ----
+        if (car.kind === "motorcycle") {
+          if (throttle > 0 && !wrecked && !empty) next.speed = Math.min(29, next.speed + 7.5 * dt * throttle);
+          const sf = THREE.MathUtils.clamp(Math.abs(next.speed) / 4, 0.18, 1);
+          next.heading += steering * 2.0 * sf * dt * (next.speed < 0 ? -1 : 1);
+        }
+        // ---- Phase 6: bus is heavy — capped low, whatever the tune ----
+        if (car.kind === "bus") next.speed = THREE.MathUtils.clamp(next.speed, -6, 13.5);
+        // ---- Phase 6 (B1): Lina's mods — engine tune raises the top end,
+        // brake upgrade bites harder; Driving skill ≥50 trims drift slide ----
+        const tune = car.tuneLvl ?? 0;
+        if (tune > 0 && throttle > 0 && next.speed > 8) next.speed = Math.min(next.speed + tune * 1.7 * dt, 24 + tune * 1.8);
+        if ((car.brakeLvl ?? 0) > 0 && k.has("s") && next.speed > 0) next.speed = Math.max(0, next.speed - 9 * dt);
+        if (k.has(" ") && G.skills.driving >= 50) next.heading = prevHeading + (next.heading - prevHeading) * 0.9;
+        // ---- Phase 6 (A5): a spiked tyre pulls, wobbles and caps speed ----
+        if (car.flatTyre) {
+          next.speed = THREE.MathUtils.clamp(next.speed, -8.5, 8.5);
+          next.heading += (Math.sin(G.timeS * 5.7) * 0.1 + 0.045) * dt * Math.min(1, Math.abs(next.speed) / 6);
+        }
+        next.x = THREE.MathUtils.clamp(next.x, -130, 130);
+        next.z = THREE.MathUtils.clamp(next.z, -302, 330);
+        // bridge causeway: stay on the deck corridor while elevated
+        // (south bridge only — the Northgate parking deck is also elevated)
+        if (next.z > 80 && (groundYAt(next.x, next.z) > 0.05 || groundYAt(car.state.x, car.state.z) > 0.05)) {
+          next.x = THREE.MathUtils.clamp(next.x, BRIDGE.x - BRIDGE.halfW + 0.6, BRIDGE.x + BRIDGE.halfW - 0.6);
+        }
+        const hitsWater = isWaterAt(next.x, next.z) && groundYAt(next.x, next.z) <= 0.05;
+        if (hitsWater || isBlocked(next.x, next.z, 1.3)) {
+          if (!wasBlocked.current && Math.abs(car.state.speed) > 6) {
+            G.eventQueue.push("shake", "hitwall"); G.health = Math.max(0, G.health - 4);
+            car.damage = Math.min(100, car.damage + Math.min(18, Math.abs(car.state.speed) * 0.9));
+            sfx.crash();
+          }
+          wasBlocked.current = true;
+          next.x = car.state.x; next.z = car.state.z; next.speed = -car.state.speed * 0.25;
+        } else wasBlocked.current = false;
+      }
+      if (!isBike) G.bikePedalling = false;
       car.state = next;
       // fuel drain while actually moving (the bike's tank is small: % drains faster)
-      if (Math.abs(next.speed) > 0.5 && car.fuel > 0) car.fuel = Math.max(0, car.fuel - dt * (0.1 + Math.abs(next.speed) * 0.018) * (car.kind === "motorcycle" ? 1.7 : 1));
+      if (!isBike && !isBoat && Math.abs(next.speed) > 0.5 && car.fuel > 0) car.fuel = Math.max(0, car.fuel - dt * (0.1 + Math.abs(next.speed) * 0.018) * (car.kind === "motorcycle" ? 1.7 : 1));
       // ---- refuel: parked at a pump, tank fills for cash ----
       let atPump = false;
-      if (Math.abs(next.speed) < 1.2 && car.fuel < 99.5) {
+      if (!isBike && !isBoat && Math.abs(next.speed) < 1.2 && car.fuel < 99.5) {
         for (const st of FUEL_STATIONS) {
           if ((st.x - next.x) ** 2 + (st.z - next.z) ** 2 < 8 ** 2) { atPump = true; break; }
         }
@@ -251,6 +328,17 @@ export default function Vehicle(p: Props) {
       sp.scale.set(sc, sc, 1);
       (sp.material as THREE.SpriteMaterial).opacity = Math.max(0, puff.life) * 0.34;
     });
+    // ---- Phase 6: wake foam fades + spreads behind the speedboat ----
+    wakes.current.forEach((w, i) => {
+      const sp = wakeRefs.current[i]; if (!sp) return;
+      if (w.life <= 0) { sp.visible = false; return; }
+      w.life -= dt * 0.6;
+      sp.visible = w.life > 0;
+      sp.position.set(w.x, 0.06, w.z);
+      const sc = 1 + (1 - w.life) * 3.4;
+      sp.scale.set(sc, sc * 0.5, 1);
+      (sp.material as THREE.SpriteMaterial).opacity = Math.max(0, w.life) * 0.3;
+    });
     // ---- engine smoke for damaged cars (damage > 60) ----
     const tt = clock.elapsedTime;
     G.cars.forEach((c, i) => {
@@ -267,11 +355,18 @@ export default function Vehicle(p: Props) {
     // near-car prompt
     if (!G.driving) {
       const pl = refs.current.playerPositionRef.current;
-      const near = G.cars.some((c) => (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2 <= 3.6 ** 2);
+      const near = G.cars.some((c) => (c.state.x - pl.x) ** 2 + (c.state.z - pl.z) ** 2 <= (c.kind === "boat" ? 5.4 : 3.6) ** 2);
       if (near !== nearRef.current) { nearRef.current = near; refs.current.onNearVehicleChange(near); }
     } else if (nearRef.current) { nearRef.current = false; refs.current.onNearVehicleChange(false); }
     G.cars.forEach((c, i) => {
       const g = groups.current[i]; if (!g) return;
+      if (c.kind === "boat") {
+        // buoyancy: gentle bob + pitch/roll swell on the waterline
+        g.position.set(c.state.x, -0.08 + Math.sin(tt * 1.25 + i * 1.7) * 0.07, c.state.z);
+        g.rotation.order = "YXZ";
+        g.rotation.set(Math.sin(tt * 0.9 + i) * 0.02 + (c.state.speed > 6 ? -0.03 : 0), c.state.heading, Math.sin(tt * 1.1 + i * 2.3) * 0.025);
+        return;
+      }
       g.position.set(c.state.x, groundYAt(c.state.x, c.state.z), c.state.z);
       if (c.kind === "motorcycle") {
         // bank into turns ∝ steering × speed; wheelie-lite pitch on launch
@@ -286,6 +381,11 @@ export default function Vehicle(p: Props) {
         // suspension: weight-transfer pitch/roll from the C++ v2 step
         g.rotation.order = "YXZ";
         g.rotation.set(c.pitch, c.state.heading, c.roll);
+        // spiked tyre: visible wobble while rolling (A5)
+        if (c.flatTyre && Math.abs(c.state.speed) > 1) {
+          g.rotation.z += Math.sin(tt * 22 + i) * 0.02;
+          g.rotation.x += Math.sin(tt * 17 + i * 2) * 0.012;
+        }
       }
     });
   });
@@ -318,6 +418,12 @@ export default function Vehicle(p: Props) {
       {puffs.current.map((_, i) => (
         <sprite key={i} ref={(n) => { puffRefs.current[i] = n; }} visible={false}>
           <spriteMaterial map={puffTex} color="#e8e6e0" transparent opacity={0} depthWrite={false} />
+        </sprite>
+      ))}
+      {/* speedboat wake foam (world-space sprite pool, Phase 6) */}
+      {wakes.current.map((_, i) => (
+        <sprite key={`w${i}`} ref={(n) => { wakeRefs.current[i] = n; }} visible={false}>
+          <spriteMaterial map={puffTex} color="#eaf6f8" transparent opacity={0} depthWrite={false} />
         </sprite>
       ))}
     </>

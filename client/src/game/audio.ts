@@ -73,6 +73,10 @@ export const sfx = {
   // ---- Phase 3 combat / water ----
   punch() { noiseBurst(0.09, 0.13, 1400); blip(180, 0.07, "sine", 0.08, 0, -70); }, // fist swish + body
   shot() { noiseBurst(0.16, 0.4, 3400); blip(150, 0.14, "sawtooth", 0.2, 0, -95); noiseBurst(0.3, 0.1, 700, ); }, // pistol crack + tail
+  smg() { noiseBurst(0.09, 0.3, 3800); blip(170, 0.08, "sawtooth", 0.15, 0, -100); }, // SMG: shorter, snappier crack
+  blast() { noiseBurst(0.34, 0.55, 2400); blip(95, 0.3, "sawtooth", 0.3, 0, -60); noiseBurst(0.5, 0.16, 500); }, // shotgun boom + long tail
+  pop() { noiseBurst(0.2, 0.5, 1800); blip(220, 0.16, "sine", 0.25, 0, -160); noiseBurst(0.4, 0.12, 300); }, // tyre blowout on spikes
+  eat() { blip(300, 0.07, "sine", 0.08); blip(240, 0.08, "sine", 0.08, 0.11); blip(340, 0.07, "sine", 0.07, 0.23); }, // vendor food: three soft bites
   dryFire() { blip(1200, 0.04, "square", 0.07); blip(900, 0.05, "square", 0.06, 0.05); },
   splash() { noiseBurst(0.45, 0.2, 900); blip(320, 0.3, "sine", 0.07, 0.05, -140); noiseBurst(0.3, 0.1, 1600); },
   glass() { noiseBurst(0.22, 0.3, 5200); noiseBurst(0.34, 0.16, 3600); blip(2400, 0.1, "triangle", 0.06, 0.02, -900); blip(3100, 0.08, "triangle", 0.05, 0.09, -1200); }, // window smash: highpass noise + falling shards

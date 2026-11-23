@@ -40,6 +40,18 @@ export type Cc0MapKind = "diff" | "nor" | "rough";
 
 const texCache = new Map<string, THREE.Texture>();
 
+// ---- Phase 6 first-load order: on Low/Medium the CC0 decode is DEFERRED
+// until after spawn-in (App calls setCc0Deferred(false) when the game
+// starts), so first paint reaches playable fastest. Textures are shared
+// objects — when the deferred load lands they update in place. High
+// never defers (it preloads during the loading screen).
+let cc0Deferred = false;
+const pendingLoads: Array<() => void> = [];
+export function setCc0Deferred(v: boolean) {
+  cc0Deferred = v;
+  if (!v) { const q = pendingLoads.splice(0); for (const fn of q) fn(); }
+}
+
 /**
  * Load an embedded CC0 map as a THREE.Texture. `px` is the decode size:
  * 0 = native (High), 512 = downscaled via canvas (Medium). Colour maps get
@@ -65,7 +77,8 @@ export function cc0Texture(surface: Cc0Surface, kind: Cc0MapKind, px: number, va
     } else tex.image = img;
     tex.needsUpdate = true;
   };
-  img.src = CC0_URIS[name];
+  const start = () => { img.src = CC0_URIS[name]; };
+  if (cc0Deferred) pendingLoads.push(start); else start();
   texCache.set(cacheKey, tex);
   return tex;
 }

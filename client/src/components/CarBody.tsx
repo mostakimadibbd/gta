@@ -13,7 +13,7 @@ import { glowTexture, tyreTexture, shatteredTexture, carDirtTexture } from "../t
 import { G } from "../game/store";
 import { gates, tier } from "../game/quality";
 
-export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle";
+export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat";
 
 const GLASS = new THREE.MeshStandardMaterial({ color: "#141f28", metalness: 0.5, roughness: 0.08, envMapIntensity: 1.3 });
 const CHROME = new THREE.MeshStandardMaterial({ color: "#d7dce2", metalness: 0.95, roughness: 0.16, envMapIntensity: 1.4 });
@@ -155,12 +155,14 @@ const CABIN_POS: Record<string, { y: number; z: number; w: number }> = {
   suv: { y: 1.38, z: -0.1, w: 1.7 }, classic: { y: 1.02, z: -0.15, w: 1.45 },
   pickup: { y: 1.18, z: 0.85, w: 1.6 }, van: { y: 1.0, z: 1.15, w: 1.65 },
   supercar: { y: 0.6, z: -0.25, w: 1.5 },
+  taxi: { y: 0.98, z: -0.05, w: 1.5 }, bus: { y: 1.62, z: 1.4, w: 2.0 },
 };
 /** Dirt/scratch shell (Visual V3): opacity follows live damage. */
 const SHELL: Record<string, [number, number, number, number]> = {
   sedan: [2.05, 0.63, 3.75, 0.6], coupe: [2.05, 0.51, 3.95, 0.52], hatch: [1.95, 0.65, 3.2, 0.62],
   muscle: [2.1, 0.67, 4.45, 0.62], suv: [2.15, 0.93, 4.25, 0.78], classic: [2.0, 0.61, 4.55, 0.6],
   pickup: [2.15, 0.77, 4.15, 0.68], van: [2.15, 1.17, 4.25, 0.92], supercar: [2.25, 0.47, 4.35, 0.44],
+  taxi: [2.05, 0.63, 3.75, 0.6], bus: [2.5, 1.9, 7.2, 1.5],
 };
 function DirtShell({ kind, liveDamage }: { kind: string; liveDamage?: () => number }) {
   const mat = useMemo(() => new THREE.MeshStandardMaterial({ map: carDirtTexture(), transparent: true, opacity: 0, roughness: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), []);
@@ -211,6 +213,56 @@ export function MotorcycleBody({ color }: { color: string }) {
       <mesh position={[0, 0.62, -0.86]} rotation={[0.5, 0, 0]}><boxGeometry args={[0.24, 0.05, 0.4]} /><primitive object={paint} attach="material" /></mesh>
       <mesh position={[0, 0.66, -1.02]}><boxGeometry args={[0.16, 0.07, 0.04]} /><primitive object={TAIL} attach="material" /></mesh>
       <mesh position={[0.14, 0.3, -0.35]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.045, 0.055, 0.85, 8]} /><primitive object={CHROME} attach="material" /></mesh>
+    </group>
+  );
+}
+
+/** Rideable bicycle (Phase 6) — torus wheels + tube frame; the rider
+ * (Player rig) pedals it. Facing +Z. */
+export function BicycleBody({ color }: { color: string }) {
+  const paint = useMemo(() => paintMaterial(color, 0.5, 0.35), [color]);
+  const tube = (pos: [number, number, number], rot: [number, number, number], len: number) => (
+    <mesh position={pos} rotation={rot} castShadow><cylinderGeometry args={[0.028, 0.028, len, 6]} /><primitive object={paint} attach="material" /></mesh>
+  );
+  return (
+    <group>
+      {([0.55, -0.55] as const).map((z) => (
+        <group key={z} position={[0, 0.34, z]}>
+          <mesh castShadow><torusGeometry args={[0.34, 0.03, 6, 16]} /><primitive object={TYRE} attach="material" /></mesh>
+          <mesh><boxGeometry args={[0.03, 0.6, 0.03]} /><primitive object={RIM} attach="material" /></mesh>
+          <mesh><boxGeometry args={[0.03, 0.03, 0.6]} /><primitive object={RIM} attach="material" /></mesh>
+        </group>
+      ))}
+      {tube([0, 0.62, 0.02], [0.95, 0, 0], 0.72)}
+      {tube([0, 0.58, -0.28], [0.35, 0, 0], 0.62)}
+      {tube([0, 0.6, 0.3], [-0.5, 0, 0], 0.55)}
+      {tube([0, 0.42, -0.02], [1.25, 0, 0], 0.5)}
+      <mesh position={[0, 0.86, -0.44]} castShadow><boxGeometry args={[0.26, 0.06, 0.3]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+      <mesh position={[0, 0.92, 0.52]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.025, 0.025, 0.44, 6]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+      <mesh position={[0, 0.5, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.05, 0.05, 0.16, 8]} /><primitive object={CHROME} attach="material" /></mesh>
+    </group>
+  );
+}
+
+/** Drivable speedboat (Phase 6) — open skiff: hull, cockpit, windshield,
+ * outboard. Buoyancy bob + wake live in Vehicle.tsx. Facing +Z. */
+export function BoatBody({ color }: { color: string }) {
+  const paint = useMemo(() => paintMaterial(color, 0.2, 0.3), [color]);
+  const teak = useMemo(() => new THREE.MeshStandardMaterial({ color: "#6d4c33", roughness: 0.85 }), []);
+  return (
+    <group>
+      <RB args={[2.0, 0.62, 4.4]} radius={0.16} mat={paint} pos={[0, 0.32, -0.2]} />
+      <mesh position={[0, 0.42, 2.05]} scale={[1.05, 0.55, 1]} rotation={[0, Math.PI / 4, 0]} castShadow>
+        <coneGeometry args={[1.32, 1.5, 4]} /><primitive object={paint} attach="material" />
+      </mesh>
+      <RB args={[1.7, 0.3, 2.6]} radius={0.08} mat={teak} pos={[0, 0.62, -0.5]} />
+      <RB args={[1.5, 0.34, 0.5]} radius={0.08} mat={DARKTRIM} pos={[0, 0.72, 0.35]} />
+      <RB args={[1.5, 0.3, 0.45]} radius={0.08} mat={DARKTRIM} pos={[0, 0.7, -1.15]} />
+      <mesh position={[0, 0.95, 0.78]} rotation={[-0.32, 0, 0]}><boxGeometry args={[1.55, 0.5, 0.05]} /><primitive object={GLASS} attach="material" /></mesh>
+      {/* outboard motor + stripe */}
+      <RB args={[0.44, 0.62, 0.3]} radius={0.08} mat={DARKTRIM} pos={[0, 0.42, -2.5]} />
+      <mesh position={[0, 0.52, 0]}><boxGeometry args={[2.02, 0.12, 4.0]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+      <sprite position={[0, 0.6, 2.6]} scale={[0.8, 0.8, 1]}><primitive object={HEADGLOW} attach="material" /></sprite>
     </group>
   );
 }
@@ -269,6 +321,8 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
   // deep glossy paint: clearcoat physical material on Medium/High (Step 5)
   const paint = useMemo(() => paintMaterial(color), [color]);
   if (kind === "motorcycle") return <MotorcycleBody color={color} />;
+  if (kind === "bicycle") return <BicycleBody color={color} />;
+  if (kind === "boat") return <BoatBody color={color} />;
   const classic = kind === "classic";
   const glassMat = brokenWindow ? GLASS_BROKEN : interior ? GLASS_CLEAR : GLASS;
   let body: ReactNode = null;
@@ -358,6 +412,29 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
         <LightsBumpers w={2.0} len={3.9} y={0.56} />
         <Mirrors w={2.0} y={1.0} z={0.4} />
       </>); wheels = wheelSet(2.0, 3.9, 0.37, 0.26); break;
+    case "taxi":
+      body = (<>
+        <RB args={[2.0, 0.58, 3.7]} radius={0.1} mat={paint} pos={[0, 0.6, 0]} />
+        <RB args={[1.9, 0.17, 1.25]} radius={0.07} mat={paint} pos={[0, 0.85, 1.28]} rot={[0.08, 0, 0]} />
+        <RB args={[1.7, 0.5, 1.8]} radius={0.14} mat={glassMat} pos={[0, 1.1, -0.12]} />
+        {/* checker stripe + roof sign — Sable Cab livery */}
+        <mesh position={[0, 0.52, 0]}><boxGeometry args={[2.02, 0.16, 3.72]} /><meshStandardMaterial color="#14161a" roughness={0.6} /></mesh>
+        <RB args={[0.72, 0.2, 0.3]} radius={0.04} mat={HEAD} pos={[0, 1.48, -0.12]} />
+        <LightsBumpers w={2.0} len={3.7} y={0.62} />
+        <Mirrors w={2.0} y={1.14} z={0.72} />
+      </>); wheels = wheelSet(2.0, 3.7, 0.36, 0.25); break;
+    case "bus":
+      body = (<>
+        {/* Sable Cityliner: long single-decker, window band, route box */}
+        <RB args={[2.45, 1.35, 7.0]} radius={0.12} mat={paint} pos={[0, 1.05, 0]} />
+        <RB args={[2.5, 0.78, 6.7]} radius={0.08} mat={glassMat} pos={[0, 1.95, -0.1]} />
+        <mesh position={[0, 1.85, 3.52]}><boxGeometry args={[2.0, 0.85, 0.06]} /><primitive object={glassMat} attach="material" /></mesh>
+        <RB args={[1.5, 0.34, 0.08]} radius={0.03} mat={HEAD} pos={[0, 2.62, 3.5]} />
+        <mesh position={[1.24, 1.15, 1.6]}><boxGeometry args={[0.04, 1.5, 1.1]} /><meshStandardMaterial color="#141f28" roughness={0.2} metalness={0.4} /></mesh>
+        <mesh position={[0, 0.42, 0]}><boxGeometry args={[2.47, 0.3, 7.02]} /><meshStandardMaterial color="#f2f4f6" roughness={0.5} /></mesh>
+        <LightsBumpers w={2.45} len={7.0} y={0.72} />
+        <Mirrors w={2.45} y={2.1} z={3.2} />
+      </>); wheels = wheelSet(2.45, 7.0, 0.5, 0.32); break;
     default: // sedan
       body = (<>
         <RB args={[2.0, 0.58, 3.7]} radius={0.1} mat={paint} pos={[0, 0.6, 0]} />
