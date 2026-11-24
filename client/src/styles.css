@@ -955,7 +955,8 @@ body,
 }
 .settings-head { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #9fb3ad; margin: 18px 0 8px; }
 .settings-note { font-size: 11px; color: #9fb3ad; line-height: 1.5; margin: 6px 0 0; }
-.seg-row { display: flex; gap: 6px; }
+.seg-row { display: flex; gap: 6px; align-items: center; }
+.seg-label { min-width: 92px; font-size: 12px; letter-spacing: 0.04em; opacity: 0.75; user-select: none; }
 .seg-btn {
   flex: 1; padding: 8px 0; border-radius: var(--r-sm); text-transform: capitalize; cursor: pointer;
   background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: #cfd4cc; font-size: 13px; font-weight: 600;

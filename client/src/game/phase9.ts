@@ -12,8 +12,8 @@ import { G, syncWeaponMirrors } from "./store";
 // sits on top of the chosen character preset (same pattern as the
 // Phase 8 clothing override) and is cleared when the character changes.
 // ------------------------------------------------------------------
-export interface LookState { hairStyle: string | null; hairColor: string | null; tattoo: boolean; }
-export const LOOK: LookState = { hairStyle: null, hairColor: null, tattoo: false };
+export interface LookState { hairStyle: string | null; hairColor: string | null; tattoo: boolean; beardStyle: string | null; }
+export const LOOK: LookState = { hairStyle: null, hairColor: null, tattoo: false, beardStyle: null };
 const LOOK_KEY = "harborfall-look";
 function persistLook() { try { localStorage.setItem(LOOK_KEY, JSON.stringify(LOOK)); } catch { /* ignore */ } }
 try {
@@ -22,14 +22,29 @@ try {
 } catch { /* ignore */ }
 export function emitLookChanged() { try { window.dispatchEvent(new Event("harborfall-look")); } catch { /* ignore */ } }
 export function setLook(patch: Partial<LookState>) { Object.assign(LOOK, patch); persistLook(); emitLookChanged(); }
-export function clearLookOverride() { LOOK.hairStyle = null; LOOK.hairColor = null; LOOK.tattoo = false; persistLook(); emitLookChanged(); }
+export function clearLookOverride() { LOOK.hairStyle = null; LOOK.hairColor = null; LOOK.tattoo = false; LOOK.beardStyle = null; persistLook(); emitLookChanged(); }
 export const HAIR_STYLES: Array<{ id: string; label: string }> = [
   { id: "crop", label: "Clean crop" },
   { id: "flat", label: "Flat top" },
   { id: "bun", label: "Top bun" },
   { id: "ponytail", label: "Ponytail" },
   { id: "bald", label: "Shaved bald" },
+  // ---- Phase 16: four more cuts at Sable Cuts ----
+  { id: "fade", label: "Tight fade" },
+  { id: "quiff", label: "Quiff" },
+  { id: "mohawk", label: "Mohawk" },
+  { id: "long", label: "Shoulder length" },
 ];
+// ---- Phase 16: beards at Sable Cuts — "" is clean-shaven. Stubble
+// is the painted face variant; goatee/full add layered beard cards
+// on the rig (humanoid.ts). Beard-only work is cheaper than a cut. ----
+export const BEARD_STYLES: Array<{ id: string; label: string }> = [
+  { id: "", label: "Clean-shaven" },
+  { id: "stubble", label: "Stubble" },
+  { id: "goatee", label: "Goatee" },
+  { id: "full", label: "Full beard" },
+];
+export const BEARD_PRICE = 15;
 export const HAIR_COLORS: Array<{ hex: string; label: string }> = [
   { hex: "#20242c", label: "Harbour black" },
   { hex: "#4a3220", label: "Dark brown" },

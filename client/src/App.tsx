@@ -12,7 +12,7 @@ import Vehicle from "./components/Vehicle";
 import World from "./components/World";
 import { isInteractiveTarget } from "./keyboard";
 import { fallbackPhysics, loadPhysicsEngine, type PhysicsEngine, type VehicleState } from "./physics/GamePhysics";
-import { G, resetAfterArrest, resetAfterWasted, windLabel, LASTCAR } from "./game/store";
+import { G, resetAfterArrest, resetAfterWasted, windLabel, LASTCAR, FLEET } from "./game/store";
 import Tram from "./components/Tram";
 import { TRAM, TRAM_MAP_LINE, TRAM_STOPS } from "./game/tram";
 import { currentSeason } from "./game/season";
@@ -836,12 +836,27 @@ export default function App() {
       if (size > 300) {
         g.fillStyle = "#2ee6c8"; g.beginPath(); g.arc(mx(TRAM.x), mz(TRAM.z), Math.max(2.5, 4.4 * S), 0, 7); g.fill();
         g.fillStyle = "#0f2c38"; g.beginPath(); g.arc(mx(TRAM.x), mz(TRAM.z), Math.max(1.2, 2 * S), 0, 7); g.fill();
-        if (LASTCAR.save && !G.driving) {
-          const cxp = mx(LASTCAR.save.x), czp = mz(LASTCAR.save.z);
-          g.strokeStyle = "#ffb340"; g.lineWidth = 2;
-          g.beginPath(); g.arc(cxp, czp, Math.max(5, 7 * S), 0, 7); g.stroke();
-          g.fillStyle = "#ffb340"; g.font = `bold ${Math.max(9, 11 * S)}px sans-serif`; g.textAlign = "center";
-          g.fillText("YOUR CAR", cxp, czp - Math.max(8, 10 * S));
+        if (!G.driving) {
+          // Phase 16: every parked FLEET car (owned, persisted) gets
+          // the amber ring — numbered when there's more than one
+          FLEET.list.forEach((s, i) => {
+            const cxp = mx(s.x), czp = mz(s.z);
+            g.strokeStyle = "#ffb340"; g.lineWidth = 2;
+            g.beginPath(); g.arc(cxp, czp, Math.max(5, 7 * S), 0, 7); g.stroke();
+            g.fillStyle = "#ffb340"; g.font = `bold ${Math.max(9, 11 * S)}px sans-serif`; g.textAlign = "center";
+            g.fillText(FLEET.list.length > 1 ? `YOUR CAR ${i + 1}` : "YOUR CAR", cxp, czp - Math.max(8, 10 * S));
+          });
+          // the last-car ring still covers a NON-owned last car (the
+          // fleet only holds owned ones); skip it when the fleet
+          // already rings the same car
+          const inFleet = LASTCAR.save ? FLEET.list.some((e) => e.kind === LASTCAR.save!.kind && Math.abs(e.x - LASTCAR.save!.x) < 1 && Math.abs(e.z - LASTCAR.save!.z) < 1) : false;
+          if (LASTCAR.save && !inFleet) {
+            const cxp = mx(LASTCAR.save.x), czp = mz(LASTCAR.save.z);
+            g.strokeStyle = "#ffb340"; g.lineWidth = 2;
+            g.beginPath(); g.arc(cxp, czp, Math.max(5, 7 * S), 0, 7); g.stroke();
+            g.fillStyle = "#ffb340"; g.font = `bold ${Math.max(9, 11 * S)}px sans-serif`; g.textAlign = "center";
+            g.fillText("YOUR CAR", cxp, czp - Math.max(8, 10 * S));
+          }
         }
       }
       const dot = (x: number, z: number, col: string, r: number) => { g.fillStyle = col; g.beginPath(); g.arc(mx(x), mz(z), Math.max(1.4, r * S * 2.2), 0, 7); g.fill(); };
@@ -1471,6 +1486,17 @@ export default function App() {
               return;
             }
           }
+          // Phase 16 audit fix: a pair branch that was STARTED but
+          // never finished (failed, abandoned, or the session ended —
+          // Phase 15 recorded the lock at start and completion
+          // nowhere) is re-offered by its OWN giver. The other branch
+          // stays locked, and the call-time headline above does not
+          // refire (it lives inside the first-call branch only).
+          if (started && !M.active && !dialogueRef.current && M.pairChoice && !M.pairDone) {
+            const retryDef = M.pairChoice === "informant" && name === "Det. Mara Voss" ? PAIR_MISSIONS[0]
+              : M.pairChoice === "dockcrew" && name === "Old Elias" ? PAIR_MISSIONS[1] : null;
+            if (retryDef) { startMission(retryDef); return; }
+          }
           // Phase 5 Step 7a: Lina (after Ch.2) and Voss (after Ch.4) offer
           // their side-story arcs by phone — calling them starts the next
           // unplayed part instead of the ambient chat.
@@ -1662,6 +1688,26 @@ export default function App() {
             </div>
             <p className="settings-note">Seasons turn every 7 game-days: the sun's arc and the day's length, the sky / fog / water tints, the street trees (palms stay green — this is the subtropics) and the weather odds all shift with it. Winter here is cool, grey and dry: Port Sable has never seen snow, and won't.</p>
             <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + stronger bloom, CC0 at 768 — and ray-traced-style reflections (screen-space reflections + mirrored bay water; a browser has no hardware ray tracing, this is the real-time reflection stack every web game uses). Reflections are opt-in and off by default since the stability pass: they render at reduced resolution, the water mirror is capped, and SSAO steps aside while they're on. Resolution adapts automatically for smoothness (even on a manual High); picking a tier here turns the auto tier-drop off for this session.</p>
+            <h3 className="settings-head">World · density &amp; view distance</h3>
+            <div className="seg-row" role="group" aria-label="Traffic density">
+              <span className="seg-label">Traffic</span>
+              {(["low", "normal", "high"] as const).map((d) => (
+                <button key={d} type="button" className={`seg-btn ${G.settings.trafficDensity === d ? "active" : ""}`} onClick={() => { G.settings.trafficDensity = d; persistSettings(); showPopup(`Traffic density: ${d}`); }}>{d}</button>
+              ))}
+            </div>
+            <div className="seg-row" role="group" aria-label="Pedestrian density">
+              <span className="seg-label">Pedestrians</span>
+              {(["low", "normal", "high"] as const).map((d) => (
+                <button key={d} type="button" className={`seg-btn ${G.settings.pedDensity === d ? "active" : ""}`} onClick={() => { G.settings.pedDensity = d; persistSettings(); showPopup(`Pedestrian density: ${d}`); }}>{d}</button>
+              ))}
+            </div>
+            <div className="seg-row" role="group" aria-label="View distance">
+              <span className="seg-label">View distance</span>
+              {(["near", "normal", "far"] as const).map((d) => (
+                <button key={d} type="button" className={`seg-btn ${G.settings.viewDistance === d ? "active" : ""}`} onClick={() => { G.settings.viewDistance = d; persistSettings(); showPopup(`View distance: ${d}`); }}>{d}</button>
+              ))}
+            </div>
+            <p className="settings-note">These take effect live — no reload. Low traffic runs half the ambient cars (buses, taxis and emergency units always run, and nothing ever vanishes within sight of you); High keeps the rush-hour reserve circulating all day. Pedestrian density scales the crowds on top of the time-of-day rhythm. View distance scales how far out traffic and walkers stream in, and where the fog sits. Normal everywhere is exactly how the game shipped before these levers existed.</p>
             <h3 className="settings-head">Controls · keyboard (this slot)</h3>
             <div className="settings-list">
               {BIND_ACTIONS.map((a) => (
@@ -1711,11 +1757,14 @@ export default function App() {
               <div><dt>Bottles</dt><dd>Crates by Club Solace and the pier — Q to the bottle slot, click to throw (breaks shopfront glass)</dd></div>
               <div><dt>Sable Arms mods</dt><dd>Suppressors (quiet shots), extended mag, reflex sight, shotgun choke — hold E at the counter</dd></div>
               <div><dt>Named townsfolk</dt><dd>Tomas, Priya, Bea and Kip keep schedules across the city — walk up and press E to talk</dd></div>
-              <div><dt>Sable Cuts / Port Ink</dt><dd>Market Row (07:00–23:00) — barber haircuts &amp; hair colour, tattoos; both reset when you change character</dd></div>
+              <div><dt>Sable Cuts / Port Ink</dt><dd>Market Row (07:00–23:00) — barber haircuts (9 styles) &amp; hair colour, beard trims (stubble · goatee · full), tattoos; all reset when you change character</dd></div>
               <div><dt>E at the pier / island dock</dt><dd>Fish — hold E to charge, release to cast, tap E on the bite, hold E to reel (keep the marker in the green)</dd></div>
               <div><dt>E at Lantern Park gym</dt><dd>Bench press / treadmill session ($10, once a day each) — tap E in the zone to build Strength &amp; Stamina</dd></div>
               <div><dt>Thread &amp; Tide (Market Row)</dt><dd>Tap E to browse outfits, hold E to buy — worn until you change character or variant</dd></div>
               <div><dt>Hold B (1★, unarmed)</dt><dd>Surrender — pay a $100 fine, no cell, no teleport</dd></div>
+              <div><dt>Caught on foot</dt><dd>If the bust meter fills while you're on foot, an officer walks you to the patrol car — hands up, no input but the camera — and the usual bust (fine, impound, station) lands when you reach it</dd></div>
+              <div><dt>Farm work</dt><dd>Phone → Jobs: haul 3 crate loads from the Downs barn to Harbour Wraps in the farm pickup — $120 a load + $150 shift bonus. The farmhouse bunk sleeps free (it isn't a home you buy — your respawn stays at your property)</dd></div>
+              <div><dt>Your parked cars</dt><dd>Up to 3 owned cars you park and walk away from stay in the world between sessions — amber rings on the big map. Wrecked, impounded or garaged cars leave the list</dd></div>
               <div><dt>Space near a bench/hedge</dt><dd>Vault over it</dd></div>
               <div><dt>X / Ctrl</dt><dd>Crouch — stealthier; crouch at a wall/car for cover (cops spot you slower)</dd></div>
               <div><dt>Behind a ped + E</dt><dd>Pickpocket (cash or loot for your stash)</dd></div>

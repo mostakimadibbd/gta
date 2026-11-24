@@ -19,6 +19,14 @@ export const M = {
   packChoice: "" as string,
   // ---- Phase 15: mutually-exclusive side pair lock (see load below)
   pairChoice: "" as "" | "informant" | "dockcrew",
+  // ---- Phase 16 audit fix: pairChoice is set when a branch STARTS,
+  // but Phase 15 never recorded completion — and a failed/abandoned
+  // attempt (lastFailed is memory-only, gone after a reload) could
+  // never be restarted, because the phone-call gate required
+  // !pairChoice. pairDone separates "locked the other branch" from
+  // "finished mine": an unfinished branch can be re-offered by its
+  // own giver (see App's contact handler). ----
+  pairDone: false,
   // ---- Phase 7: checkpoints, replay, per-mission stats, heist prep ----
   checkpointStep: 0, // furthest step reached this attempt (retry point)
   lastFailed: null as null | { def: MissionDef; step: number }, // R = retry from checkpoint
@@ -48,6 +56,7 @@ loadKey(() => { G.finesPaid = Number(localStorage.getItem("harborfall-fines") ??
 // branch the player took ("informant" | "dockcrew"), persisted so the
 // other mission stays locked for this playthrough (per save slot) ----
 loadKey(() => { const p = localStorage.getItem("harborfall-pairchoice"); if (p === "informant" || p === "dockcrew") M.pairChoice = p; });
+loadKey(() => { M.pairDone = localStorage.getItem("harborfall-pairdone") === "1"; });
 export function persist() {
   try {
     localStorage.setItem("harborfall-story", String(M.storyIndex));
@@ -61,6 +70,7 @@ export function persist() {
     if (M.choice) localStorage.setItem("harborfall-choice", M.choice);
     if (M.packChoice) localStorage.setItem("harborfall-packchoice", M.packChoice);
     if (M.pairChoice) localStorage.setItem("harborfall-pairchoice", M.pairChoice);
+    localStorage.setItem("harborfall-pairdone", M.pairDone ? "1" : "0");
   } catch { /* ignore */ }
 }
 /** Phase 9: is this mission's ALT branch active? Ch.5 keys off M.choice;

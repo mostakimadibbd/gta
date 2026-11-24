@@ -11,7 +11,7 @@ import { G, toast, nowS, bark, persistStoredCars } from "../game/store";
 import { isBind } from "../game/keybinds";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
-import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, GYM_EXT_DOOR, LOFT_EXT_DOOR, CLOTHING_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
+import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, GYM_EXT_DOOR, LOFT_EXT_DOOR, CLOTHING_EXT_DOOR, FARMHOUSE_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
 import { ECO, LOFT, persistEco, setHomePref, sleepToMorning } from "../game/economy";
 import { CLOTH, CLOTHING_ITEMS, persistClothing, type ClothingItem } from "../game/phase8";
 import { shopsClosed } from "./Interactions";
@@ -366,6 +366,22 @@ export default function Interiors() {
         const [x, z] = INTERIORS.clothing.exitDoor;
         if (near(x, z, 2.2)) { prompt = "Press E — leave Thread & Tide"; act = go(CLOTHING_EXT_DOOR.x, CLOTHING_EXT_DOOR.z + 1.2, ""); }
         else if (near(INTERIORS.clothing.cx, INTERIORS.clothing.cz + 3.4, 2.2)) prompt = "Thread & Tide — racks on both walls, the counter's at the back. Tap E to browse, hold E to buy.";
+      } else if (G.interior === "farmhouse") {
+        // ---- Phase 16: THE SABLE DOWNS FARMHOUSE — kitchen/living
+        // room + the FARMHAND'S BUNK. Design choice, documented: the
+        // bunk is NOT a purchasable home. Sleeping here is free and
+        // saves the day like any bed, but it deliberately does NOT
+        // call setHomePref — your respawn home stays wherever you
+        // bought one; the bunk just starts your morning at the farm.
+        // No door hours either: farmhands keep farm hours. ----
+        const [x, z] = INTERIORS.farmhouse.exitDoor;
+        const FH = INTERIORS.farmhouse;
+        if (near(x, z, 2.2)) { prompt = "Press E — step out to the farmyard"; act = go(FARMHOUSE_EXT_DOOR.x, FARMHOUSE_EXT_DOOR.z + 1.2, ""); }
+        else if (near(FH.cx + 4.5, FH.cz - 3, 2.4)) {
+          prompt = "Press E — sleep in the farmhand's bunk until morning (free — the day ticks over, businesses pay out)";
+          act = () => { sleepToMorning("the Downs farmhouse bunk"); };
+        }
+        else if (near(FH.cx, FH.cz + 3.4, 2.2)) prompt = "The farmhouse kitchen — kettle on the stove, yesterday's catch still in the sink. The bunk's through the back.";
       } else if (near(GARAGE_EXT_DOOR.x, GARAGE_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Lina's Garage";
         act = go(INTERIORS.garage.spawnIn[0], INTERIORS.garage.spawnIn[1], "garage");
@@ -400,6 +416,11 @@ export default function Interiors() {
           prompt = "Press E — enter Thread & Tide";
           act = go(INTERIORS.clothing.spawnIn[0], INTERIORS.clothing.spawnIn[1], "clothing");
         }
+      } else if (near(FARMHOUSE_EXT_DOOR.x, FARMHOUSE_EXT_DOOR.z, 2.8)) {
+        // Phase 16: the farmhouse door is never locked — it's a
+        // working farmhouse, and the bunk is the farmhand's by right
+        prompt = "Press E — enter the Downs farmhouse";
+        act = go(INTERIORS.farmhouse.spawnIn[0], INTERIORS.farmhouse.spawnIn[1], "farmhouse");
       } else if (near(LOFT_EXT_DOOR.x, LOFT_EXT_DOOR.z, 2.8)) {
         // ---- Phase 14: the Loft is bought at its own door, like the
         // villa at its gate — owning both properties is supported;
@@ -441,6 +462,7 @@ export default function Interiors() {
   const S0 = INTERIORS.showroom, CF0 = INTERIORS.cafe;
   const GY0 = INTERIORS.gym, LF0 = INTERIORS.loft;
   const TT0 = INTERIORS.clothing;
+  const FH0 = INTERIORS.farmhouse;
   return (
     <group>
       {/* ================= LINA'S GARAGE — interior ================= */}
@@ -850,6 +872,48 @@ export default function Interiors() {
           <mesh position={[0, 1.3, 0]} castShadow><boxGeometry args={[2.2, 2.6, 0.08]} /><meshStandardMaterial color="#7a2e2e" roughness={0.95} /></mesh>
         </group>
         <mesh position={[0, 1.4, TT0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#17303a" emissive="#ffb340" emissiveIntensity={0.3} /></mesh>
+      </group>
+      {/* ================= THE DOWNS FARMHOUSE — interior (Phase 16) =================
+          Kitchen/living in one room; the bunk at the back (rel +4.5,−3,
+          the sleep prompt point). Cream walls over wood boards. */}
+      <RoomShell cx={FH0.cx} cz={FH0.cz} w={FH0.w} d={FH0.d} h={3.2} wall={WALL_CF} floor={FLOOR_LF} ceiling />
+      <group position={[FH0.cx, 0, FH0.cz]}>
+        <pointLight position={[0, 2.7, 0]} intensity={22} distance={15} decay={1.7} color="#ffd9a0" />
+        {/* the farmhand's bunk — frame, mattress, pillow, harbour-teal blanket */}
+        <group position={[4.5, 0, -3]}>
+          <mesh position={[0, 0.28, 0]} castShadow><boxGeometry args={[1.15, 0.55, 2.3]} /><primitive object={WOOD} attach="material" /></mesh>
+          <mesh position={[0, 0.62, 0]}><boxGeometry args={[1.05, 0.16, 2.15]} /><meshStandardMaterial color="#e8e2d2" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.68, 0.55]}><boxGeometry args={[1.0, 0.14, 1.35]} /><meshStandardMaterial color="#1f7a72" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.74, -0.85]}><boxGeometry args={[0.7, 0.12, 0.45]} /><meshStandardMaterial color="#f2ecdc" roughness={0.95} /></mesh>
+        </group>
+        {/* kitchen run along the west wall: counter, stove, kettle */}
+        <group position={[-FH0.w / 2 + 0.75, 0, -1]}>
+          <mesh position={[0, 0.5, 0]} castShadow><boxGeometry args={[1.1, 1, 4.6]} /><primitive object={WOOD} attach="material" /></mesh>
+          <mesh position={[0.1, 1.02, -1.2]}><boxGeometry args={[0.95, 0.05, 1.1]} /><meshStandardMaterial color="#22262b" roughness={0.4} metalness={0.3} /></mesh>
+          <mesh position={[0.1, 1.16, -1.2]}><cylinderGeometry args={[0.14, 0.17, 0.24, 10]} /><meshStandardMaterial color="#8a929c" roughness={0.3} metalness={0.7} /></mesh>
+          <mesh position={[0.1, 1.1, 1.4]}><boxGeometry args={[0.8, 0.14, 0.9]} /><meshStandardMaterial color="#5d4a33" roughness={0.8} /></mesh>
+        </group>
+        {/* living end: table, two chairs, rug, a low sofa facing the stove */}
+        <group position={[-2.5, 0, 2.2]}>
+          <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[3.4, 2.4]} /><meshStandardMaterial color="#7a3b2e" roughness={0.95} /></mesh>
+          <mesh position={[0, 0.42, 0]} castShadow><boxGeometry args={[1.5, 0.08, 0.95]} /><primitive object={WOOD} attach="material" /></mesh>
+          {[-0.6, 0.6].map((lx) => (
+            <mesh key={lx} position={[lx, 0.21, 0]}><boxGeometry args={[0.09, 0.42, 0.09]} /><primitive object={WOOD} attach="material" /></mesh>
+          ))}
+          {[-1.05, 1.05].map((cx2) => (
+            <group key={cx2} position={[cx2, 0, 0]}>
+              <mesh position={[0, 0.26, 0]}><boxGeometry args={[0.5, 0.07, 0.5]} /><primitive object={WOOD} attach="material" /></mesh>
+              <mesh position={[0, 0.55, cx2 > 0 ? 0.24 : -0.24]}><boxGeometry args={[0.5, 0.6, 0.06]} /><primitive object={WOOD} attach="material" /></mesh>
+            </group>
+          ))}
+        </group>
+        <group position={[2.8, 0, 2.6]} rotation={[0, Math.PI, 0]}>
+          <mesh position={[0, 0.35, 0]} castShadow><boxGeometry args={[2, 0.5, 0.8]} /><meshStandardMaterial color="#4a5d23" roughness={0.9} /></mesh>
+          <mesh position={[0, 0.85, -0.32]}><boxGeometry args={[2, 0.6, 0.18]} /><meshStandardMaterial color="#43561f" roughness={0.9} /></mesh>
+        </group>
+        {/* window glow over the yard + a door mat at the exit */}
+        <mesh position={[0, 1.5, FH0.d / 2 - 0.12]}><boxGeometry args={[1.8, 1.3, 0.08]} /><meshStandardMaterial color="#17303a" emissive="#ffb340" emissiveIntensity={0.3} /></mesh>
+        <mesh position={[0, 0.02, FH0.d / 2 - 1.1]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[1.4, 0.8]} /><meshStandardMaterial color="#5d4a33" roughness={0.95} /></mesh>
       </group>
     </group>
   );

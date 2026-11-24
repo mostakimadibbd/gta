@@ -46,7 +46,27 @@ let incidentAge = 0;
 /** Generation + assignment. Called once per sim step from
  * GameSystems with the sim clock and the player's position. */
 export function tickDispatch(t: number, px: number, pz: number) {
-  if (G.incident) { incidentAge += 1 / 60; return; }
+  if (G.incident) {
+    incidentAge += 1 / 60;
+    // ---- Phase 16 audit WATCHDOG: the Phase 15 sim could stall for
+    // the whole session. If the assigned unit is WRECKED (100% damage
+    // — the player can ram it to death), GameSystems' traffic loop
+    // `continue`s on the wreck check BEFORE the dispatch branch, so
+    // stepDispatchDrive never runs again: the incident never clears,
+    // G.incident stays set, and no new incident ever generates. Same
+    // if the dispatch order was lost some other way. Stand the call
+    // down here and reschedule, so dispatch always recovers. ----
+    let unit: NpcCar | null = null;
+    for (const c of G.traffic) if (c.dispatch) { unit = c; break; }
+    if (!unit) { G.incident = null; incidentAge = 0; nextIncidentAt = t + 30; }
+    else if (unit.damage >= 100) {
+      unit.dispatch = null;
+      G.incident = null; incidentAge = 0;
+      nextIncidentAt = t + 45;
+      bark("Dispatch", "Unit is out of action — call stood down. Next crew takes the next one.");
+    }
+    return;
+  }
   if (t < nextIncidentAt) return;
   // incidents are a Port Sable (main grid) service for now
   if (Math.abs(px) > 118 || Math.abs(pz) > 118) { nextIncidentAt = t + 15; return; }

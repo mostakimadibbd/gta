@@ -245,6 +245,12 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
               <span><b>Start tow shift</b><small>Take the Sable Wrecker at Lina's yard · $150 per delivery</small></span><span>›</span>
             </button>
             <div className="bank-row"><span>Tow deliveries</span><b>{jobStats.towDeliveries} · ${jobStats.towEarned.toLocaleString()}</b></div>
+            <h3 className="phone-subhead">Farm work — Sable Downs</h3>
+            <div className="bank-row"><span>Farm status</span><b>{J.farmPhase === "idle" ? "Off shift" : J.farmPhase === "load" ? `Loading at the barn (${J.farmLoad}/3 done)` : `Hauling load ${J.farmLoad + 1}/3 to Harbour Wraps`}</b></div>
+            <button type="button" className="phone-row" onClick={() => { J.wantFarm = true; onClose(); }}>
+              <span><b>Start farm shift</b><small>Take the farm pickup at the Downs barn · $120 per load + $150 shift bonus</small></span><span>›</span>
+            </button>
+            <div className="bank-row"><span>Farm loads hauled</span><b>{jobStats.farmLoads} · ${jobStats.farmEarned.toLocaleString()}</b></div>
             <h3 className="phone-subhead">Earnings</h3>
             <div className="bank-row"><span>Taxi fares</span><b>{jobStats.taxiFares} · ${jobStats.taxiEarned.toLocaleString()} · best tip ${jobStats.taxiBestTip}</b></div>
             <div className="bank-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
@@ -396,6 +402,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="phone-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
             <div className="phone-row"><span>Tow</span><b>{jobStats.towDeliveries} drops · ${jobStats.towEarned.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Farm work</span><b>{jobStats.farmLoads} loads · ${jobStats.farmEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Fishing</span><b>{jobStats.fishCaught} caught · ${jobStats.fishEarned.toLocaleString()}{jobStats.bestFish ? ` · best ${jobStats.bestFish.name} ${jobStats.bestFish.cm}cm` : ""}</b></div>
             <div className="phone-row"><span>Portfolio</span><b>${portfolioValue().toFixed(0)} ({portfolioPL() >= 0 ? "+" : "−"}${Math.abs(portfolioPL()).toFixed(0)})</b></div>
             <div className="phone-row"><span>Business income</span><b>${dailyIncomeTotal().toLocaleString()}/day</b></div>
@@ -475,6 +482,26 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>Ray-traced reflections (High tier)</span>
               <button type="button" className="phone-toggle" onClick={() => setSetting({ reflFx: !G.settings.reflFx })}>{G.settings.reflFx ? "On" : "Off"}</button></div>
             <p className="phone-tip">On High, reflections are ray-traced-style: screen-space reflections on wet streets, glass and paint, plus a mirrored bay. A browser has no hardware ray tracing — this is the real-time stack web games use instead.</p>
+            <h3 className="phone-subhead">World — density & view</h3>
+            <div className="bank-row"><span>Traffic density</span>
+              <span className="phone-seg">
+                {(["low", "normal", "high"] as const).map((d) => (
+                  <button key={d} type="button" className={`phone-seg-btn ${G.settings.trafficDensity === d ? "active" : ""}`} onClick={() => setSetting({ trafficDensity: d })}>{d}</button>
+                ))}
+              </span></div>
+            <div className="bank-row"><span>Pedestrians</span>
+              <span className="phone-seg">
+                {(["low", "normal", "high"] as const).map((d) => (
+                  <button key={d} type="button" className={`phone-seg-btn ${G.settings.pedDensity === d ? "active" : ""}`} onClick={() => setSetting({ pedDensity: d })}>{d}</button>
+                ))}
+              </span></div>
+            <div className="bank-row"><span>View distance</span>
+              <span className="phone-seg">
+                {(["near", "normal", "far"] as const).map((d) => (
+                  <button key={d} type="button" className={`phone-seg-btn ${G.settings.viewDistance === d ? "active" : ""}`} onClick={() => setSetting({ viewDistance: d })}>{d}</button>
+                ))}
+              </span></div>
+            <p className="phone-tip">Live levers, no reload: Low traffic runs half the ambient cars (buses, taxis and emergency units always run; nothing vanishes near you). High keeps the rush-hour reserve out all day. View distance scales how far out traffic and walkers stream in, and how far the fog sits.</p>
             <h3 className="phone-subhead">Season</h3>
             <div className="bank-row"><span>Season now</span><b>{currentSeason()}</b></div>
             <div className="bank-row"><span>Season turns</span>

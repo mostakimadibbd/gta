@@ -14,6 +14,7 @@ export interface NpcCar extends VehicleState {
   // ---- Phase 6: per-car kind + traffic-light / rush-hour / bus state ----
   kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
   rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
+  densRank?: number; densTotal?: number; // Phase 16: ambient-pool rank for the traffic-density lever (initWorld)
   busRoute?: boolean; wp?: number; stopT?: number;
   // ---- Phase 15: emergency dispatch state (svc units only) — set by
   // game/dispatch.ts, driven by the dedicated branch in GameSystems'
@@ -114,7 +115,7 @@ export const G = {
   timeS: 0, // elapsed game clock (set by GameSystems every frame)
   firstPerson: false,
   swimming: false,
-  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing",
+  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing" | "farmhouse",
   // ---- Phase 7: wind, sitting, replay requests, camera flash, boosts ----
   wind: 0.5, // 0..1 slow gust value — palm sway, boat bob, HUD/phone label
   sitting: false, // player parked on a bench / chair (Player pose + lock)
@@ -184,6 +185,13 @@ export const G = {
     subBg: true, // subtitle background plate on/off
     subBarks: true, // ambient barks (witness shouts, dispatch radio) as subtitles
     letterbox: true, // cinematic bars during dialogue
+    // ---- Phase 16: PLAYER PERFORMANCE LEVERS — world density + view
+    // distance, read live by GameSystems (traffic/ped activation caps
+    // + streaming radii) and Weather (fog). "normal" everywhere is
+    // exactly the pre-Phase-16 behaviour; see game/perf.ts helpers. ----
+    trafficDensity: "normal" as "low" | "normal" | "high",
+    pedDensity: "normal" as "low" | "normal" | "high",
+    viewDistance: "normal" as "near" | "normal" | "far",
   },
   shakeAmp: 0, // current camera-shake amplitude (gated by settings.shake)
   bark: null as null | { who: string; text: string; at: number }, // ambient subtitle line (Phase 5)
@@ -272,6 +280,38 @@ export interface LastCarSave {
   brokenWindow: boolean; tuneLvl: number; brakeLvl: number; flatTyre: boolean;
 }
 export const LASTCAR = { save: null as LastCarSave | null, carIndex: -1 };
+// ---- Phase 16: THE PARKED FLEET — up to 3 OWNED cars parked in the
+// world persist across sessions (harborfall-fleet), extending the
+// Phase 13 last-car snapshot. Same clearing rules per entry: wrecked
+// (100% damage), impounded on a bust, or put away into a garage —
+// each removes THAT car's entry. Non-owned cars keep the single
+// last-car behaviour above and never enter the fleet. The fleet
+// holds the 3 most recently used owned cars: noting a 4th replaces
+// the oldest entry. ----
+export const FLEET = { list: [] as LastCarSave[] };
+export const FLEET_MAX = 3;
+const fleetKeyOf = (s: LastCarSave) => (s.spawnId >= 0 ? `spawn:${s.spawnId}` : `dyn:${s.kind}|${s.color}|${s.model}`);
+export function persistFleet() {
+  try { localStorage.setItem("harborfall-fleet", JSON.stringify(FLEET.list)); } catch { /* ignore */ }
+}
+function upsertFleet(s: LastCarSave) {
+  const k = fleetKeyOf(s);
+  const i = FLEET.list.findIndex((e) => fleetKeyOf(e) === k);
+  if (i >= 0) FLEET.list.splice(i, 1);
+  FLEET.list.push(s);
+  while (FLEET.list.length > FLEET_MAX) FLEET.list.shift(); // oldest parked owned car is forgotten first
+  persistFleet();
+}
+function removeFleetEntryFor(carIndex: number) {
+  if (carIndex < 0) return;
+  const car = G.cars[carIndex];
+  if (!car) return;
+  const spawnId = car.id >= 0 && car.id < CAR_SPAWNS.length && CAR_SPAWNS[car.id].kind === car.kind ? car.id : -1;
+  const k = spawnId >= 0 ? `spawn:${spawnId}` : `dyn:${car.kind}|${car.color}|${car.model}`;
+  const before = FLEET.list.length;
+  FLEET.list = FLEET.list.filter((e) => fleetKeyOf(e) !== k);
+  if (FLEET.list.length !== before) persistFleet();
+}
 export function noteLastCar(car: PlayerCar) {
   if (car.storedAway || car.damage >= 100) { clearLastCar(); return; }
   const spawnId = car.id >= 0 && car.id < CAR_SPAWNS.length && CAR_SPAWNS[car.id].kind === car.kind ? car.id : -1;
@@ -283,46 +323,78 @@ export function noteLastCar(car: PlayerCar) {
   };
   LASTCAR.carIndex = G.cars.indexOf(car);
   try { localStorage.setItem("harborfall-lastcar", JSON.stringify(LASTCAR.save)); } catch { /* ignore */ }
+  // Phase 16: an owned car also joins (or refreshes) the parked fleet
+  if (car.owned) upsertFleet(LASTCAR.save);
 }
 export function clearLastCar() {
+  // Phase 16: clearing the last-car also removes ITS fleet entry (the
+  // callers are exactly the documented clearing events: wreck at the
+  // wheel, bust impound in resetAfterArrest, garage put-away)
+  removeFleetEntryFor(LASTCAR.carIndex);
   LASTCAR.save = null; LASTCAR.carIndex = -1;
   try { localStorage.removeItem("harborfall-lastcar"); } catch { /* ignore */ }
 }
+/** Restore one snapshot into the world (shared by the last-car load
+ * and every fleet entry): spawn cars are moved in place; dynamic cars
+ * un-store a matching put-away instance or are re-created. Returns
+ * the G.cars index, or -1. */
+function applyCarSave(s: LastCarSave): number {
+  const apply = (c: PlayerCar) => {
+    c.state = { x: s.x, z: s.z, heading: s.heading, speed: 0 };
+    c.x = s.x; c.z = s.z; c.heading = s.heading;
+    c.damage = s.damage; c.fuel = s.fuel; c.brokenWindow = s.brokenWindow;
+    c.tuneLvl = s.tuneLvl; c.brakeLvl = s.brakeLvl; c.flatTyre = s.flatTyre;
+    c.storedAway = false;
+  };
+  if (s.spawnId >= 0) {
+    const idx = G.cars.findIndex((c) => c.id === s.spawnId);
+    if (idx >= 0) { apply(G.cars[idx]); return idx; }
+    return -1;
+  }
+  const idx = G.cars.findIndex((c) => c.storedAway && c.kind === s.kind && c.color === s.color);
+  if (idx >= 0) { apply(G.cars[idx]); return idx; }
+  G.cars.push({
+    id: 1000 + G.cars.length, x: s.x, z: s.z, heading: s.heading, color: s.color,
+    model: s.model || CAR_MODELS[s.kind as PlayerCar["kind"]]?.name || "Car", kind: s.kind as PlayerCar["kind"], owned: s.owned,
+    state: { x: s.x, z: s.z, heading: s.heading, speed: 0 }, stolen: s.stolen, damage: s.damage, fuel: s.fuel,
+    brokenWindow: s.brokenWindow, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
+    flatTyre: s.flatTyre, tuneLvl: s.tuneLvl, brakeLvl: s.brakeLvl, pitchVel: 0, rollVel: 0,
+  });
+  return G.cars.length - 1;
+}
+const sameCarSave = (a: LastCarSave, b: LastCarSave) =>
+  fleetKeyOf(a) === fleetKeyOf(b) && Math.abs(a.x - b.x) < 1 && Math.abs(a.z - b.z) < 1;
 try {
   const raw = localStorage.getItem("harborfall-lastcar");
   if (raw) {
     const s = JSON.parse(raw) as LastCarSave;
     if (s && s.damage < 100) {
       LASTCAR.save = s;
-      const apply = (c: PlayerCar) => {
-        c.state = { x: s.x, z: s.z, heading: s.heading, speed: 0 };
-        c.x = s.x; c.z = s.z; c.heading = s.heading;
-        c.damage = s.damage; c.fuel = s.fuel; c.brokenWindow = s.brokenWindow;
-        c.tuneLvl = s.tuneLvl; c.brakeLvl = s.brakeLvl; c.flatTyre = s.flatTyre;
-        c.storedAway = false;
-      };
-      if (s.spawnId >= 0) {
-        const idx = G.cars.findIndex((c) => c.id === s.spawnId);
-        if (idx >= 0) { apply(G.cars[idx]); LASTCAR.carIndex = idx; }
-      } else {
-        // dynamic car: un-store a matching put-away instance if one
-        // exists, else re-create it from the snapshot
-        const idx = G.cars.findIndex((c) => c.storedAway && c.kind === s.kind && c.color === s.color);
-        if (idx >= 0) { apply(G.cars[idx]); LASTCAR.carIndex = idx; }
-        else {
-          G.cars.push({
-            id: 1000 + G.cars.length, x: s.x, z: s.z, heading: s.heading, color: s.color,
-            model: s.model || CAR_MODELS[s.kind as PlayerCar["kind"]]?.name || "Car", kind: s.kind as PlayerCar["kind"], owned: s.owned,
-            state: { x: s.x, z: s.z, heading: s.heading, speed: 0 }, stolen: s.stolen, damage: s.damage, fuel: s.fuel,
-            brokenWindow: s.brokenWindow, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
-            flatTyre: s.flatTyre, tuneLvl: s.tuneLvl, brakeLvl: s.brakeLvl, pitchVel: 0, rollVel: 0,
-          });
-          LASTCAR.carIndex = G.cars.length - 1;
-        }
-      }
+      LASTCAR.carIndex = applyCarSave(s);
     }
   }
 } catch { /* storage unavailable */ }
+// Phase 16: the parked fleet loads under its own guard (Phase 15 rule)
+loadKey(() => {
+  const raw = localStorage.getItem("harborfall-fleet");
+  if (raw) {
+    const list = JSON.parse(raw) as LastCarSave[];
+    if (Array.isArray(list)) {
+      FLEET.list = list.filter((s) => s && s.owned && s.damage < 100).slice(0, FLEET_MAX);
+      for (const s of FLEET.list) {
+        // the last-car snapshot IS one of the fleet entries when it's
+        // an owned car — restoring it twice would double-apply
+        if (LASTCAR.save && sameCarSave(s, LASTCAR.save)) continue;
+        applyCarSave(s);
+      }
+    }
+  }
+  // migration: a pre-Phase-16 owned last-car becomes fleet entry #1
+  if (FLEET.list.length === 0 && LASTCAR.save?.owned) {
+    FLEET.list = [LASTCAR.save];
+    persistFleet();
+  }
+});
 
 function applyCrime(kind: CrimeKind) {
   if (G.crimeCooldown > 0 && kind !== "ped" && kind !== "shoot") return;

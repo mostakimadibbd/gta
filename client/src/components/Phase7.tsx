@@ -16,6 +16,7 @@ import { sfx } from "../game/audio";
 import {
   J, HAIL_POINTS, DEST_POINTS, PICKUP_POINTS, RACES, RACE_PRIZES, BAY_CIRCUIT, SPARROW_RUN,
   jobStats, persistJobStats, jobTarget, fmtTime, jobBusy, drivingKind, type RaceDef, type Poi,
+  FARM_LOAD_POINT, FARM_DROP_POINT, FARM_PAY_PER_LOAD, FARM_SHIFT_BONUS, FARM_PICKUP_SPAWN_ID,
 } from "../game/jobs";
 import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, setHomePref, persistEco } from "../game/economy";
 import { pushNews, rollSocialPost, socialCrimePost } from "../game/feed";
@@ -92,6 +93,10 @@ export default function Phase7Systems() {
   const eDownAt = useRef(-1);
   const buyRef = useRef<{ label: string; run: () => void } | null>(null);
   const markerRef = useRef<THREE.Mesh>(null);
+  // Phase 16: farm-work crate stack — rides in the farm pickup's bed
+  // while a load is being delivered (2 crates per load, up to 6)
+  const crateGroupRef = useRef<THREE.Group>(null);
+  const crateRefs = useRef<Array<THREE.Mesh | null>>([]);
   const countStage = useRef(-1);
   const raceOutAt = useRef(-1); // race abort timer (out of car)
 
@@ -243,6 +248,50 @@ export default function Phase7Systems() {
             J.delPhase = "pickup";
             J.delPoint = PICKUP_POINTS[J.delLeg % PICKUP_POINTS.length];
             toast(`📦 Leg done +$${pay} — next pickup lit (${J.delLeg}/3)`);
+          }
+        }
+      }
+    }
+
+    // ================= FARM WORK (Phase 16) =================
+    // Haul crop crates from the Downs barn to Harbour Wraps in the
+    // farm pickup — the delivery chain's pattern with its own flags
+    // (J.farmPhase/farmLoad in game/jobs.ts). Only the farm pickup
+    // (spawn id 31) can load or deliver: the job is the truck's work.
+    if (J.wantFarm) {
+      J.wantFarm = false;
+      if (J.farmPhase === "idle" && !jobBusy()) {
+        J.farmPhase = "load"; J.farmLoad = 0;
+        toast("🌾 Farm work started — take the farm pickup to the barn (amber marker) and load up. 3 loads to Harbour Wraps.");
+        pushPhoneMsg("Old Elias", "Downs farm needs hands, lad. Crates are stacked by the barn — the old pickup's yours for the shift. Wraps pays $120 a load, and there's a bonus for the full three.");
+      } else toast("Finish what you're running first — then we'll talk farm work.");
+    }
+    if (J.farmPhase !== "idle") {
+      const inPickup = !!car && car.id === FARM_PICKUP_SPAWN_ID;
+      if (J.farmPhase === "load" && car) {
+        const d2 = (car.state.x - FARM_LOAD_POINT.x) ** 2 + (car.state.z - FARM_LOAD_POINT.z) ** 2;
+        if (inPickup && d2 < 6.5 ** 2 && speed < 1.5) {
+          J.farmPhase = "deliver";
+          sfx.pickup(); toast(`🌾 Crates loaded — load ${J.farmLoad + 1} of 3. Harbour Wraps is lit on the marker.`);
+        }
+      } else if (J.farmPhase === "deliver" && car) {
+        const d2 = (car.state.x - FARM_DROP_POINT.x) ** 2 + (car.state.z - FARM_DROP_POINT.z) ** 2;
+        if (inPickup && d2 < 6.5 ** 2 && speed < 1.5) {
+          const pay = FARM_PAY_PER_LOAD;
+          G.cash += pay; G.lifetimeEarned += pay;
+          jobStats.farmLoads += 1; jobStats.farmEarned += pay;
+          J.farmLoad += 1;
+          sfx.cash();
+          if (J.farmLoad >= 3) {
+            G.cash += FARM_SHIFT_BONUS; G.lifetimeEarned += FARM_SHIFT_BONUS;
+            jobStats.farmEarned += FARM_SHIFT_BONUS; persistJobStats();
+            J.farmPhase = "idle";
+            pushPhoneMsg("Old Elias", `Last load in — the Wraps crew sends their thanks, and the farm adds the $${FARM_SHIFT_BONUS} shift bonus. Honest work, honest pay.`);
+            toast(`🌾 Farm shift complete! $${pay} for the load + $${FARM_SHIFT_BONUS} bonus`);
+          } else {
+            persistJobStats();
+            J.farmPhase = "load";
+            toast(`🌾 Load delivered +$${pay} — back to the barn for more (${J.farmLoad}/3)`);
           }
         }
       }
@@ -592,6 +641,24 @@ export default function Phase7Systems() {
       }
     }
 
+    // ================= FARM CRATES (Phase 16) =================
+    // The stack exists only while a load is in the bed (deliver leg);
+    // it grows by two crates per load of the shift — load 1 rides
+    // with 2 crates, load 3 with a full 6-crate stack.
+    if (crateGroupRef.current) {
+      const stack = J.farmPhase === "deliver" ? (J.farmLoad + 1) * 2 : 0;
+      const pickup = G.cars.find((c) => c.id === FARM_PICKUP_SPAWN_ID);
+      const show = stack > 0 && !!pickup && !pickup.storedAway;
+      crateGroupRef.current.visible = show;
+      if (show && pickup) {
+        const bx = pickup.state.x - Math.sin(pickup.state.heading) * 0.85;
+        const bz = pickup.state.z - Math.cos(pickup.state.heading) * 0.85;
+        crateGroupRef.current.position.set(bx, groundYAt(bx, bz) + 0.82, bz);
+        crateGroupRef.current.rotation.y = pickup.state.heading;
+        crateRefs.current.forEach((m, i) => { if (m) m.visible = i < stack; });
+      }
+    }
+
     // ================= PROMPTS (claimed last) =================
     let prompt = ""; let warn = false; let act: (() => void) | null = null;
     buyRef.current = null;
@@ -779,6 +846,15 @@ export default function Phase7Systems() {
         <cylinderGeometry args={[0.55, 0.85, 3.4, 10, 1, true]} />
         <meshBasicMaterial color="#ffb340" transparent opacity={0.4} side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
       </mesh>
+      {/* Phase 16: farm-work crates (positioned per-frame in the bed) */}
+      <group ref={crateGroupRef} visible={false}>
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <mesh key={i} ref={(n) => { crateRefs.current[i] = n; }} position={[(i % 2 === 0 ? -0.3 : 0.3), Math.floor(i / 2) * 0.34, 0]} castShadow>
+            <boxGeometry args={[0.55, 0.32, 0.75]} />
+            <meshStandardMaterial color={i % 2 === 0 ? "#8a5a2b" : "#7a4e24"} roughness={0.9} />
+          </mesh>
+        ))}
+      </group>
       {/* race start rings */}
       {RACES.map((r) => (
         <group key={r.id} position={[r.start[0], groundYAt(r.start[0], r.start[1]) + 0.15, r.start[1]]}>

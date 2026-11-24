@@ -164,7 +164,14 @@ export type SurfaceKind = "asphalt" | "dirt" | "grass" | "sand";
 export const FARM_ROADS: { x: number; z: number; w: number; d: number }[] = [
   { x: -106.5, z: -78, w: 21, d: 6 },  // west: ring → farmstead + crop field
   { x: -78, z: -106.5, w: 6, d: 21 },  // north: ring → farmhouse
-  { x: -78, z: -49, w: 6, d: 19 },     // south: ring → the z=−40 city road
+  // south spur: ring → the block edge at z≈−39.5, where open corner
+  // ground (drivable, asphalt grip) carries you around the corner
+  // houses to the z=−20 road. Phase 16 audit fix: Phase 15's comment
+  // cited a "z=−40 city road" that does not exist (ROAD_COORDS has
+  // no −40), and a Ferry Quarter house clipped the spur's east edge —
+  // the spur now sits at x=−79.5, clear of it. It cannot run further
+  // north as dirt: a house stands at (−80, −30) on that line.
+  { x: -79.5, z: -49, w: 6, d: 19 },   // south spur: ring → block edge
 ];
 export const FARM = { barn: { x: -107, z: -103 }, house: { x: -95, z: -106 }, field: { x: -107, z: -91.5, w: 13, d: 9 } };
 export function surfaceKindAt(x: number, z: number): SurfaceKind {
@@ -427,6 +434,9 @@ export const CAFE_EXT_DOOR = { x: 8, z: 100.6 };
 // and the Northgate Loft on the mansion-row approach ----
 export const GYM_EXT_DOOR = { x: 64, z: -66.3 };
 export const CLOTHING_EXT_DOOR = { x: 18, z: 30.5 }; // Thread & Tide, Market Row (Phase 15: walk-in)
+/** Phase 16: the Sable Downs farmhouse front door — south face of the
+ * farmhouse blocker (FARM.house at (−95, −106), hd 3 → face z=−103). */
+export const FARMHOUSE_EXT_DOOR = { x: -95, z: -102.2 };
 export const LOFT_EXT_DOOR = { x: -68, z: -195.2 };
 
 // ---- Phase 7 world sweep: toll booth on the Coral causeway (bridge
@@ -510,7 +520,7 @@ export const MANSION_DRIVE = { x: MANSION.x + 4.4, z: MANSION.z + 4.4, hw: 3.6, 
 // ---- Phase 3: enterable interiors live in an offset pocket (z ≈ -175),
 // far outside the city grid. Player movement clamps to the room while
 // G.interior is set, so city collision never applies there.
-export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing";
+export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing" | "farmhouse";
 export interface InteriorDef { cx: number; cz: number; w: number; d: number; spawnIn: [number, number]; exitDoor: [number, number]; }
 export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   garage: { cx: 0, cz: -175, w: 18, d: 13, spawnIn: [0, -171.2], exitDoor: [0, -169.4] },
@@ -531,6 +541,9 @@ export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   // Market Row street rack is signage now; the counter moved inside
   // (counter point in game/phase8.ts CLOTHING_COUNTER) ----
   clothing: { cx: 390, cz: -175, w: 16, d: 12, spawnIn: [390, -171.6], exitDoor: [390, -170] },
+  // ---- Phase 16: the Sable Downs farmhouse (pocket 12) — kitchen /
+  // living room + the farmhand's bunk (free sleep, no purchase) ----
+  farmhouse: { cx: 426, cz: -175, w: 16, d: 12, spawnIn: [426, -171.6], exitDoor: [426, -170] },
 };
 
 export function isBlocked(x: number, z: number, radius: number): boolean {

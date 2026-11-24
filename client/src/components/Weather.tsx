@@ -6,6 +6,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { G } from "../game/store";
 import { WEATHER_META, rollWeather } from "../game/weather";
+import { viewFogScale } from "../game/perf";
 import { sfx } from "../game/audio";
 import { groundYAt } from "../world";
 import type { GameTheme } from "../themes";
@@ -73,8 +74,11 @@ export default function Weather({ paused, theme }: { paused: boolean; theme: Gam
     G.fogAmt += (meta.fog - G.fogAmt) * k;
     // ---- fog shaping (theme owns base distances; weather scales them) ----
     if (scene.fog instanceof THREE.Fog) {
-      const far = theme.fogFar * (1 - G.fogAmt * (1 - meta.fogScale) - G.rainAmt * 0.18);
-      const near = theme.fogNear * (1 - G.fogAmt * 0.55);
+      // Phase 16: the view-distance lever scales both fog distances
+      // (Near ×0.78 / Normal ×1 / Far ×1.3) on top of the weather shape
+      const viewFog = viewFogScale();
+      const far = theme.fogFar * viewFog * (1 - G.fogAmt * (1 - meta.fogScale) - G.rainAmt * 0.18);
+      const near = theme.fogNear * viewFog * (1 - G.fogAmt * 0.55);
       scene.fog.far += (far - scene.fog.far) * k;
       scene.fog.near += (near - scene.fog.near) * k;
     }

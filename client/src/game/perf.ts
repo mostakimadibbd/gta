@@ -111,3 +111,26 @@ export const showFps = () => !!(G.settings as { showFps?: boolean }).showFps;
  * positions that can tunnel. */
 export const SIM_STEP = 1 / 60;
 export const SIM_MAX_SUBSTEPS = 3;
+
+/** Phase 16: PLAYER PERFORMANCE LEVERS (G.settings, persisted per
+ * slot, read live — no reload). "normal" is exactly the pre-Phase-16
+ * behaviour everywhere:
+ *  · trafficDensity — the share of the AMBIENT traffic pool that
+ *    activates (Low 50%, Normal 100%, High 100% + the rush-hour
+ *    reserve never parks). Service units, the bus and taxis are
+ *    exempt (jobs/dispatch depend on them), as are dispatched units,
+ *    wrecks, and any car within 25u of the player (nothing pops out
+ *    of existence in front of you).
+ *  · pedDensity — a multiplier on the time-of-day crowd fraction
+ *    (Low ×0.5, Normal ×1, High ×1.35, capped at 1). Downed peds and
+ *    the reporting witness are never density-culled.
+ *  · viewDistance — scales the streaming activation radii (traffic
+ *    dormancy 165/140u, ped hold 170u) and the fog distances:
+ *    Near ×0.65 streaming / ×0.78 fog, Normal ×1, Far ×1.45 / ×1.3. */
+export const trafficDensityShare = () => (G.settings.trafficDensity === "low" ? 0.5 : 1);
+export const pedDensityFactor = () =>
+  G.settings.pedDensity === "low" ? 0.5 : G.settings.pedDensity === "high" ? 1.35 : 1;
+export const viewStreamScale = () =>
+  G.settings.viewDistance === "near" ? 0.65 : G.settings.viewDistance === "far" ? 1.45 : 1;
+export const viewFogScale = () =>
+  G.settings.viewDistance === "near" ? 0.78 : G.settings.viewDistance === "far" ? 1.3 : 1;

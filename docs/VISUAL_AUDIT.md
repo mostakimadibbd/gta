@@ -1049,3 +1049,42 @@ No palette changes, no new post effects, no eager chunks:
 initial-load JS 794.1 kB gzip (index 419.2 + three 178.2 +
 react-three 185.8 + css/html 11) vs Phase 14's 789.8 — the phase's
 own code (dispatch, farm, shop room, roster, pair) at +0.5%.
+
+## Phase 16 — World Depth & Player Control
+
+No palette changes and no new post effects. What changes visually is
+*density under player control* and three new dressed spaces:
+
+- **Performance levers (Pause → Settings / Phone → Settings):**
+  Traffic density Low visibly thins the ambient flow (half the pool;
+  buses, taxis, emergency units and anything near you never cull),
+  High keeps the rush-hour reserve circulating all day. Pedestrian
+  density scales the pavement crowds on top of the day/night rhythm.
+  View distance Near pulls the fog in (×0.78) and shortens streaming
+  (×0.65); Far pushes both out (×1.3 fog / ×1.45 streaming). All live,
+  no reload; Normal is the shipped look, unchanged.
+- **The arrest escort** reads as a scene, not a cut: a navy patrol
+  officer rig steps out of the patrol car, subtitle barks carry the
+  exchange, and you walk hands-up at his shoulder to the car while a
+  slim "Under arrest" progress line runs. The BUSTED overlay that
+  follows is the same one as always.
+- **The Downs farmhouse interior** (pocket 12): cream walls, wood
+  boards, a kitchen run with stove + kettle, table and chairs on a
+  rust rug, and the farmhand's bunk with a harbour-teal blanket at
+  the back — the room is dressed as a workplace home, not a show
+  home, and it is not for sale.
+- **Farm work dressing:** crop crates stack in the farm pickup's bed
+  — 2 crates on the first load, 4 on the second, a full 6-crate
+  stack on the third — and clear on delivery.
+- **Barber:** fade (low tight cap), quiff (raised swept front),
+  mohawk (centre strip), shoulder-length (deep back panel), and
+  beards — stubble via the painted face variant, goatee/full as
+  layered beard cards over the jaw. All procedural, all on the
+  existing rig; the honest line stands: realistic-STYLED, not
+  scanned photoreal.
+
+Budget: initial-load JS 799.1 kB gzip (index 424.1 + three 178.2 +
+react-three 185.8 + css/html 11.0) vs Phase 15's 794.1 — +0.6%, the
+phase's own code (escort, fleet, farm work, levers). No new eager
+chunks; the officer is a single additional rig; density culling
+reuses the dormancy path, so Low settings strictly reduce draw work.

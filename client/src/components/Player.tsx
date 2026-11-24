@@ -11,6 +11,7 @@ import { fallbackPhysics } from "../physics/GamePhysics";
 import type { CharacterPreset } from "../game/characters";
 import { CLOTH } from "../game/phase8";
 import { LOOK } from "../game/phase9";
+import { ESCORT } from "../game/escort";
 import { seedRagdoll, stepRagdoll, poseRigFromRagdoll, type RagdollState } from "../game/ragdoll";
 import { padKeys, padMove } from "../game/gamepad";
 import { SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
@@ -72,6 +73,10 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     if (LOOK.hairStyle) opts.hairStyle = LOOK.hairStyle as typeof opts.hairStyle;
     if (LOOK.hairColor) opts.hair = LOOK.hairColor;
     if (LOOK.tattoo) opts.tattooSleeve = true;
+    // Phase 16: the owned beard (Sable Cuts) rides the same layer —
+    // this component also renders the character-select showcase, so
+    // the preview at spawn shows the style you own
+    if (LOOK.beardStyle) opts.beardStyle = LOOK.beardStyle as typeof opts.beardStyle;
     return buildHumanoid(opts);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset, clothingKey, lookKey]);
@@ -220,6 +225,45 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
       rig.lArm.rotation.x = -0.3; rig.rArm.rotation.x = -0.3;
       if (animation.current !== "Idle") { animation.current = "Idle"; setAnimationLabel("Idle"); }
+      return;
+    }
+    // ---- Phase 16: THE ARREST ESCORT — input is locked (camera
+    // stays free: the camera reads followPos, which we keep writing);
+    // the rig auto-walks to the escort target beside the officer with
+    // both hands up, exactly the tram branch's render-and-return
+    // pattern. game/escort.ts owns the scene state. ----
+    if (ESCORT.active && !driving && !showcase) {
+      keys.current.clear();
+      G.swimming = false;
+      root.current.visible = true;
+      const dx = ESCORT.playerTx - positionRef.current.x;
+      const dz = ESCORT.playerTz - positionRef.current.z;
+      const dist = Math.hypot(dx, dz);
+      const escMoving = dist > 0.15;
+      if (escMoving) {
+        const step = Math.min(dist, 2.7 * dt);
+        const nx = positionRef.current.x + (dx / dist) * step;
+        const nz = positionRef.current.z + (dz / dist) * step;
+        if (!isBlocked(nx, positionRef.current.z, 0.45)) positionRef.current.x = nx;
+        if (!isBlocked(positionRef.current.x, nz, 0.45)) positionRef.current.z = nz;
+        root.current.rotation.y = Math.atan2(dx, dz);
+        phase.current += dt * 12.2;
+      }
+      intensity.current = escMoving ? 0.72 : 0;
+      root.current.position.set(positionRef.current.x, groundYAt(positionRef.current.x, positionRef.current.z), positionRef.current.z);
+      root.current.rotation.x = 0;
+      G.followPos.set(positionRef.current.x, root.current.position.y, positionRef.current.z);
+      G.playerHeading = root.current.rotation.y;
+      rotationRef.current.set(0, root.current.rotation.y, 0);
+      animateHumanoid(rig, phase.current, intensity.current, tNow);
+      rig.group.position.y = 0;
+      // hands up, full — the arrest pose at bustAmt = 1
+      rig.lArm.rotation.x = -2.95; rig.rArm.rotation.x = -2.95;
+      rig.lArm.rotation.z = 0.25; rig.rArm.rotation.z = -0.25;
+      rig.lFore.rotation.x = -0.15; rig.rFore.rotation.x = -0.15;
+      rig.head.rotation.x = -0.2;
+      const lbl = escMoving ? "Walk" : "Idle";
+      if (animation.current !== lbl) { animation.current = lbl as AnimationState; setAnimationLabel(lbl); }
       return;
     }
     // Phase 8: one merged view of keyboard ∪ gamepad keys (analog

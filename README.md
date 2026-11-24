@@ -168,6 +168,27 @@ corrupt harbour boss's debt ledger.
   can no longer take the game down with it, and a GPU context loss
   resets graphics safely instead of going black. Ledger: **86 ✅ ·
   7 🟡 · 0 ⬜** of 93 topics.
+- **Phase 16 — "World Depth & Player Control"** — you hold the
+  performance levers now: **Traffic density, Pedestrian density and
+  View distance** in Pause → Settings and Phone → Settings, live
+  without a reload (Low traffic halves the ambient flow; view
+  distance moves the fog and the streaming radius; Normal is exactly
+  how the game shipped). Getting **busted on foot is a scene** now:
+  an officer walks you, hands up, to the patrol car before the
+  standard bust lands (surrender is unchanged). **Farm life** at
+  Sable Downs: the farmhouse is a walk-in interior with a **free
+  farmhand's bunk** (sleeping there doesn't move your respawn home —
+  it's a workplace perk, not a property), and **Farm work** in the
+  Jobs app hauls 3 crate loads from the barn to Harbour Wraps in the
+  farm pickup ($120/load + $150 bonus, crates stack in the bed).
+  Your **parked fleet** grows: up to **3 owned cars** persist where
+  you leave them, numbered amber rings on the big map. And Sable
+  Cuts adds **4 hairstyles + beards** (stubble, goatee, full). The
+  round also fixes three Phase 15 regressions found by audit: a
+  wrecked dispatched unit could stall dispatch forever, a failed
+  Meridian Pair attempt locked both branches, and the farm's south
+  dirt spur clipped a house. Ledger: **86 ✅ · 7 🟡 · 0 ⬜** of 93
+  topics (five 🟡 lines grew).
 - **Phase 10 — realism + physics pass** (no new features): the
   post chain gains **radial chromatic aberration** and a stricter
   bloom threshold; **fog colour follows the day cycle**; **stars**
@@ -227,13 +248,15 @@ saved in `localStorage` and applies identically on web and desktop.
 | Hold right-mouse | Free-aim — over-shoulder camera, fire along the crosshair |
 | W / Shift / Ctrl (in the Sparrow) | Throttle · climb · descend — lift off past ~60 km/h, land gently |
 | E at Sable Arms | Tap: browse guns + weapon mods (suppressors, mag, sight, choke) · hold: buy/fit |
-| E at Sable Cuts / Port Ink (Market Row) | Tap: browse hair / tattoos · hold: buy ($25 / $60, 07:00–23:00) |
+| E at Sable Cuts / Port Ink (Market Row) | Tap: browse hair / beards / tattoos · hold: buy (cut $25 · beard trim $15 · tattoo $60, 07:00–23:00) |
 | E near a named townsfolk | Talk — branching conversation (Tomas, Priya, Bea, Kip) |
 | E at bottle crates (Club Solace / pier) | Restock throwing bottles (+6) |
 | E at the pier / island dock | Fish — hold E to charge, release to cast, tap E on the bite, hold E to reel (keep the marker in the green) |
 | E at Lantern Park gym stations | Workout session ($10, once a day each) — tap E in the moving zone ×8 |
 | E at Thread & Tide (Market Row) | Enter the shop (07:00–23:00) · inside at the counter — tap: browse outfits · hold: buy (worn until you change character/variant) |
 | Phone → Jobs → Tow shift | Tow stranded cars with the wrecker at Lina's — reverse the hook in, hold still to hitch, deliver to the yard ($150) |
+| Phone → Jobs → Farm shift | Haul 3 crate loads from the Downs barn to Harbour Wraps in the farm pickup ($120/load + $150 shift bonus) |
+| E at the Downs farmhouse door | Enter the farmhouse — sleep free in the farmhand's bunk (morning at the farm; your respawn home doesn't move) |
 | Phone → SableBank → Invest | Buy/sell three local stocks in $100 lots |
 | Click / J (hold for SMG) | Punch / fire weapon |
 | Hold B (on foot, 1★, unarmed) | Surrender — $100 fine, no cell |
@@ -299,6 +322,17 @@ are High-only, both switch off automatically when the smoothness
 governor steps the tier down, and a **Ray-traced reflections**
 toggle in the same two settings screens disables them on their
 own if High stutters on your phone.
+
+**Your levers (Phase 16)** — beyond the quality tiers, three
+world levers sit in **Pause → Settings** and **Phone → Settings**
+and apply live, no reload: **Traffic density** (Low runs half the
+ambient cars — buses, taxis and emergency units always run, and no
+car ever vanishes within 25 units of you; High keeps the rush-hour
+reserve circulating all day), **Pedestrian density** (scales the
+crowds over the day/night rhythm), and **View distance** (Near /
+Normal / Far scales how far out traffic and walkers stream in and
+where the fog sits). All three persist per save slot; Normal
+everywhere is exactly the pre-Phase-16 behaviour.
 
 **Smoothness (Phase 12)** — the simulation (player, driven car,
 traffic, peds, police) runs on a **fixed 60 Hz timestep**, so game

@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, persistSkills, persistZoneRep, bark, toast } from "../game/store";
 import { M, currentTarget, endMission, persist, effectivePayout, recordBest, altActive } from "../game/missionState";
 import { gates, type QualityTier } from "../game/quality";
-import { perf, SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
+import { perf, SIM_STEP, SIM_MAX_SUBSTEPS, trafficDensityShare, pedDensityFactor, viewStreamScale } from "../game/perf";
 import { pushPhoneMsg } from "../game/phone";
 import { pushNews } from "../game/feed";
 import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, NORTH_ROAD_X, NORTH_ROAD_Z, BUS_STOPS, REGISTERS, PAWN_SHOP, DEALERSHIP, VENDOR, districtAt, isBlocked, inNorth, onIsland, MANSION_DRIVE, groundYAt, CAR_MODELS, buildings, props as WORLD_PROPS } from "../world";
@@ -20,6 +20,7 @@ import CarBody, { type CarKind } from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 import { seedRagdoll, stepRagdoll, poseRigFromRagdoll } from "../game/ragdoll";
 import { tickDispatch, stepDispatchDrive } from "../game/dispatch";
+import { ESCORT, startEscort, stepEscort, cancelEscort } from "../game/escort";
 
 // Phase 13: seasonal sun-warp scratch (written by seasonSun each frame)
 const _sunWarp: SunWarp = { elev: 0, ang: 0 };
@@ -180,6 +181,13 @@ function initWorld() {
         rushOnly: true, parked: true, parkX: x, parkZ: z, parkHeading: headingFor(axis, dir), blockedT: 0, dormant: false,
       });
     });
+    // ---- Phase 16: density ranks for the traffic-density lever.
+    // Every AMBIENT car (not a service unit, not the bus, not a taxi —
+    // jobs and dispatch depend on those) gets a stable rank in the
+    // pool; at Low density only the first half of the pool activates.
+    // Ranks are assigned once here so the active set never shuffles. ----
+    const pool = G.traffic.filter((c) => !c.svc && !c.busRoute && c.kind !== "taxi");
+    pool.forEach((c, i) => { c.densRank = i; c.densTotal = pool.length; });
   }
   if (G.peds.length === 0) {
     for (let i = 0; i < 14; i++) {
@@ -281,6 +289,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   const dogRef = useRef<THREE.Group>(null);
   // the wrap vendor — a static figure behind the Market Row stall (A4)
   const vendorRig = useMemo(() => buildHumanoid({ top: "#c96a2c", bottom: "#2b3440", skin: "#8d5524", hair: "#14100e", topStyle: "tee", gender: "m", hairStyle: "cap", cap: "#f5f2ea" }), []);
+  // ---- Phase 16: the arrest-escort officer — a dedicated patrol rig
+  // (navy uniform + cap), posed from ESCORT state in syncMeshes ----
+  const officerRig = useMemo(() => buildHumanoid({ top: "#1c2f4a", bottom: "#232c38", skin: "#c68863", hair: "#14100e", topStyle: "tee", gender: "m", hairStyle: "cap", cap: "#1c2f4a" }), []);
+  const officerRef = useRef<THREE.Group>(null);
+  const officerPhase = useRef(0);
   const phoneGlowRefs = useRef<Array<THREE.Sprite | null>>([]);
   const eventRigs = useMemo(() => [
     buildHumanoid({ top: "#8a5a2b", bottom: "#2b3440", skin: "#e0ac69", hair: "#20242a", topStyle: "tee", gender: "m", hairStyle: "flat" }),
@@ -466,13 +479,29 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     crashCd.current = Math.max(0, crashCd.current - dt);
     const hourNow = (G.dayTime * 24 + 6) % 24;
     const rush = (hourNow >= 7 && hourNow < 9.5) || (hourNow >= 16.5 && hourNow < 19);
+    // Phase 16: player performance levers, read live every step
+    const streamScale = viewStreamScale();
+    const streamFar = 165 * streamScale, streamNear = 140 * streamScale;
+    const densShare = trafficDensityShare();
     for (let ti = 0; ti < G.traffic.length; ti++) {
       const car = G.traffic[ti];
       const distP = Math.hypot(car.x - px, car.z - pz);
-      // streaming dormancy (hysteresis 165 / 140) — Phase 15: a
-      // dispatched unit never sleeps mid-call
-      if (!car.dormant && distP > 165 && !car.dispatch) car.dormant = true;
-      else if (car.dormant && distP < 140) car.dormant = false;
+      // Phase 16: TRAFFIC DENSITY — an ambient car ranked beyond the
+      // active share stays dormant (mesh hidden by syncMeshes, same
+      // as streaming dormancy). Exempt: dispatched units, wrecks
+      // (they stay visible where they died), and anything within 14u
+      // of the player — nothing ever pops out in front of you, and a
+      // car is never culled mid-chase or mid-mission because culled
+      // cars are by definition the far, uninvolved ones.
+      const densityOff = densShare < 1 && car.densRank !== undefined && car.densTotal !== undefined
+        && car.densRank >= Math.ceil(car.densTotal * densShare)
+        && !car.dispatch && car.damage < 100 && distP > 25;
+      if (densityOff) { car.dormant = true; car.speed = 0; continue; }
+      // streaming dormancy (hysteresis 165 / 140 at Normal view
+      // distance; scaled by the Phase 16 view-distance lever) —
+      // Phase 15: a dispatched unit never sleeps mid-call
+      if (!car.dormant && distP > streamFar && !car.dispatch) car.dormant = true;
+      else if (car.dormant && distP < streamNear) car.dormant = false;
       if (car.dormant) { car.speed = 0; continue; }
       // Phase 9: a traffic car at full damage is a WRECK — it stays where
       // it died for the rest of the game-day instead of healing off-screen
@@ -519,11 +548,14 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         }
       }
       // ---- rush-hour reserve: parked off-peak, driving at the peaks ----
+      // Phase 16: at HIGH traffic density the reserve never parks —
+      // the whole pool circulates all day.
       if (car.rushOnly) {
-        if (!rush && !car.parked && distP > 60) {
+        const densHigh = G.settings.trafficDensity === "high";
+        if (!rush && !densHigh && !car.parked && distP > 60) {
           car.parked = true; car.x = car.parkX ?? car.x; car.z = car.parkZ ?? car.z;
           car.heading = car.parkHeading ?? car.heading; car.speed = 0;
-        } else if (rush && car.parked) {
+        } else if ((rush || densHigh) && car.parked) {
           car.parked = false;
           // pull out into the lane on its fixed road
           if (car.axis === "x") car.z = (car.fixed ?? 0) + car.lane; else car.x = (car.fixed ?? 0) + car.lane;
@@ -655,11 +687,17 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     // survivors drift toward the club strip; in rain everyone hurries.
     const elevNow = elev; // Phase 13: seasonal elevation (frame scope)
     const raining = G.rainAmt > 0.25;
+    // Phase 16: PED DENSITY lever scales the crowd fraction live
+    const pedFactor = pedDensityFactor();
     G.peds.forEach((ped, i) => {
       let frac = elevNow > 0.05 ? 1 : 0.45; // deep night: under half the walkers
       if (ped.zone === "The Docks") frac = elevNow > -0.35 && elevNow < 0.55 ? 1 : 0.55; // dusk beach crowd
       if (rush) frac = Math.min(1, frac + 0.25); // morning/evening pavement peaks
+      frac = Math.min(1, frac * pedFactor);
       ped.active = ((i * 7) % G.peds.length) / G.peds.length < frac;
+      // never density-culled: a downed ped (the scene must resolve)
+      // and the witness currently reporting the player
+      if (t < ped.downUntil || i === G.reportingPed) ped.active = true;
     });
     const phys = physicsRef.current ?? fallbackPhysics;
     for (let pi = 0; pi < G.peds.length; pi++) {
@@ -704,8 +742,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         continue;
       }
       const threatD2 = (ped.x - px) ** 2 + (ped.z - pz) ** 2;
-      // streaming: beyond 170u a ped holds position (mesh still poses cheaply)
-      if (threatD2 > 170 ** 2) { ped.speed = 0; continue; }
+      // streaming: beyond 170u a ped holds position (mesh still poses
+      // cheaply) — Phase 16: scaled by the view-distance lever
+      if (threatD2 > (170 * streamScale) ** 2) { ped.speed = 0; continue; }
       // Phase 12 AI staggering: peds beyond 60u steer on alternating
       // steps with a doubled step length — same average speed, and out
       // there the steering target is just a pavement destination, so
@@ -1030,12 +1069,28 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // busted: cop close + player slow (unchanged rule, cleaner condition;
       // crouched in cover slows the grab — A6). Phase 13: the patrol
       // never boards the tram — no bust while riding, they wait below.
-      if (nearestCop < 7.5 && pSpeed < 2.5 && G.tramRide < 0) {
+      if (ESCORT.active) {
+        // Phase 16: the arrest is being walked out as a scene — the
+        // meter stays pinned and no second bust can trigger
+        G.bustTimer = 3;
+      } else if (nearestCop < 7.5 && pSpeed < 2.5 && G.tramRide < 0) {
         G.bustTimer += dt * (G.inCover ? 0.6 : 1);
-        if (G.bustTimer > 3) { G.status = "busted"; G.statusTimer = 0; sfx.busted(); bark("Harbour Patrol", "Suspect in custody. Repeat — suspect in custody."); }
+        if (G.bustTimer > 3) {
+          // Phase 16: ON FOOT, the bust becomes the escort scene when
+          // a patrol car is in reach; otherwise (in a car, swimming,
+          // indoors, or no cop near) the instant flow runs as before.
+          // The hold-B surrender path never reaches this block.
+          if (!G.driving && !G.interior && !G.swimming && startEscort(px, pz)) {
+            G.bustTimer = 3;
+          } else {
+            G.status = "busted"; G.statusTimer = 0; sfx.busted(); bark("Harbour Patrol", "Suspect in custody. Repeat — suspect in custody.");
+          }
+        }
       } else G.bustTimer = Math.max(0, G.bustTimer - dt * 1.5);
     } else G.bustTimer = 0;
-    if (G.health <= 0 && !G.status) { G.status = "wasted"; G.statusTimer = 0; sfx.fail(); }
+    // Phase 16: advance the arrest escort (completion sets busted)
+    if (ESCORT.active) stepEscort(dt);
+    if (G.health <= 0 && !G.status) { if (ESCORT.active) cancelEscort(); G.status = "wasted"; G.statusTimer = 0; sfx.fail(); }
     if (G.status) {
       G.statusTimer += dt;
       if (G.statusTimer > 0.4 && G.statusTimer < 0.5) { /* overlay handled by HUD */ }
@@ -1296,6 +1351,10 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           else if (M.side[side] >= 3) pushPhoneMsg(side === "lina" ? "Lina Park" : "Det. Mara Voss", side === "lina" ? "That's the whole line done, Rayan. The garage owes you — come by any time." : "File closed and filed. The parole board has everything. Thank you, Kade.");
           cb.current.event("missionEnd");
         } else if (def.pair) {
+          // Phase 16 audit fix: record completion so a FAILED attempt
+          // (pairChoice set, pairDone false) can be re-offered by its
+          // own giver while the other branch stays locked forever
+          M.pairDone = true;
           // Phase 15: the Meridian Pair lands its consequence in the
           // world — reputation at The Docks moves opposite ways, and
           // both harbours hear about it (news + a call from the side
@@ -1405,6 +1464,19 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           dogRef.current.rotation.y = owner.heading + Math.PI / 2 + Math.sin(tt * 2.2) * 0.12;
           dogRef.current.position.y += Math.abs(Math.sin(tt * 7)) * 0.03 * Math.min(1, owner.speed);
         } else dogRef.current.visible = false;
+      }
+      // ---- Phase 16: pose the escort officer from ESCORT state ----
+      {
+        const g = officerRef.current;
+        if (g) {
+          g.visible = ESCORT.active;
+          if (ESCORT.active) {
+            g.position.set(ESCORT.x, groundYAt(ESCORT.x, ESCORT.z), ESCORT.z);
+            g.rotation.set(0, ESCORT.heading, 0);
+            if (ESCORT.moving) officerPhase.current += 1 / 30;
+            animateHumanoid(officerRig, officerPhase.current * 6.4, ESCORT.moving ? 0.75 : 0, tt);
+          }
+        }
       }
       // ---- random-event presentation (B2): rigs + car placed per kind ----
       {
@@ -1577,6 +1649,12 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           </sprite>
         </group>
       ))}
+      {/* Phase 16: the arrest-escort officer (visible only mid-escort) */}
+      {stage >= 4 && (
+        <group ref={officerRef} visible={false}>
+          <primitive object={officerRig.group} />
+        </group>
+      )}
       {/* the dog (A4) + street vendor figure at the Market Row stall */}
       {stage >= 4 && <primitive object={dogRig} ref={dogRef} />}
       {stage >= 4 && (

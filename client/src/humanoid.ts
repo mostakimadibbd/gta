@@ -24,13 +24,16 @@ export interface HumanoidOptions {
   topStyle?: "tee" | "tank" | "hoodie" | "varsity" | "crop" | "jacket";
   bottomStyle?: "jeans" | "shorts";
   gender?: "m" | "f";
-  hairStyle?: "cap" | "flat" | "bun" | "ponytail" | "crop" | "bald";
+  hairStyle?: "cap" | "flat" | "bun" | "ponytail" | "crop" | "bald" | "fade" | "quiff" | "mohawk" | "long";
   sunglasses?: boolean;
   cap?: string;           // cap colour, if wearing one
   tattooSleeve?: boolean; // darker patterned right arm
   necklace?: boolean;
   build?: "slim" | "average" | "broad";
   beard?: boolean;
+  /** Phase 16: Sable Cuts beards — "stubble" is the painted face
+   * variant only; "goatee"/"full" add layered beard cards below. */
+  beardStyle?: "stubble" | "goatee" | "full";
 }
 
 export interface HumanoidRig {
@@ -280,7 +283,7 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
   head.add(skull);
   const lids: THREE.Mesh[] = [];
   if (!o.sunglasses) {
-    const face = new THREE.Mesh(GEO.face, faceMat(o.beard ? "beard" : female ? "f" : "m"));
+    const face = new THREE.Mesh(GEO.face, faceMat(o.beard || o.beardStyle === "stubble" || o.beardStyle === "full" ? "beard" : female ? "f" : "m"));
     face.position.set(0, 0.155, 0);
     face.scale.set(0.92, 1.08, 0.97);
     head.add(face);
@@ -332,6 +335,35 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
       addHairCards(false);
     } else if (hairStyle === "bald") {
       // bald (B4): bare skull with a slight sheen — nothing to add
+    } else if (hairStyle === "fade") {
+      // Phase 16 tight fade: a low, close cap — shorter than the crop,
+      // fringe card only, no sides (the fade IS the sides being gone)
+      const fd = mesh(GEO.hairCap, hair, 0, 0.172, -0.006);
+      fd.scale.set(0.985, 0.66, 0.985);
+      head.add(fd);
+      addHairCards(false);
+    } else if (hairStyle === "quiff") {
+      // Phase 16 quiff: standard cap + a raised, swept front block
+      head.add(mesh(GEO.hairCap, hair, 0, 0.175, -0.012));
+      const qf = mesh(GEO.flatTop, hair, 0, 0.335, 0.075);
+      qf.scale.set(0.82, 0.55, 0.5); qf.rotation.x = -0.28;
+      head.add(qf);
+      addHairCards(true);
+    } else if (hairStyle === "mohawk") {
+      // Phase 16 mohawk: shaved sides (thin low cap) + a centre strip
+      const mh = mesh(GEO.hairCap, hair, 0, 0.17, -0.006);
+      mh.scale.set(0.985, 0.6, 0.985);
+      head.add(mh);
+      const strip = mesh(GEO.flatTop, hair, 0, 0.345, -0.01);
+      strip.scale.set(0.3, 0.85, 1.05);
+      head.add(strip);
+    } else if (hairStyle === "long") {
+      // Phase 16 shoulder length: long scalp + a deeper back panel
+      head.add(mesh(GEO.hairLong, hair, 0, 0.165, -0.018));
+      const bk = mesh(GEO.hairBack, hair, 0, -0.045, -0.138);
+      bk.scale.set(1.05, 1.5, 1);
+      head.add(bk);
+      addHairCards(true);
     } else {
       head.add(mesh(GEO.hairCap, hair, 0, 0.175, -0.012));
       addHairCards(true);
@@ -340,6 +372,26 @@ export function buildHumanoid(o: HumanoidOptions): HumanoidRig {
     const capMat = fabricMat(o.cap);
     head.add(mesh(GEO.capTop, capMat, 0, 0.285, 0));
     head.add(mesh(GEO.capBrim, capMat, 0, 0.255, 0.19));
+  }
+  // ---- Phase 16: beard cards (goatee / full) — layered boxes in the
+  // hair material over the jaw; stubble lives in the face texture ----
+  if (o.beardStyle === "goatee" || o.beardStyle === "full") {
+    const chin = mesh(GEO.flatTop, hair, 0, 0.028, 0.128);
+    chin.scale.set(0.34, 0.42, 0.22);
+    head.add(chin);
+    const mo = mesh(GEO.flatTop, hair, 0, 0.082, 0.14);
+    mo.scale.set(0.38, 0.14, 0.14);
+    head.add(mo);
+    if (o.beardStyle === "full") {
+      const jaw = mesh(GEO.flatTop, hair, 0, 0.045, 0.104);
+      jaw.scale.set(0.72, 0.55, 0.5);
+      head.add(jaw);
+      for (const sx of [-1, 1]) {
+        const cheek = mesh(GEO.flatTop, hair, sx * 0.082, 0.075, 0.098);
+        cheek.scale.set(0.22, 0.5, 0.4); cheek.rotation.y = sx * 0.35;
+        head.add(cheek);
+      }
+    }
   }
   if (o.sunglasses) {
     head.add(mesh(GEO.shades, darkMat("#0c0e11"), 0, 0.185, 0.138, false));

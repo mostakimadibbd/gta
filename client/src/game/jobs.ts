@@ -51,11 +51,14 @@ export interface JobStats {
   towDeliveries: number; towEarned: number;
   fishCaught: number; fishEarned: number;
   bestFish: { name: string; cm: number } | null;
+  // ---- Phase 16: farm work (crop-crate loads to Harbour Wraps) ----
+  farmLoads: number; farmEarned: number;
 }
 export const jobStats: JobStats = {
   taxiFares: 0, taxiEarned: 0, taxiBestTip: 0, deliveries: 0, deliveryEarned: 0,
   racesRun: 0, racesWon: 0, bestTimes: {},
   towDeliveries: 0, towEarned: 0, fishCaught: 0, fishEarned: 0, bestFish: null,
+  farmLoads: 0, farmEarned: 0,
 };
 try {
   const raw = localStorage.getItem("harborfall-jobstats");
@@ -132,6 +135,12 @@ export const J = {
   towHooked: false,               // target is on the tether right now
   towSwing: 0,                    // tether swing angle (world heading of the towed car)
   towStillT: 0,                   // seconds spent stopped in hook range
+  // ---- Phase 16: FARM WORK — haul crop crates from the Downs barn
+  // to Harbour Wraps in the farm pickup (CAR_SPAWNS id 31). Its own
+  // flag set, mirroring the delivery chain's shape. ----
+  wantFarm: false,                // set by the phone Jobs app
+  farmPhase: "idle" as "idle" | "load" | "deliver",
+  farmLoad: 0,                    // loads completed this shift (of 3)
 };
 
 /** The world point the job/race marker pillar + GPS route should show. */
@@ -150,10 +159,22 @@ export function jobTarget(): { x: number; z: number; label: string } | null {
     if (c) return { x: c.state.x, z: c.state.z, label: `Tow job — broken-down ${c.model}` };
   }
   if (J.towPhase === "deliver") return { x: -25, z: 100.6, label: "Tow job — deliver to Lina's yard" };
+  if (J.farmPhase === "load") return { x: FARM_LOAD_POINT.x, z: FARM_LOAD_POINT.z, label: `Farm work — load crates at the barn (${J.farmLoad}/3 done)` };
+  if (J.farmPhase === "deliver") return { x: FARM_DROP_POINT.x, z: FARM_DROP_POINT.z, label: `Farm work — deliver load ${J.farmLoad + 1}/3 to Harbour Wraps` };
   return null;
 }
 
 export const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 /** True while any job/race owns the player's attention (missions win). */
-export const jobBusy = () => J.taxiPhase !== "idle" || J.delPhase !== "idle" || !!J.race || J.towPhase !== "idle";
+export const jobBusy = () => J.taxiPhase !== "idle" || J.delPhase !== "idle" || !!J.race || J.towPhase !== "idle" || J.farmPhase !== "idle";
+
+/** Phase 16 farm-work anchors: the loading spot in front of the barn
+ * (barn blocker spans z −106.2…−99.8 at x −111.2…−102.8; (−100.5,−97.5)
+ * is verified clear of it) and the Harbour Wraps stall (BUSINESSES
+ * wraps at (31.5, 9.5); the drop sits on its forecourt). */
+export const FARM_LOAD_POINT = { x: -100.5, z: -97.5 };
+export const FARM_DROP_POINT = { x: 31.5, z: 13 };
+export const FARM_PAY_PER_LOAD = 120;
+export const FARM_SHIFT_BONUS = 150;
+export const FARM_PICKUP_SPAWN_ID = 31;
 export const drivingKind = () => (G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].kind : null);

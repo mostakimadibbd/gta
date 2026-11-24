@@ -26,7 +26,7 @@ import { pushNews } from "../game/feed";
 import { gameHour, shopsClosed } from "./Interactions";
 import CarBody from "./CarBody";
 import {
-  LOOK, HAIR_STYLES, HAIR_COLORS, BARBER_POS, TATTOO_POS, BARBER_PRICE, TATTOO_PRICE, setLook,
+  LOOK, HAIR_STYLES, HAIR_COLORS, BEARD_STYLES, BEARD_PRICE, BARBER_POS, TATTOO_POS, BARBER_PRICE, TATTOO_PRICE, setLook,
   BOTTLE, TOWNSFOLK, townStopAt, TALK, closeTalk, roadworksSite,
   loadDaySet, saveDaySet, WRECK_KEY,
 } from "../game/phase9";
@@ -35,9 +35,14 @@ import { tryBreakDestructibleAt } from "../game/destruct";
 const SCAFFOLD_KEY = "harborfall-scaffold";
 // Phase 12: scratch array for the per-frame wreck-smoke selection
 const wreckScratch: Array<(typeof G.traffic)[number]> = [];
-const HAIR_LOOKS: Array<{ s: number; c: number }> = [
+// Phase 16: the browse cycle gains the four new cuts (s 5–8) and a
+// beard section — entries with `b` are beard services (cheaper, they
+// change only the beard); entries without are full cuts.
+const HAIR_LOOKS: Array<{ s: number; c: number; b?: string }> = [
   { s: 0, c: 0 }, { s: 1, c: 1 }, { s: 2, c: 2 }, { s: 3, c: 3 },
   { s: 0, c: 4 }, { s: 1, c: 5 }, { s: 4, c: 0 }, { s: 3, c: 0 },
+  { s: 5, c: 0 }, { s: 6, c: 2 }, { s: 7, c: 0 }, { s: 8, c: 1 },
+  { s: 0, c: 0, b: "" }, { s: 0, c: 0, b: "stubble" }, { s: 0, c: 0, b: "goatee" }, { s: 0, c: 0, b: "full" },
 ];
 /** Coral-row shopfront glass (World ShopFronts buildings at z=218,
  * glass face at z≈214.5): three buildings × three panes.
@@ -585,21 +590,31 @@ export default function Phase9() {
         else {
           const lk = HAIR_LOOKS[lookIdx.current];
           const style = HAIR_STYLES[lk.s], color = HAIR_COLORS[lk.c];
-          prompt = `E — Sable Cuts: ${style.label} · ${color.label} — $${BARBER_PRICE} (tap E browse · hold E cut)`;
+          // Phase 16: beard entries are their own cheaper service
+          const beardEntry = lk.b !== undefined ? BEARD_STYLES.find((b) => b.id === lk.b) : undefined;
+          const price = beardEntry ? BEARD_PRICE : BARBER_PRICE;
+          prompt = beardEntry
+            ? `E — Sable Cuts beard: ${beardEntry.label} — $${price} (tap E browse · hold E trim)`
+            : `E — Sable Cuts: ${style.label} · ${color.label} — $${price} (tap E browse · hold E cut)`;
           if (eDownAt.current > 0 && eHeld.current) {
             const progress = (performance.now() / 1000 - eDownAt.current) / 0.9;
-            G.hold = { label: `Cutting — ${style.label}…`, progress: Math.min(1, progress) };
+            G.hold = { label: beardEntry ? `Trimming — ${beardEntry.label}…` : `Cutting — ${style.label}…`, progress: Math.min(1, progress) };
             if (progress >= 1) {
               eDownAt.current = -1; G.hold = null;
-              if (G.cash < BARBER_PRICE) { toast(`A cut is $${BARBER_PRICE} — you're short.`); sfx.dryFire(); }
-              else {
-                G.cash -= BARBER_PRICE;
+              if (G.cash < price) { toast(`${beardEntry ? "A trim" : "A cut"} is $${price} — you're short.`); sfx.dryFire(); }
+              else if (beardEntry) {
+                G.cash -= price;
+                setLook({ beardStyle: beardEntry.id || null });
+                toast(beardEntry.id ? `💈 Beard sorted: ${beardEntry.label.toLowerCase()}.` : "💈 Clean-shaven. The razor did its work.");
+                sfx.register();
+              } else {
+                G.cash -= price;
                 setLook({ hairStyle: style.id, hairColor: color.hex });
                 toast(`💈 Fresh cut: ${style.label.toLowerCase()}, ${color.label.toLowerCase()}. The harbour approves.`);
                 sfx.register();
               }
             }
-          } else if (G.hold?.label.startsWith("Cutting")) G.hold = null;
+          } else if (G.hold?.label.startsWith("Cutting") || G.hold?.label.startsWith("Trimming")) G.hold = null;
         }
       } else if (dT < 2.6 ** 2 && !prompt) {
         atTattoo.current = true;
