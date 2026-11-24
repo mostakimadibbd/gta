@@ -6,9 +6,13 @@ export interface MissionChoice {
   options: { label: string; flag: string; reply: DialogueLine[] }[];
 }
 export interface MissionDef {
-  id: string; story?: boolean; side?: "lina" | "voss" | "heist" | "after"; title: string; giver: string;
+  id: string; story?: boolean; side?: "lina" | "voss" | "heist" | "after" | "wire"; title: string; giver: string;
   intro: DialogueLine[]; outro: DialogueLine[];
-  objectiveText: string; kind: "goto" | "delivery" | "collect" | "escape" | "checkpoints" | "tokens";
+  objectiveText: string; kind: "goto" | "delivery" | "collect" | "escape" | "checkpoints" | "tokens" | "photo" | "tail";
+  /** Phase 17 ("photo" kind): the first `meetSteps` targets are plain
+   * reach steps (the in-world meeting); every later target must be
+   * PHOTOGRAPHED — stand in its radius, then take a photo-mode shot. */
+  meetSteps?: number;
   targets: [number, number][]; timeLimit: number; payout: number;
   forceWanted?: number; noWanted?: boolean;
   /** Phase 5: branching choice after the intro (Ch.5) + Ch.6 variants. */
@@ -296,6 +300,55 @@ export const SIDE_MISSIONS: MissionDef[] = [
       L("Old Elias", "Same time every year. The harbour provides, Kade. Now — so do you."),
     ],
     objectiveText: "Run the regatta lights BY BOAT: pier → west channel → island dock → home", kind: "checkpoints", targets: [[4, 140], [-40, 152], [-64, 168], [12, 124]], timeLimit: 300, payout: 700 },
+  // ---- Phase 17: THE HARBOUR WIRE — an investigation arc for the
+  // harbour's newspaper, offered by its editor Ines Marlo (Phone
+  // contacts, after Chapter 4) with the first meeting in person at
+  // Café Coral. Three parts: photograph the evidence, tail the
+  // courier, run the exposé to the newsroom under heat. Progress
+  // persists in M.side.wire like every other arc. ----
+  { id: "wire1", side: "wire", title: "The Harbour Wire I — Dead Drops and Coffee", giver: "Ines Marlo",
+    intro: [
+      L("Ines Marlo", "(phone) Rayan Kade? Ines Marlo — I edit the Harbour Wire. Before you hang up: I am not the patrol, and I don't print names I can't prove."),
+      L("Rayan Kade", "Editors usually want something. Usually for free."),
+      L("Ines Marlo", "I pay. And what I want is proof — Solano's people are rebuilding the ledger in the open since the trial, and my photographers keep getting their cameras 'dropped'. Meet me at Café Coral. Come as a customer, not a story."),
+      L("Rayan Kade", "Coffee, then. And Ines — if this is a setup, I walk, and your paper prints weather forever."),
+      L("Ines Marlo", "Deal. Table by the window. I'll be the one pretending not to watch the door."),
+    ],
+    outro: [
+      L("Ines Marlo", "Crane office, counting house, the trucking yard — timestamps, faces, plates. This is evidence, Rayan, not gossip. My lawyers just smiled, and they never smile."),
+      L("Rayan Kade", "Your lawyers smile at photographs of trucks?"),
+      L("Ines Marlo", "At photographs that hold up. Next: there's a courier moving the new ledger pages by road, nights. I need his route proved — every stop, in order. Can you follow a man without him knowing?"),
+      L("Rayan Kade", "I can be furniture with a steering wheel."),
+    ],
+    objectiveText: "Meet Ines at Café Coral, then photograph 3 evidence spots (stand in the ring → Phone → Camera → Capture)", kind: "photo", meetSteps: 1, targets: [[8, 100.6], [60, 100], [100, 28], [97, 40]], timeLimit: 420, payout: 450 },
+  { id: "wire2", side: "wire", title: "The Harbour Wire II — The Courier's Loop", giver: "Ines Marlo",
+    intro: [
+      L("Ines Marlo", "The courier runs tonight — a grey van, no markings, out of the East Yards. He makes four stops. I need you behind him for every one, close enough to swear to it in print."),
+      L("Rayan Kade", "And if he makes me?"),
+      L("Ines Marlo", "Then he burns the route and the pages move by boat, and we're blind for a month. Stay in the band, Rayan — twelve to forty-five metres. Too close spooks him, too far loses him. Journalists call it shadowing. You'll call it patience."),
+      L("Rayan Kade", "Patience. In a car. Behind a smuggler. Wonderful brief, editor."),
+      L("Ines Marlo", "Print-worthy patience pays $600."),
+    ],
+    outro: [
+      L("Ines Marlo", "Four stops, timed to the minute, and he never once looked in his mirror. That's a route a jury can read. The pages move on Tuesdays, Rayan — you've just told the whole harbour, once we print."),
+      L("Rayan Kade", "Once you print. There's a third act coming, isn't there."),
+      L("Ines Marlo", "There's a hard drive coming. My source inside the trucking yard will hand it over — but only to the man the courier never saw. That's you. And Solano's people will be looking for it the moment it moves."),
+    ],
+    objectiveText: "Tail the courier van — stay 12–45 m behind it through all 4 stops (too close spooks him, too far loses him)", kind: "tail", targets: [[100, 20], [20, 60], [-60, 20], [-60, -60]], timeLimit: 420, payout: 600 },
+  { id: "wire3", side: "wire", title: "The Harbour Wire III — Print Run", giver: "Ines Marlo",
+    intro: [
+      L("Ines Marlo", "(at Café Coral) It's here — the yard's own drive: routes, payments, the new ledger's skeleton. Everything the photos and the tail were pointing at."),
+      L("Rayan Kade", "And the two men by the door who stopped drinking when I walked in?"),
+      L("Ines Marlo", "Solano's. The moment you leave with this, the patrol gets an 'anonymous tip' about a stolen drive — you'll be running at two stars and they'll call it justice. Get it to my newsroom on Market Row before the edition closes. If they take you, the drive is evidence and the story dies."),
+      L("Rayan Kade", "So: drive fast, don't get caught, save the free press. Another quiet Tuesday in Port Sable."),
+      L("Ines Marlo", "Print it, and the harbour reads the truth at breakfast. Fail, and we print weather. Go, Rayan."),
+    ],
+    outro: [
+      L("Ines Marlo", "It's in. Typesetters are running — front page, above the fold, the whole machine laid out with the harbour's coffee. You just made the Wire the bravest paper in Port Sable, Rayan."),
+      L("Rayan Kade", "And me the most photographed man in it. Print my good side, editor."),
+      L("Ines Marlo", "We only print the truth. …Which, for once, IS your good side. The Wire owes you — and this harbour reads its debts at breakfast."),
+    ],
+    objectiveText: "Take the drive from Café Coral to the Harbour Wire newsroom on Market Row — the patrol will be tipped off (2★)", kind: "delivery", targets: [[8, 100.6], [20, -20]], timeLimit: 240, payout: 850, forceWanted: 2 },
 ];
 
 // ---- Phase 15: THE MERIDIAN PAIR — one shipment, two loyalties.
@@ -336,8 +389,9 @@ export const PAIR_MISSIONS: MissionDef[] = [
     objectiveText: "Reach the East Yards crane office and warn the dock crew before the sting lands", kind: "goto", targets: [[60, 100]], timeLimit: 240, payout: 550 },
 ];
 
+
 /** Next unplayed part of a side arc, or null when the arc is finished. */
-export function nextSideMission(side: "lina" | "voss" | "heist" | "after", progress: number): MissionDef | null {
+export function nextSideMission(side: "lina" | "voss" | "heist" | "after" | "wire", progress: number): MissionDef | null {
   const parts = SIDE_MISSIONS.filter((m) => m.side === side);
   return parts[progress] ?? null;
 }

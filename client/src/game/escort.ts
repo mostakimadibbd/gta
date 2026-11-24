@@ -52,10 +52,19 @@ export function startEscort(px: number, pz: number): boolean {
   ESCORT.t = 0;
   ESCORT.barkStage = 0;
   ESCORT.moving = false;
-  // the officer steps out of the patrol car, on the player's side
+  // the officer steps out of the patrol car, on the player's side.
+  // Phase 17 audit: that ring point can land inside a wall/crate —
+  // walk it toward the player in small steps until it is clear, so
+  // the officer never spawns embedded in a blocker (the approach
+  // steering would still free them, but the first frames read as a
+  // glitch). The player themself is by definition on clear ground.
   const away = Math.atan2(px - car.x, pz - car.z);
   ESCORT.x = car.x + Math.sin(away) * 2.2;
   ESCORT.z = car.z + Math.cos(away) * 2.2;
+  for (let k = 0; k < 6 && isBlocked(ESCORT.x, ESCORT.z, 0.4); k++) {
+    ESCORT.x += (px - ESCORT.x) * 0.3;
+    ESCORT.z += (pz - ESCORT.z) * 0.3;
+  }
   ESCORT.heading = away;
   ESCORT.playerTx = px; ESCORT.playerTz = pz;
   bark("Harbour Patrol", "That's far enough. Hands where I can see them — walk with me to the car.");
@@ -84,6 +93,20 @@ function moveOfficer(tx: number, tz: number, speed: number, dt: number): number 
  * while ESCORT.active; completion lands in the standard busted flow. */
 export function stepEscort(dt: number) {
   if (!ESCORT.active) return;
+  // ---- Phase 17 audit: EXIT-PATH LEAK. Phase 16 guarded the START
+  // (on foot, outdoors, not swimming) but never re-checked state
+  // mid-scene. The E-interact chain stays live during the walk, so a
+  // player could still slip into a car or through an interior door:
+  // Player's escort branch requires !driving, so the rig stopped
+  // following the officer, yet the scene kept stepping and the cap
+  // eventually fired finishEscort() — a BUSTED landing on a player
+  // who was by then driving away or standing in a pocket interior.
+  // Any such state change now CANCELS the scene (no arrest): the
+  // bust pin releases and the ordinary bust rules resume next step,
+  // so a slow player near a cop can still be re-grabbed fairly.
+  // G.status covers an arrest/wasting landing from any other path —
+  // the escort must never fire a second BUSTED over it. ----
+  if (G.driving || G.swimming || G.interior || G.status) { cancelEscort(); return; }
   ESCORT.t += dt;
   const car = G.cops[ESCORT.copIdx];
   const px = G.playerPos.x, pz = G.playerPos.z;

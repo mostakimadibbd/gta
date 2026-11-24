@@ -12,6 +12,7 @@ import { gyroSteer } from "../game/gyro";
 import { SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
 import { completeBreakIn, carAlarms } from "../game/theft";
 import { J } from "../game/jobs";
+import { tickDrift, resetDrift } from "../game/drift";
 import { padKeys, padAxes } from "../game/gamepad";
 import { touchSteer } from "../game/touch";
 
@@ -52,6 +53,8 @@ const BODY_DIMS: Record<string, [number, number]> = {
   muscle: [1.05, 2.2], suv: [1.05, 2.1], classic: [1.0, 2.25], pickup: [1.05, 2.05],
   van: [1.05, 2.1], supercar: [1.1, 2.15], bus: [1.25, 3.5], wedge: [1.15, 2.25],
   hyper: [1.1, 2.2], gt: [1.0, 2.3], tow: [1.05, 2.05],
+  // Phase 18
+  kestrel: [1.04, 1.98], bronto: [1.1, 2.2],
 };
 
 export default function Vehicle(p: Props) {
@@ -61,6 +64,7 @@ export default function Vehicle(p: Props) {
   const refs = useRef(p); refs.current = p;
   const nearRef = useRef(false);
   const wasBlocked = useRef(false);
+  const wasDriving = useRef(false); // Phase 18: drift-chain exit reset
   const driveAcc = useRef(0); // Phase 12: fixed-step accumulator for the driving step
   const refuelTimer = useRef(0);
   const warnedRef = useRef({ wrecked: false, empty: false });
@@ -192,6 +196,9 @@ export default function Vehicle(p: Props) {
     // wheel (position/damage/fuel drift as you drive; noteLastCar
     // clears it instead if the car has just been wrecked)
     lastCarTick.current += dt;
+    // Phase 18: stepping out abandons any open drift chain
+    if (wasDriving.current && !G.driving) resetDrift();
+    wasDriving.current = G.driving;
     if (G.driving && G.activeCarId >= 0 && lastCarTick.current > 2.5) {
       lastCarTick.current = 0;
       noteLastCar(G.cars[G.activeCarId]);
@@ -342,7 +349,15 @@ export default function Vehicle(p: Props) {
         // sand start lower and dirt goes muddy) ----
         const surfKind = surfaceKindAt(car.state.x, car.state.z);
         const weatherF = surfKind === "asphalt" ? 1 - 0.32 * G.rainAmt : surfKind === "dirt" ? 1 - 0.18 * G.rainAmt : 1;
-        const grip = surfaceGripBase(car.state.x, car.state.z) * weatherF;
+        let grip = surfaceGripBase(car.state.x, car.state.z) * weatherF;
+        // ---- Phase 18 grip trades, both on this surface path into
+        // step_vehicle_v3: drift tyres give up ~12% of wet-asphalt
+        // grip for their slide rate (game/drift.ts), and the Bronto
+        // Hauler's all-terrain tread is the one car whose grip
+        // IMPROVES on dirt (0.72 base → ~0.9 before weather) ----
+        if (car.driftTyres && surfKind === "asphalt" && G.rainAmt > 0.05) grip *= 0.88;
+        if (car.kind === "bronto" && surfKind === "dirt") grip = Math.min(1, grip * 1.25);
+        const dmgBefore = car.damage; // Phase 18: drift collision signal
         const stepped = physicsRef.current.stepVehicleV3(car.state, throttle, steering, k.has(" "), grip, dt);
         next = stepped.state;
         slipNow.current.slip = stepped.slip; slipNow.current.kind = surfKind; // Phase 12: mutate (was a fresh object per step)
@@ -386,11 +401,17 @@ export default function Vehicle(p: Props) {
         }
         // ---- Phase 8: a hooked tow load caps the wrecker hard ----
         if (car.kind === "tow" && J.towHooked) next.speed = THREE.MathUtils.clamp(next.speed, -7, 11.5);
+        // ---- Phase 18: the Bronto Hauler is geared for torque, not
+        // speed — capped like the bus, whatever the tune (its tune
+        // push below is clamped by this cap on the NEXT step) ----
+        if (car.kind === "bronto") next.speed = THREE.MathUtils.clamp(next.speed, -7, 14);
         // ---- Phase 6 (B1): Lina's mods — engine tune raises the top end,
         // brake upgrade bites harder; Driving skill ≥50 trims drift slide ----
         const tune = car.tuneLvl ?? 0;
         if (tune > 0 && throttle > 0 && next.speed > 8) next.speed = Math.min(next.speed + tune * 1.7 * dt, 24 + tune * 1.8);
-        if ((car.brakeLvl ?? 0) > 0 && k.has("s") && next.speed > 0) next.speed = Math.max(0, next.speed - 9 * dt);
+        // Phase 18: brake tiers bite progressively — L1 keeps the
+        // original 9/s, L2 12/s, L3 15/s
+        if ((car.brakeLvl ?? 0) > 0 && k.has("s") && next.speed > 0) next.speed = Math.max(0, next.speed - (6 + 3 * (car.brakeLvl ?? 0)) * dt);
         if (k.has(" ") && G.skills.driving >= 50) next.heading = prevHeading + (next.heading - prevHeading) * 0.9;
         // ---- Phase 6 (A5): a spiked tyre pulls, wobbles and caps speed ----
         if (car.flatTyre) {
@@ -419,6 +440,19 @@ export default function Vehicle(p: Props) {
           wasBlocked.current = true;
           next.x = car.state.x; next.z = car.state.z; next.speed = -car.state.speed * 0.25;
         } else wasBlocked.current = false;
+        // ---- Phase 18: DRIFT SCORING feed (game/drift.ts). The
+        // arcade model has no velocity vector, so the slip angle is
+        // an ESTIMATE from steering lock + speed while the handbrake
+        // is held — documented as a scoring model in drift.ts, not a
+        // physics claim. Collision = this step's damage delta. ----
+        tickDrift(dt, {
+          drifting: k.has(" ") && Math.abs(next.speed) > 6 && Math.abs(steering) > 0.25 && !wrecked && !empty,
+          angle: Math.abs(steering) * THREE.MathUtils.clamp(Math.abs(next.speed) / 18, 0.3, 1) * 0.55,
+          speed: next.speed,
+          kind: car.kind,
+          driftTyres: car.driftTyres ?? false,
+          collision: car.damage > dmgBefore,
+        });
       }
       if (!isBike) G.bikePedalling = false;
       car.state = next;

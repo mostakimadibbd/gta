@@ -13,7 +13,7 @@ export const M = {
   collected: new Set<number>(),
   failedReason: "",
   // ---- Phase 5: side-arc progress + the Ch.5 choice (persisted) ----
-  side: { lina: 0, voss: 0, heist: 0, after: 0 } as Record<"lina" | "voss" | "heist" | "after", number>,
+  side: { lina: 0, voss: 0, heist: 0, after: 0, wire: 0 } as Record<"lina" | "voss" | "heist" | "after" | "wire", number>,
   choice: "" as "" | "voss" | "elias",
   // ---- Phase 9: the post-story pack's own branching choice ----
   packChoice: "" as string,
@@ -29,7 +29,11 @@ export const M = {
   pairDone: false,
   // ---- Phase 7: checkpoints, replay, per-mission stats, heist prep ----
   checkpointStep: 0, // furthest step reached this attempt (retry point)
-  lastFailed: null as null | { def: MissionDef; step: number }, // R = retry from checkpoint
+  // Phase 18: the failed attempt's REAL collected set rides along —
+  // startPlayAt used to rebuild it as {0..step-1}, which for the tail
+  // mission (stops can bank out of order after a missed loop) credited
+  // stops never confirmed. The snapshot is exact.
+  lastFailed: null as null | { def: MissionDef; step: number; collected?: number[] }, // R = retry from checkpoint
   replayId: "", // mission id being replayed for 40% (never advances progress)
   heistClean: false, // heist prep finished unseen → strongroom bonus
   stats: {} as Record<string, { attempts: number; best: number }>, // best = fastest seconds
@@ -43,7 +47,7 @@ loadKey(() => { M.storyIndex = Math.min(6, Number(localStorage.getItem("harborfa
 loadKey(() => { M.storyDone = localStorage.getItem("harborfall-story-done") === "1"; });
 loadKey(() => {
   const sideRaw = localStorage.getItem("harborfall-side");
-  if (sideRaw) { const s = JSON.parse(sideRaw) as Partial<typeof M.side>; M.side.lina = Math.min(3, s.lina ?? 0); M.side.voss = Math.min(3, s.voss ?? 0); M.side.heist = Math.min(2, s.heist ?? 0); M.side.after = Math.min(3, s.after ?? 0); }
+  if (sideRaw) { const s = JSON.parse(sideRaw) as Partial<typeof M.side>; M.side.lina = Math.min(3, s.lina ?? 0); M.side.voss = Math.min(3, s.voss ?? 0); M.side.heist = Math.min(2, s.heist ?? 0); M.side.after = Math.min(3, s.after ?? 0); M.side.wire = Math.min(3, s.wire ?? 0); }
 });
 loadKey(() => { M.packChoice = localStorage.getItem("harborfall-packchoice") ?? ""; });
 loadKey(() => { M.heistClean = localStorage.getItem("harborfall-heistclean") === "1"; });
@@ -57,6 +61,18 @@ loadKey(() => { G.finesPaid = Number(localStorage.getItem("harborfall-fines") ??
 // other mission stays locked for this playthrough (per save slot) ----
 loadKey(() => { const p = localStorage.getItem("harborfall-pairchoice"); if (p === "informant" || p === "dockcrew") M.pairChoice = p; });
 loadKey(() => { M.pairDone = localStorage.getItem("harborfall-pairdone") === "1"; });
+// ---- Phase 20: NEW GAME+ level (per save slot). Lives here, with
+// the rest of the mission state, so effectivePayout and the police
+// systems can read the multipliers without an import cycle (the
+// start action itself is game/ngplus.ts). Level 0 = a normal game.
+// Effects, all capped: patrol cruise speed +6%/level (cap +18%),
+// bust meter fill +10%/level (cap +30%), mission payouts +25%/level
+// (uncapped — it is the reward side). ----
+export const NGP = { level: 0 };
+loadKey(() => { const n = Number(localStorage.getItem("harborfall-ngplus") ?? 0); if (Number.isFinite(n) && n > 0) NGP.level = Math.min(99, Math.floor(n)); });
+export const ngCopMult = () => 1 + Math.min(0.18, 0.06 * NGP.level);
+export const ngBustMult = () => 1 + Math.min(0.30, 0.10 * NGP.level);
+export const ngPayoutMult = () => 1 + 0.25 * NGP.level;
 export function persist() {
   try {
     localStorage.setItem("harborfall-story", String(M.storyIndex));
@@ -71,6 +87,7 @@ export function persist() {
     if (M.packChoice) localStorage.setItem("harborfall-packchoice", M.packChoice);
     if (M.pairChoice) localStorage.setItem("harborfall-pairchoice", M.pairChoice);
     localStorage.setItem("harborfall-pairdone", M.pairDone ? "1" : "0");
+    localStorage.setItem("harborfall-ngplus", String(NGP.level));
   } catch { /* ignore */ }
 }
 /** Phase 9: is this mission's ALT branch active? Ch.5 keys off M.choice;
@@ -86,6 +103,9 @@ export function effectivePayout(def: MissionDef): number {
   if (def.id === "heist1" && G.wanted === 0) pay += 150; // unseen prep bonus
   if (def.id === "heist2" && M.heistClean) pay += 400; // clean prep pays off
   if (M.replayId === def.id) pay = Math.round(pay * 0.4);
+  // Phase 20: the NG+ reward side — +25% per level on the final
+  // figure (replays included: a replay is still a mission payout).
+  if (NGP.level > 0) pay = Math.round(pay * ngPayoutMult());
   return pay;
 }
 export function recordAttempt(id: string) {
@@ -110,9 +130,13 @@ export function startPlay(def: MissionDef) {
 }
 /** Phase 7 checkpoint retry: re-enter play at a recorded step with a
  * refreshed timer, skipping the intro dialogue entirely. */
-export function startPlayAt(def: MissionDef, step: number) {
+export function startPlayAt(def: MissionDef, step: number, collected?: number[]) {
   M.active = def; M.step = step; M.timer = def.timeLimit; M.phase = "play";
-  M.collected = new Set(Array.from({ length: step }, (_, i) => i));
+  // the App retry handler clears M.lastFailed before calling, so the
+  // snapshot arrives as a parameter; the M.lastFailed read covers any
+  // other caller
+  const savedCollected = collected ?? (M.lastFailed && M.lastFailed.def === def ? M.lastFailed.collected : undefined);
+  M.collected = savedCollected ? new Set(savedCollected) : new Set(Array.from({ length: step }, (_, i) => i));
   M.checkpointStep = step;
   pushPhoneMsg(def.giver, `${def.title} — retry from checkpoint ${step + 1}. Clock refreshed.`);
   if (def.forceWanted) { G.wanted = Math.max(G.wanted, def.forceWanted); G.wantedCooldown = 0; }

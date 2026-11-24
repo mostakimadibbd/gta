@@ -19,7 +19,9 @@ import {
   FARM_LOAD_POINT, FARM_DROP_POINT, FARM_PAY_PER_LOAD, FARM_SHIFT_BONUS, FARM_PICKUP_SPAWN_ID,
 } from "../game/jobs";
 import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, setHomePref, persistEco } from "../game/economy";
+import { RENT, RENTAL_DOCK, RENTAL_FEE, rentBoat, endRental, rentalCar } from "../game/rentals";
 import { pushNews, rollSocialPost, socialCrimePost } from "../game/feed";
+import { recordCupResult } from "../game/cup";
 import { nudgeStock } from "../game/invest";
 import { postRaceResult } from "../game/leaderboard";
 import { brokenDestructibles, breakDestructible, resetDestructibles, onDestructibleBreak } from "../game/destruct";
@@ -92,6 +94,7 @@ export default function Phase7Systems() {
   const myPrompt = useRef("");
   const eDownAt = useRef(-1);
   const buyRef = useRef<{ label: string; run: () => void } | null>(null);
+  const rentalSerial = useRef(ECO.daySerial); // Phase 19: day-pass expiry watch
   const markerRef = useRef<THREE.Mesh>(null);
   // Phase 16: farm-work crate stack — rides in the farm pickup's bed
   // while a load is being delivered (2 crates per load, up to 6)
@@ -150,6 +153,22 @@ export default function Phase7Systems() {
       destRefs.current.forEach((g) => { if (g) g.visible = true; });
     }
     prevDay.current = G.dayTime;
+
+    // ================= MARINA RENTAL WATCH (Phase 19) =================
+    // The pass dies with the day: when the day serial rolls (the
+    // 06:00 wrap above OR a sleep, which also advances it), an idle
+    // rental is collected on the spot; one still being driven is
+    // flagged expired and collected the moment the player steps
+    // out. A wreck ends the paperwork immediately.
+    if (RENT.active) {
+      const rc = rentalCar();
+      if (rc && rc.damage >= 100) endRental("wreck");
+      else if (rentalSerial.current !== ECO.daySerial) {
+        rentalSerial.current = ECO.daySerial;
+        if (car && car === rc) RENT.expired = true;
+        else endRental("expired");
+      } else if (RENT.expired && (!car || car !== rc)) endRental("expired");
+    } else rentalSerial.current = ECO.daySerial;
 
     // ================= TAXI JOBS =================
     if (hailRef.current) {
@@ -380,6 +399,9 @@ export default function Phase7Systems() {
           const place = Math.max(1, pos);
           let payout = RACE_PRIZES[place - 1] ?? 0;
           if (place === 1 && race.bet) payout += 200; // stake back + winnings
+          // Phase 17: Street Challenge — winner takes the whole pot
+          // (both $200 stakes), loser gets nothing back
+          if (def.challenge) payout = place === 1 ? 400 : 0;
           G.cash += payout; G.lifetimeEarned += payout;
           jobStats.racesRun += 1;
           if (place === 1) jobStats.racesWon += 1;
@@ -393,6 +415,7 @@ export default function Phase7Systems() {
           pushNews(`Harbour Wire: ${def.name} settled`, `An unsanctioned street race through ${districtAt(def.start[0], def.start[1])} ended with a ${fmtTime(playerTime)} winning run. The patrol arrived, as ever, fashionably late.`);
           toast(`🏁 ${def.name}: ${place === 1 ? "1st" : place === 2 ? "2nd" : place === 3 ? "3rd" : `${place}th`} — ${fmtTime(playerTime)} — +$${payout}`);
           sfx.complete();
+          if (race.cup) recordCupResult(def.id, place); // Phase 18: Sable Cup
           J.race = null;
         }
       }
@@ -488,6 +511,9 @@ export default function Phase7Systems() {
           pushPhoneMsg(def.mode === "air" ? "Tower" : "Race Marshal", `${def.name}: ${verdict}.`);
           toast(`🏁 ${def.name}: ${verdict}`);
           sfx.complete();
+          // Phase 18: the Bay Circuit is Cup round 4 — 1st or 2nd
+          // against the single ghost is the whole field there is
+          if (srace.cup && def.mode === "boat") recordCupResult(def.id, ghostWon ? 2 : 1);
           J.race = null;
         }
       }
@@ -680,7 +706,9 @@ export default function Phase7Systems() {
       // businesses (hold-E buys)
       for (const b of BUSINESSES) {
         if ((px - b.x) ** 2 + (pz - b.z) ** 2 < 3.2 ** 2) {
-          if (ECO.owned.includes(b.id)) prompt = `🏢 You own the ${b.name} — it pays $${b.income} every morning.`;
+          if (ECO.owned.includes(b.id)) prompt = b.id === "marina"
+            ? `🏢 You own the ${b.name} — it pays $${b.income} every morning, and the rental dock down the pier is open (day-pass skiffs).`
+            : `🏢 You own the ${b.name} — it pays $${b.income} every morning.`;
           else if (G.cash >= b.price) {
             prompt = `Hold E — buy the ${b.name} ($${b.price.toLocaleString()}) · +$${b.income}/day`;
             buyRef.current = {
@@ -698,6 +726,27 @@ export default function Phase7Systems() {
             };
           } else { prompt = `${b.name} — $${b.price.toLocaleString()} to buy (+$${b.income}/day). You have $${G.cash.toLocaleString()}.`; warn = true; }
           break;
+        }
+      }
+      // ---- Phase 19: the marina rental dock (owning the business
+      // unlocks it; the office counter up the road is the BUSINESSES
+      // loop above, the dock point is where boats actually change
+      // hands) ----
+      if (!prompt && (px - RENTAL_DOCK.x) ** 2 + (pz - RENTAL_DOCK.z) ** 2 < 3.4 ** 2) {
+        if (!ECO.owned.includes("marina")) {
+          prompt = "Sable Marina Rentals — the rental dock. Own the business (office up the road) and its boats are yours to rent."; warn = true;
+        } else if (!RENT.active) {
+          if (G.cash >= RENTAL_FEE) {
+            prompt = `Hold E — rent a skiff ($${RENTAL_FEE} day-pass) · Sable Marina Rentals`;
+            buyRef.current = { label: "Rental skiff day-pass", run: () => { rentBoat(); } };
+          } else { prompt = `Sable Marina Rentals — a day-pass is $${RENTAL_FEE} (you have $${G.cash.toLocaleString()}).`; warn = true; }
+        } else {
+          const rc = rentalCar();
+          const near = rc && (rc.state.x - RENTAL_DOCK.x) ** 2 + (rc.state.z - RENTAL_DOCK.z) ** 2 < 45 ** 2;
+          if (near) {
+            prompt = "Press E — return the rental skiff (the marina crew collects her)";
+            act = () => endRental("return");
+          } else { prompt = "Your rental skiff is still out — bring her back toward the pier to return her."; warn = true; }
         }
       }
       // apartment
@@ -780,12 +829,23 @@ export default function Phase7Systems() {
   });
 
   function startRace(def: RaceDef, t: number) {
+    // Phase 18: a Sable Cup arm (Phone → Jobs) converts when THIS
+    // race starts; any other start discards it. Street Challenge
+    // races never pass through here (Phase17 seeds J.race directly),
+    // which is exactly why they can't count as Cup rounds.
+    // Phase 19 audit: the arm conversion/discarding used to run
+    // BEFORE the bet check, so a start that then FAILED (bets on,
+    // cash short) ate the player's arm even though no race ever
+    // started. The arm now only converts or clears once the start
+    // is real — the bet is taken first.
     let bet = 0;
     if (J.bets) {
       if (G.cash < 100) { toast("The marshal's book needs $100 — you're short. Turn bets off in the Jobs app."); return; }
       G.cash -= 100; bet = 100;
       pushPhoneMsg("Race Marshal", `${def.name}: $100 stake taken. Win and it's $200 back on top of the prize.`);
     }
+    const cup = J.cupArm === def.id;
+    J.cupArm = "";
     const [sx, sz] = def.start;
     const cp0 = def.cps[0];
     const dirA = Math.atan2(cp0[0] - sx, cp0[1] - sz);
@@ -793,7 +853,7 @@ export default function Phase7Systems() {
     const colors = ["#b3312c", "#2e7fb8", "#d99a3d"];
     const skills = [0.93, 1.0, 1.04];
     J.race = {
-      def, phase: "countdown", goAt: t + 3, startedAt: 0, cp: 0, bet, playerDoneAt: 0,
+      def, phase: "countdown", goAt: t + 3, startedAt: 0, cp: 0, bet, playerDoneAt: 0, cup,
       opps: kinds.map((k, i) => {
         const off = [[-3.2, 4.5], [3.2, 4.5], [0, 9]][i];
         const ox = sx + Math.sin(dirA + Math.PI / 2) * off[0] + Math.sin(dirA + Math.PI) * off[1];
@@ -810,11 +870,16 @@ export default function Phase7Systems() {
   /** Phase 14: Bay Circuit + Sparrow Run starts — the same J.race
    * state, no side bet; the boat race seeds ONE ghost rival astern. */
   function startSpecialRace(def: RaceDef, t: number) {
+    // Phase 18: the Cup arm converts here too — but only the Bay
+    // Circuit is a Cup round; a Sparrow Run start discards the arm
+    // like any non-Cup start (see startRace).
+    const cup = def.mode === "boat" && J.cupArm === def.id;
+    J.cupArm = "";
     const [sx, sz] = def.start;
     const cp0 = def.cps[0];
     const dirA = Math.atan2(cp0[0] - sx, cp0[1] - sz);
     J.race = {
-      def, phase: "countdown", goAt: t + 3, startedAt: 0, cp: 0, bet: 0, playerDoneAt: 0,
+      def, phase: "countdown", goAt: t + 3, startedAt: 0, cp: 0, bet: 0, playerDoneAt: 0, cup,
       opps: def.mode === "boat"
         ? [{ x: sx - Math.sin(dirA) * 7, z: sz - Math.cos(dirA) * 7, heading: dirA, cp: 0, speed: 0, skill: 1, finishedAt: 0, color: "#d8d2c2", kind: "muscle" }]
         : [],

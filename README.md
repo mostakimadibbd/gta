@@ -189,6 +189,83 @@ corrupt harbour boss's debt ledger.
   Meridian Pair attempt locked both branches, and the farm's south
   dirt spur clipped a house. Ledger: **86 ✅ · 7 🟡 · 0 ⬜** of 93
   topics (five 🟡 lines grew).
+- **Phase 17 — "City Life & Story Depth"** — a new side arc,
+  **The Harbour Wire**: after Chapter 4, editor **Ines Marlo**
+  (Phone → Contacts) hires you to investigate Solano's rebuilt
+  ledger — **photograph 3 evidence spots** with the real photo-mode
+  camera, **tail a courier van** inside a 12–45 m band through its
+  stops, then **run the exposé** to the newsroom at 2★, with
+  headlines and fallout after every part. The **city bus is
+  rideable**: 4 stops (Docks · Ferry Quarter · East Yards · South
+  Market), $2 fare, sit back and watch Port Sable go by — the
+  patrol won't board, same as the tram. Two new **world events**:
+  a **Street Challenge** (a parked exotic driver, $200 stake,
+  winner takes the $400 pot in a point-to-point race) and
+  **Spilled Cargo** (crates on the road for 60 s — grab cash and
+  fenceable loot while traffic swerves around you). The round also
+  fixes two Phase 16 regressions found by audit: the arrest escort
+  could be escaped mid-scene by slipping into a car or a doorway
+  (it now cancels cleanly instead of busting you from across town),
+  and a parked-fleet restore could duplicate your garage car.
+  Ledger: **86 ✅ · 7 🟡 · 0 ⬜** of 93 topics (three ✅ lines grew).
+- **Phase 18 — "Vehicles & Racing Depth"** — **drift scoring**:
+  hold the handbrake and slide — chains build a score (×2–×5 for
+  linked slides), banked for cash and Driving skill on a clean
+  release, lost whole if you clip something mid-chain; rear-drive
+  cars score best, and the meter lives in the HUD's mini-bar.
+  **The Sable Cup**: the three street races plus the Bay Circuit
+  as a four-round championship — arm a round in Phone → Jobs,
+  race it at its ring, score 10/6/3/1; 20+ points takes the crown
+  ($2,500, a Harbour Wire headline, and a gold voucher worth 20%
+  off the Vantara S). **Two new original cars**: the **Sable
+  Kestrel RS** track coupe ($18,000, dealer) and the **Bronto
+  Hauler** off-road pickup ($9,500 — parked at the farm, and the
+  only car that grips *better* on dirt). **Tuning completed**:
+  brakes gain tiers II–III, engine III tops the ladder, and
+  **drift tyres** ($600) trade wet grip for slide score. The round
+  also fixes four Phase 17 regressions found by audit: Wire
+  evidence photos could be farmed outside the ring, the ambient
+  world events could start over (and silently cancel) the new
+  events, a tail-mission retry credited stops never confirmed,
+  and Print Run's story heat never cleared after delivery.
+  Ledger: **86 ✅ · 7 🟡 · 0 ⬜** of 93 topics (two ✅ lines grew).
+- **Phase 19 — "Economy & Empire"** — a **fourth business**:
+  **Sable Marina Rentals** ($15,000, +$380/day) at the pier — own
+  it and the rental dock opens: a **$75 day-pass skiff**, yours
+  until you return it, wreck it, or the day rolls over.
+  **Business upgrades**: every business now runs levels 1→3
+  (+35% takings per level, upgraded in the Bank app — the number
+  shown is the number the morning tick pays). **Staff traits are
+  live**: Sana Iqbal's bonus doubles after dark (20:00–06:00),
+  and the Bank app shows her current rate as the harbour clock
+  turns. **SableBank loans**: borrow $500/$1,500/$4,000 in the
+  Bank app — 8% daily interest capped at twice the principal,
+  10% auto-repaid each morning, and the bank won't serve you at
+  3★ or more. The round also fixes three Phase 18 regressions
+  found by audit — the first of them fatal: **the Sable Cup's
+  rounds pointed at races that don't exist**, so the championship
+  could never be armed, scored or won (it now uses the real
+  races, and old saves migrate); a failed race start could
+  silently eat a Cup entry; and garage take-out skipped the
+  tuning clamp the other car paths all apply.
+  Ledger: **86 ✅ · 7 🟡 · 0 ⬜** of 93 topics (businesses grew).
+- **Phase 20 — "Finale & Polish" (v2.0 — Complete Edition)** —
+  **New Game+**: finish the story and Phone → Story offers a
+  confirmed second run on the same save — story and side progress
+  reset, everything you own (cash, cars, properties, businesses,
+  skills, look, Cup and drift records) stays, while patrols get
+  faster (+6%/level, capped +18%), arrests land quicker
+  (+10%/level, capped +30%) and every mission pays +25% more per
+  level; an **NG+ badge** rides the chapter line. **End credits**:
+  an original ~45-second scroll over the live city — from the
+  story-complete panel or any time via Phone → Story → Credits,
+  Esc to skip. The round opens with a full audit of Phases 17–19
+  (one fix: a loan balance of a few dollars could never auto-settle
+  and blocked future borrowing — tiny balances now settle outright).
+  The start screen carries the stamp: **v2.0 — Complete Edition**.
+  Final ledger: **86 ✅ · 7 🟡 · 0 ⬜** of 93 topics — the blueprint
+  is complete, and every remaining 🟡 carries its honest
+  engine/scope reason in `docs/BLUEPRINT.md`.
 - **Phase 10 — realism + physics pass** (no new features): the
   post chain gains **radial chromatic aberration** and a stricter
   bloom threshold; **fog colour follows the day cycle**; **stars**
@@ -230,7 +307,7 @@ saved in `localStorage` and applies identically on web and desktop.
 | WASD / Arrow keys | Move · drive + steer |
 | Shift | Sprint (on foot) |
 | Space | Jump (foot) · handbrake/drift (car) |
-| E / F | Enter/exit car · advance dialogue · board/step off the Sable Line tram at a station |
+| E / F | Enter/exit car · advance dialogue · board/step off the Sable Line tram at a station · board/step off the Cityliner bus at a stop |
 | Enter | Confirm dialogue |
 | Esc / P | Pause |
 | H / ? | Shortcuts help |
@@ -243,7 +320,10 @@ saved in `localStorage` and applies identically on web and desktop.
 | E at a bench / restaurant chair | Sit down (E or move to stand) |
 | Space at a deep-water edge | Dive into the water |
 | E at your home | Sleep — morning, full heal, businesses pay out |
-| Hold E at a business | Buy it (Wraps stall · Car Wash · Club Solace share · Coral apartment) |
+| Hold E at a business | Buy it (Wraps stall · Car Wash · Club Solace share · Marina Rentals · Coral apartment) |
+| Hold E at the marina dock | Rent a rental skiff ($75 day-pass — needs Marina Rentals owned) |
+| Phone → SableBank → Loans | Borrow $500/$1,500/$4,000 · repay part or in full |
+| Phone → SableBank → business row | Upgrade a business to Lv2/Lv3 (+35% takings per level) |
 | Q / Tab | Cycle weapon — fists · pistol · SMG · shotgun · bat · bottles |
 | Hold right-mouse | Free-aim — over-shoulder camera, fire along the crosshair |
 | W / Shift / Ctrl (in the Sparrow) | Throttle · climb · descend — lift off past ~60 km/h, land gently |

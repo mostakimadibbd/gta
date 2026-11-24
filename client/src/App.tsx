@@ -16,12 +16,15 @@ import { G, resetAfterArrest, resetAfterWasted, windLabel, LASTCAR, FLEET } from
 import Tram from "./components/Tram";
 import { TRAM, TRAM_MAP_LINE, TRAM_STOPS } from "./game/tram";
 import { currentSeason } from "./game/season";
-import { M, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission, altActive } from "./game/missionState";
+import { M, NGP, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission, altActive } from "./game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS, PAIR_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
 import { pushNews } from "./game/feed";
 import Phase7Systems from "./components/Phase7";
 import Phase8Systems from "./components/Phase8";
 import Phase9Systems from "./components/Phase9";
+import Phase17Systems from "./components/Phase17";
+import BusRide from "./components/BusRide";
+import { BUS, BUS_STOPS_RIDE } from "./game/bus";
 import Phase9Ui from "./components/Phase9Ui";
 import { jobTarget } from "./game/jobs";
 import { currentMiniUi, clearClothingOverride, type MiniUi } from "./game/phase8";
@@ -459,6 +462,35 @@ function FirstFrame({ onReady }: { onReady: () => void }) {
   return null;
 }
 
+// ---- Phase 20: END CREDITS. An original Harborfall roll — the
+// city, the cast by name, the systems, and a thank-you. Played as a
+// slow scroll over the live city (the Canvas keeps rendering behind
+// the overlay; input is locked except Skip / Esc). ~45 s end to end.
+// Every name here belongs to Harborfall; the only nod to any other
+// work is the factual not-affiliated line, as in the README. ----
+const CREDITS_LINES: Array<[string, string]> = [
+  ["HARBORFALL", "Port Sable — a harbour-city adventure"],
+  ["Starring", "Rayan Kade — home again, five years on"],
+  ["", "Tamim Kade — the name on the last page"],
+  ["", "Lina Park — Lina's Garage, Market Row"],
+  ["", "Old Elias — the harbour provides"],
+  ["", "Detective Mara Voss — Harbour Patrol"],
+  ["", "Ines Marlo — editor, the Harbour Wire"],
+  ["", "Victor Solano — the ledger, closed"],
+  ["The City", "Port Sable · Coral Shores · Northgate · Sable Island · Sable Downs"],
+  ["Systems", "Harborfall Core physics (C++ / WASM, TypeScript mirror)"],
+  ["", "Traffic, patrols & dispatch · the Sable Line · the Cityliner"],
+  ["", "Businesses, staff & SableBank · the Sable Cup · drift scoring"],
+  ["", "Weather & seasons · day cycle · ray-traced-style reflections"],
+  ["Music & Sound", "“Port Sable Sunset” — an original opening theme"],
+  ["", "All sound synthesised live in WebAudio — no audio files"],
+  ["Built with", "React Three Fiber · Three.js · TypeScript · Python services"],
+  ["", "Every building, boat and business name is original to Harborfall"],
+  ["", "Not affiliated with Rockstar Games or Grand Theft Auto"],
+  ["Thank you", "For playing — for every fare, fence and fish."],
+  ["", "Port Sable is yours now. The harbour provides."],
+];
+
 export default function App() {
   const playerPositionRef = useRef(G.playerPos);
   const followRef = useRef<THREE.Vector3>(G.followPos);
@@ -492,6 +524,7 @@ export default function App() {
   const [camFlash, setCamFlash] = useState(false); // Phase 7: speed-camera flash
   const [starPulse, setStarPulse] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [credits, setCredits] = useState(false); // Phase 20: end-credits overlay (ending panel + Phone → Story)
   const [panelOpen, setPanelOpen] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
   // ---- Phase 4 state: character select, garage panel, photo mode, debrief
@@ -739,7 +772,7 @@ export default function App() {
     gameToast("Photo mode — drag to look, Enter captures");
   }, []);
   const exitPhotoMode = useCallback(() => { G.photoMode = false; setPhotoMode(false); }, []);
-  const capturePhoto = useCallback(() => { photoShotRef.current += 1; sfx.click(); }, []);
+  const capturePhoto = useCallback(() => { photoShotRef.current += 1; G.lastPhotoAt = G.timeS; sfx.click(); }, []);
 
   // multiplayer connect (optional; game is fully playable offline)
   const connectToRoom = useCallback((room: string) => {
@@ -833,6 +866,11 @@ export default function App() {
       TRAM_MAP_LINE.forEach(([x, z], i) => { if (i === 0) g.moveTo(mx(x), mz(z)); else g.lineTo(mx(x), mz(z)); });
       g.closePath(); g.stroke();
       for (const st of TRAM_STOPS) { g.fillStyle = "#0f2c38"; g.beginPath(); g.arc(mx(st.x), mz(st.z), Math.max(2, 3.4 * S), 0, 7); g.fill(); g.strokeStyle = "#2ee6c8"; g.lineWidth = 1.2; g.stroke(); }
+      // Phase 17: the Cityliner's stops (amber squares) + its live
+      // dot — a filled amber square, distinct from the tram's teal
+      // ring and from the small white traffic dots
+      for (const st of BUS_STOPS_RIDE) { const r = Math.max(2, 3 * S); g.fillStyle = "#f2b134"; g.fillRect(mx(st.streetX) - r / 2, mz(st.streetZ) - r / 2, r, r); }
+      { const r = Math.max(3, 5 * S); g.fillStyle = "#f2b134"; g.fillRect(mx(BUS.x) - r / 2, mz(BUS.z) - r / 2, r, r); g.fillStyle = "#17323e"; g.fillRect(mx(BUS.x) - r / 4, mz(BUS.z) - r / 4, r / 2, r / 2); }
       if (size > 300) {
         g.fillStyle = "#2ee6c8"; g.beginPath(); g.arc(mx(TRAM.x), mz(TRAM.z), Math.max(2.5, 4.4 * S), 0, 7); g.fill();
         g.fillStyle = "#0f2c38"; g.beginPath(); g.arc(mx(TRAM.x), mz(TRAM.z), Math.max(1.2, 2 * S), 0, 7); g.fill();
@@ -907,7 +945,7 @@ export default function App() {
         objective: M.active && M.phase === "play" ? M.active.objectiveText : M.active ? M.active.title : "",
         dist: o && M.phase === "play" ? Math.round(Math.hypot(o.x - px, o.z - pz)) : 0,
         timer: Math.max(0, Math.ceil(M.timer)),
-        chapter: M.storyDone ? "Story complete — free roam" : `Chapter ${Math.min(6, M.storyIndex + 1)}: ${STORY_MISSIONS[Math.min(5, M.storyIndex)]?.title ?? ""}`,
+        chapter: (M.storyDone ? "Story complete — free roam" : `Chapter ${Math.min(6, M.storyIndex + 1)}: ${STORY_MISSIONS[Math.min(5, M.storyIndex)]?.title ?? ""}`) + (NGP.level > 0 ? ` · NG+ ${NGP.level}` : ""), // Phase 20: NG+ badge rides the chapter line
         district: districtAt(px, pz), driving: G.driving, bust: G.bustTimer, status: G.status, storyDone: M.storyDone,
         weather: G.weather, weatherIcon: WEATHER_META[G.weather].icon,
         fuel: myCar ? Math.round(myCar.fuel) : 100, damage: myCar ? Math.round(myCar.damage) : 0,
@@ -943,6 +981,7 @@ export default function App() {
         window.setTimeout(() => setMissionResult((r) => (r && r.at === lastMissionAt.current ? null : r)), 9000);
       }
       if (G.requestCharSelect) { G.requestCharSelect = false; tryOpenCharSelectRef.current(); }
+      if (G.requestCredits) { G.requestCredits = false; setCredits(true); } // Phase 20: Phone → Story → Credits
       // Phase 7: phone Story app replay requests (40% payout, no progress)
       if (G.requestReplayId) {
         const rid = G.requestReplayId; G.requestReplayId = "";
@@ -1022,7 +1061,7 @@ export default function App() {
         G.firstPerson = fp.on;
         showPopup(fp.on ? "Camera: first person — drag to look around" : "Camera: third person");
       }
-      else if (key === "escape" || key === "p") { if (showHelp) setShowHelp(false); else setPaused((v) => !v); }
+      else if (key === "escape" || key === "p") { if (credits) { setCredits(false); return; } if (showHelp) setShowHelp(false); else setPaused((v) => !v); } // Phase 20: Esc skips the credits, never pauses under them
       else if (key === "?" || key === "h") { e.preventDefault(); setShowHelp((v) => !v); }
       else if (key === "t") { const i = THEMES.findIndex((t) => t.id === theme.id); applyTheme(THEMES[(i + 1) % THEMES.length]); showPopup(`Theme: ${THEMES[(i + 1) % THEMES.length].name}`); }
       else if (["1", "2", "3", "4", "5"].includes(key)) { const t = THEMES[Number(key) - 1]; if (t) { applyTheme(t); showPopup(`Theme: ${t.name}`); } }
@@ -1042,7 +1081,7 @@ export default function App() {
         // Phase 7: after a failure, R retries from the last checkpoint
         else if (M.lastFailed && !M.active) {
           const lf = M.lastFailed; M.lastFailed = null;
-          endMission(); startPlayAt(lf.def, lf.step);
+          endMission(); startPlayAt(lf.def, lf.step, lf.collected);
           showPopup(`Retry from checkpoint ${lf.step + 1} — clock refreshed`);
         }
         else if (M.active) { const def = M.active; startMissionRef.current(def); showPopup("Mission restarted"); }
@@ -1051,7 +1090,7 @@ export default function App() {
     };
     window.addEventListener("keydown", down);
     return () => window.removeEventListener("keydown", down);
-  }, [advanceDialogue, applyTheme, showHelp, showPopup, theme, missionResult, charOpen, garageZoneId, started, exitPhotoMode, capturePhoto, closeCharSelect]);
+  }, [advanceDialogue, applyTheme, showHelp, showPopup, theme, missionResult, charOpen, garageZoneId, started, exitPhotoMode, capturePhoto, closeCharSelect, credits]);
 
   // first-person drag-look (mouse or touch drag while FP is on)
   useEffect(() => {
@@ -1133,6 +1172,21 @@ export default function App() {
     if (story && M.storyIndex === 0 && !localStorage.getItem("harborfall-intro")) setIntroIdx(0);
     else if (story && M.storyIndex < 6) startMission(STORY_MISSIONS[M.storyIndex]);
   };
+  // Phase 20: credits run ~45 s, then close themselves; Esc skips
+  // at any point (the Skip button does the same). The overlay is a
+  // plain DOM layer over the Canvas — the city keeps rendering.
+  useEffect(() => {
+    if (!credits) return;
+    // input lock: dialogueActive is the game's standing "player
+    // can't act" gate (Player/Combat/prompts all honour it), so the
+    // city renders and lives behind the roll while only Skip/Esc —
+    // handled here and in the main key handler — get through.
+    G.dialogueActive = true;
+    const to = window.setTimeout(() => setCredits(false), 47000);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCredits(false); };
+    window.addEventListener("keydown", onKey);
+    return () => { G.dialogueActive = false; window.clearTimeout(to); window.removeEventListener("keydown", onKey); };
+  }, [credits]);
   // splash: brief brand beat, then the poster
   useEffect(() => {
     if (flow !== "splash") return;
@@ -1204,6 +1258,11 @@ export default function App() {
           <Phase7Systems />
           <Phase8Systems />
           <Phase9Systems />
+          {/* Phase 17: world events + the rideable Cityliner — mounted
+              before the tram; both claim prompts politely (only when
+              the line is free), so the tram keeps its last-writer win */}
+          <Phase17Systems />
+          <BusRide />
           {/* Phase 13: the Sable Line mounts LAST of the world systems
               on purpose — while the player rides, its prompt claim
               must win over every street-level interaction below the
@@ -1497,6 +1556,14 @@ export default function App() {
               : M.pairChoice === "dockcrew" && name === "Old Elias" ? PAIR_MISSIONS[1] : null;
             if (retryDef) { startMission(retryDef); return; }
           }
+          // Phase 17: THE HARBOUR WIRE — Ines Marlo offers her
+          // investigation arc by phone after Chapter 4 (checked
+          // before the generic arc branch: her first mission opens
+          // with the in-world meeting at Café Coral)
+          if (name === "Ines Marlo" && started && !M.active && !dialogueRef.current && M.storyIndex >= 4) {
+            const next = nextSideMission("wire", M.side.wire);
+            if (next) { startMission(next); return; }
+          }
           // Phase 5 Step 7a: Lina (after Ch.2) and Voss (after Ch.4) offer
           // their side-story arcs by phone — calling them starts the next
           // unplayed part instead of the ambient chat.
@@ -1533,6 +1600,7 @@ export default function App() {
           <div className="poster-content">
             <h1 className="game-title">HARBOR<span>FALL</span></h1>
             <p className="tagline">Port Sable · a harbour city of debts, cranes and second chances</p>
+            <p className="version-stamp">v2.0 — Complete Edition</p>
             {!loaded ? (
               <div className="load-block">
                 <div className="load-bar"><div className="load-fill" style={{ width: sceneReady ? "86%" : "52%" }} /></div>
@@ -1629,7 +1697,23 @@ export default function App() {
             <span className="panel-kicker">★ Story Complete ★</span>
             <h2>{ENDING_PANEL.title}</h2><p>{ENDING_PANEL.text}</p>
             <button type="button" className="primary" onClick={() => setEnding(false)}>Keep free-roaming Port Sable</button>
+            <button type="button" onClick={() => { setEnding(false); setCredits(true); }}>Watch credits</button>
           </section>
+        </div>
+      )}
+
+      {credits && (
+        <div className="credits-overlay" role="dialog" aria-label="End credits">
+          <div className="credits-scroll">
+            {CREDITS_LINES.map(([head, line], i) => (
+              <div key={i} className={head ? "credits-block" : "credits-line"}>
+                {head && <div className="credits-head">{head}</div>}
+                <div>{line}</div>
+              </div>
+            ))}
+            <div className="credits-end">— FIN —</div>
+          </div>
+          <button type="button" className="credits-skip" onClick={() => setCredits(false)}>Skip ▸ (Esc)</button>
         </div>
       )}
 
@@ -1773,6 +1857,8 @@ export default function App() {
               <div><dt>Space at a water edge</dt><dd>Dive in (deep water ahead) instead of jumping</dd></div>
               <div><dt>E at home</dt><dd>Sleep at the villa / Coral apartment — morning, full heal, businesses pay out</dd></div>
               <div><dt>E at a Sable Line station</dt><dd>Board the tram when it stops (Docks · Market Row · Northgate · Coral Shores) — ride the elevated loop free, E again to step off at a stop. The patrol won't board, but riding never cools your stars</dd></div>
+              <div><dt>E at a Cityliner bus stop</dt><dd>Board the city bus when it dwells at a stop (Docks · Ferry Quarter · East Yards · South Market) — $2 fare, ride the road loop seated, E again to step off at a stop. Same rule as the tram: the patrol won't board, and riding never cools your stars</dd></div>
+              <div><dt>Phone → Contacts → Ines Marlo</dt><dd>After Chapter 4, the Harbour Wire's editor offers an investigation arc: photograph evidence (stand in the ring, Phone → Camera → Capture), tail the courier inside the distance band, then run the exposé to the newsroom</dd></div>
               <div><dt>Sable Motors showroom</dt><dd>Through the glass front on the Northgate forecourt — the exotics on turntables, same stock and hours as outside: tap E to browse, hold E to buy</dd></div>
               <div><dt>Café Coral (Docks strip)</dt><dd>Coffee ($8, stamina) or a harbour pastry ($12, +35 health) — and chairs you can actually sit in</dd></div>
               <div><dt>G</dt><dd>Garage car select (villa garage / Lina's)</dd></div>

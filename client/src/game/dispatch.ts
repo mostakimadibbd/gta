@@ -95,6 +95,16 @@ export function tickDispatch(t: number, px: number, pz: number) {
   if (Math.random() < 0.5) pushPhoneMsg("Harbour Wire", `🚨 Dispatch: a ${KIND_TEXT[kind]} near ${spot.label}. A ${wantSvc === "fire" ? "fire unit" : "ambulance"} is on its way — watch for the cross on your map.`);
 }
 
+/** Phase 20: stand the live call down from OUTSIDE the sim (New
+ * Game+ reset). Any dispatched unit returns to circulation via the
+ * same clear path the scene flow uses; the generator simply resumes
+ * on its normal guards next tick. Safe to call with nothing live. */
+export function standDownDispatch() {
+  for (const c of G.traffic) if (c.dispatch) clearDispatch(c, false);
+  G.incident = null;
+  incidentAge = 0;
+}
+
 /** Clear the live incident (scene done or timed out) and put the
  * unit back into ordinary circulation on its nearest road. */
 function clearDispatch(car: NpcCar, done: boolean) {

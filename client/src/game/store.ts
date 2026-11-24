@@ -12,10 +12,11 @@ export interface NpcCar extends VehicleState {
   roll?: number; pitchVel?: number; rollVel?: number; // Phase 10: C++ vehicle_body state (traffic cheap version)
   svc?: "ambulance" | "fire"; // Phase 7: emergency-service traffic variants
   // ---- Phase 6: per-car kind + traffic-light / rush-hour / bus state ----
-  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
+  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
   rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
   densRank?: number; densTotal?: number; // Phase 16: ambient-pool rank for the traffic-density lever (initWorld)
   busRoute?: boolean; wp?: number; stopT?: number;
+  cargoSwerve?: number; // Phase 17: lateral offset a Spilled Cargo event pushed this car into (decays at turns)
   // ---- Phase 15: emergency dispatch state (svc units only) — set by
   // game/dispatch.ts, driven by the dedicated branch in GameSystems'
   // traffic loop; leg 0 = reach the turn intersection, leg 1 = final
@@ -49,7 +50,7 @@ export interface Cop extends VehicleState { active: boolean; lightPhase: number;
 export type WeatherKind = "Clear" | "Cloudy" | "Rain" | "Storm" | "Fog";
 export type CrimeKind = "steal" | "hit" | "ped" | "reckless" | "assault" | "shoot" | "theft" | "robbery";
 export interface StashItem { type: string; name: string; value: number; }
-export interface StoredCar { kind: string; color: string; name: string; damage: number; fuel: number; brokenWindow: boolean; tuneLvl?: number; brakeLvl?: number; flatTyre?: boolean; }
+export interface StoredCar { kind: string; color: string; name: string; damage: number; fuel: number; brokenWindow: boolean; tuneLvl?: number; brakeLvl?: number; flatTyre?: boolean; driftTyres?: boolean; }
 /** Player-fleet car: a CarSpawn plus live state. Phase 6 fields are
  * optional so older creation sites (garage take-out, saves) stay valid. */
 export interface PlayerCar {
@@ -58,6 +59,8 @@ export interface PlayerCar {
   state: VehicleState; stolen: boolean; damage: number; fuel: number; brokenWindow: boolean;
   pitch: number; roll: number; steerVis: number; storedAway: boolean;
   flatTyre?: boolean; tuneLvl?: number; brakeLvl?: number; pitchVel?: number; rollVel?: number;
+  /** Phase 18: drift tyres fitted (+drift score rate, −wet grip) */
+  driftTyres?: boolean;
   // Phase 10: asymmetric crumple per side [front, back, left(+x), right(−x)] 0..1,
   // and the C++ vehicle_body heave channel (pitch/roll reuse the fields above)
   dent?: [number, number, number, number]; bodyHeave?: number; bodyHeaveVel?: number;
@@ -73,7 +76,7 @@ export const G = {
   followPos: new THREE.Vector3(PIER_SPAWN.x, 0, PIER_SPAWN.z),
   driving: false,
   activeCarId: -1,
-  cars: CAR_SPAWNS.map((s, i): PlayerCar => ({ ...s, state: { x: s.x, z: s.z, heading: s.heading, speed: 0 } as VehicleState, stolen: false, damage: 0, fuel: 58 + ((i * 29) % 38), brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false, flatTyre: false, tuneLvl: 0, brakeLvl: 0, pitchVel: 0, rollVel: 0 })),
+  cars: CAR_SPAWNS.map((s, i): PlayerCar => ({ ...s, state: { x: s.x, z: s.z, heading: s.heading, speed: 0 } as VehicleState, stolen: false, damage: 0, fuel: 58 + ((i * 29) % 38), brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false, flatTyre: false, tuneLvl: 0, brakeLvl: 0, driftTyres: false, pitchVel: 0, rollVel: 0 })),
   traffic: [] as NpcCar[],
   peds: [] as Ped[],
   cops: [] as Cop[],
@@ -124,6 +127,17 @@ export const G = {
   // pose at tramSeatY and GameSystems never busts / bleeds heat. ----
   tramRide: -1,
   tramSeatY: 6.62,
+  // ---- Phase 17: riding the city BUS — stop index while riding
+  // (-1 = not riding). Same contract as the tram: the ride component
+  // writes playerPos/followPos, Player renders the seated pose at
+  // busSeatY, and GameSystems applies the tram's wanted treatment
+  // (no heat bleed, no bust) while riding. ----
+  busRide: -1,
+  busSeatY: 1.05,
+  // ---- Phase 17: nowS() of the last photo-mode capture (App's
+  // capturePhoto stamps it) — the Harbour Wire photo objectives arm
+  // on arrival and complete on the next capture inside their radius.
+  lastPhotoAt: -9,
   sitSpot: null as null | { x: number; z: number; heading: number },
   requestReplayId: "", // phone Story app → App starts a chapter replay
   camFlashAt: -9, // nowS() of the last speed-camera flash (App overlay)
@@ -165,6 +179,7 @@ export const G = {
   hold: null as null | { label: string; progress: number }, // hold-E progress (robbery / break-in)
   garageZone: null as null | { id: string; label: string }, // garage zone the player is standing in
   requestCharSelect: false, // phone/pause → App opens the character select
+  requestCredits: false, // Phase 20: phone Story app → App opens the end-credits overlay
   photoMode: false,
   weaponSel: "fist" as "fist" | WeaponKind,
   missionResult: null as null | MissionResult, // debrief panel data (Visual V6)
@@ -278,6 +293,8 @@ export interface LastCarSave {
   kind: string; color: string; model: string; owned: boolean; stolen: boolean;
   x: number; z: number; heading: number; damage: number; fuel: number;
   brokenWindow: boolean; tuneLvl: number; brakeLvl: number; flatTyre: boolean;
+  /** Phase 18: drift tyres (optional so pre-18 snapshots load) */
+  driftTyres?: boolean;
 }
 export const LASTCAR = { save: null as LastCarSave | null, carIndex: -1 };
 // ---- Phase 16: THE PARKED FLEET — up to 3 OWNED cars parked in the
@@ -312,6 +329,15 @@ function removeFleetEntryFor(carIndex: number) {
   FLEET.list = FLEET.list.filter((e) => fleetKeyOf(e) !== k);
   if (FLEET.list.length !== before) persistFleet();
 }
+/** Phase 18: mod levels are clamped to the 0..3 caps wherever a save
+ * is written or applied — old saves (brakes capped at 1), or any
+ * out-of-range value, can never produce a level the ModMenu can't
+ * display or the physics branches don't know. */
+export function clampMods(car: { tuneLvl?: number; brakeLvl?: number }) {
+  car.tuneLvl = Math.max(0, Math.min(3, Math.floor(car.tuneLvl ?? 0) || 0));
+  car.brakeLvl = Math.max(0, Math.min(3, Math.floor(car.brakeLvl ?? 0) || 0));
+}
+
 export function noteLastCar(car: PlayerCar) {
   if (car.storedAway || car.damage >= 100) { clearLastCar(); return; }
   const spawnId = car.id >= 0 && car.id < CAR_SPAWNS.length && CAR_SPAWNS[car.id].kind === car.kind ? car.id : -1;
@@ -320,7 +346,9 @@ export function noteLastCar(car: PlayerCar) {
     x: car.state.x, z: car.state.z, heading: car.state.heading,
     damage: Math.round(car.damage), fuel: Math.round(car.fuel), brokenWindow: car.brokenWindow,
     tuneLvl: car.tuneLvl ?? 0, brakeLvl: car.brakeLvl ?? 0, flatTyre: car.flatTyre ?? false,
+    driftTyres: car.driftTyres ?? false,
   };
+  clampMods(LASTCAR.save);
   LASTCAR.carIndex = G.cars.indexOf(car);
   try { localStorage.setItem("harborfall-lastcar", JSON.stringify(LASTCAR.save)); } catch { /* ignore */ }
   // Phase 16: an owned car also joins (or refreshes) the parked fleet
@@ -344,6 +372,8 @@ function applyCarSave(s: LastCarSave): number {
     c.x = s.x; c.z = s.z; c.heading = s.heading;
     c.damage = s.damage; c.fuel = s.fuel; c.brokenWindow = s.brokenWindow;
     c.tuneLvl = s.tuneLvl; c.brakeLvl = s.brakeLvl; c.flatTyre = s.flatTyre;
+    c.driftTyres = s.driftTyres ?? false;
+    clampMods(c);
     c.storedAway = false;
   };
   if (s.spawnId >= 0) {
@@ -353,12 +383,22 @@ function applyCarSave(s: LastCarSave): number {
   }
   const idx = G.cars.findIndex((c) => c.storedAway && c.kind === s.kind && c.color === s.color);
   if (idx >= 0) { apply(G.cars[idx]); return idx; }
+  // Phase 17 audit: a dynamic snapshot can describe a car that is
+  // ALREADY in the world from another restore path — the garage-kept
+  // car loads earlier in this file as a fresh push, and a fleet entry
+  // for that same car would otherwise push a second copy of it at
+  // the same spot (two identical owned cars stacked). If a live car
+  // of the same kind+colour already sits within 2u of the snapshot,
+  // it IS that car: refresh it in place instead of duplicating.
+  const dup = G.cars.findIndex((c) => !c.storedAway && c.kind === s.kind && c.color === s.color
+    && (c.state.x - s.x) ** 2 + (c.state.z - s.z) ** 2 < 2 ** 2);
+  if (dup >= 0) { apply(G.cars[dup]); return dup; }
   G.cars.push({
     id: 1000 + G.cars.length, x: s.x, z: s.z, heading: s.heading, color: s.color,
     model: s.model || CAR_MODELS[s.kind as PlayerCar["kind"]]?.name || "Car", kind: s.kind as PlayerCar["kind"], owned: s.owned,
     state: { x: s.x, z: s.z, heading: s.heading, speed: 0 }, stolen: s.stolen, damage: s.damage, fuel: s.fuel,
     brokenWindow: s.brokenWindow, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
-    flatTyre: s.flatTyre, tuneLvl: s.tuneLvl, brakeLvl: s.brakeLvl, pitchVel: 0, rollVel: 0,
+    flatTyre: s.flatTyre, tuneLvl: s.tuneLvl, brakeLvl: s.brakeLvl, driftTyres: s.driftTyres ?? false, pitchVel: 0, rollVel: 0,
   });
   return G.cars.length - 1;
 }

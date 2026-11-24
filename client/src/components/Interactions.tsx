@@ -14,6 +14,7 @@ import { ECO } from "../game/economy";
 import { F, creelValue } from "../game/phase8";
 import { WMOD, persistWmod } from "../game/phase9";
 import { jobStats, persistJobStats } from "../game/jobs";
+import { dealerPrice, consumeVoucher } from "../game/cup";
 
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 /** In-game clock hour (matches the phone): dayTime 0 = 06:00. */
@@ -150,7 +151,9 @@ export default function Interactions() {
         if (browseCtx.current && eDownAt.current > 0) {
           const isDealer = browseCtx.current === "dealer";
           const label = isDealer ? CAR_MODELS[DEALER_CARS[dealerIdx.current].kind].name : GUN_ITEMS[gunIdx.current].label;
-          const price = isDealer ? DEALER_CARS[dealerIdx.current].price : GUN_ITEMS[gunIdx.current].price;
+          // Phase 18: the Sable Cup gold voucher prices the Vantara S
+          // through game/cup.ts — one helper for both dealer counters
+          const price = isDealer ? dealerPrice(DEALER_CARS[dealerIdx.current].kind, DEALER_CARS[dealerIdx.current].price) : GUN_ITEMS[gunIdx.current].price;
           const progress = (performance.now() / 1000 - eDownAt.current) / 0.9;
           G.hold = { label: `Buying ${label} — $${price}…`, progress: Math.min(1, progress) };
           if (progress >= 1) {
@@ -163,6 +166,7 @@ export default function Interactions() {
                 G.cash -= price;
                 G.storedCars.push({ kind: dc.kind, color: dc.color, name: CAR_MODELS[dc.kind].name, damage: 0, fuel: 90, brokenWindow: false });
                 persistStoredCars();
+                consumeVoucher(dc.kind); // Phase 18: one use, spent at the till
                 pushPhoneMsg("Sable Motors", `🚗 ${CAR_MODELS[dc.kind].name} delivered to your garage. Press G at a garage to take it out.`);
                 toast(`${CAR_MODELS[dc.kind].name} bought — delivered to your garage`);
                 sfx.cash();
@@ -240,7 +244,8 @@ export default function Interactions() {
           if (closed) { prompt = "Sable Motors — closed (opens 07:00)"; warn = true; }
           else {
             const dc = DEALER_CARS[dealerIdx.current];
-            prompt = `E — ${CAR_MODELS[dc.kind].name} $${dc.price.toLocaleString()} at Sable Motors (tap E browse · hold E buy)`;
+            const p = dealerPrice(dc.kind, dc.price);
+            prompt = `E — ${CAR_MODELS[dc.kind].name} $${p.toLocaleString()}${p < dc.price ? " (gold voucher −20%)" : ""} at Sable Motors (tap E browse · hold E buy)`;
           }
         } else if (atGun) {
           if (closed) { prompt = "Sable Arms — closed (opens 07:00)"; warn = true; }

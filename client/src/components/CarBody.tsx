@@ -13,7 +13,7 @@ import { glowTexture, tyreTexture, shatteredTexture, carDirtTexture } from "../t
 import { G } from "../game/store";
 import { gates, tier } from "../game/quality";
 
-export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane";
+export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto";
 
 const GLASS = new THREE.MeshStandardMaterial({ color: "#141f28", metalness: 0.5, roughness: 0.08, envMapIntensity: 1.3 });
 const CHROME = new THREE.MeshStandardMaterial({ color: "#d7dce2", metalness: 0.95, roughness: 0.16, envMapIntensity: 1.4 });
@@ -166,6 +166,8 @@ const CABIN_POS: Record<string, { y: number; z: number; w: number }> = {
   supercar: { y: 0.6, z: -0.25, w: 1.5 },
   taxi: { y: 0.98, z: -0.05, w: 1.5 }, bus: { y: 1.62, z: 1.4, w: 2.0 },
   gt: { y: 0.95, z: -0.35, w: 1.5 }, tow: { y: 1.18, z: 0.85, w: 1.6 },
+  // Phase 18
+  kestrel: { y: 0.82, z: -0.35, w: 1.42 }, bronto: { y: 1.4, z: 0.9, w: 1.65 },
 };
 /** Dirt/scratch shell (Visual V3): opacity follows live damage. */
 const SHELL: Record<string, [number, number, number, number]> = {
@@ -175,6 +177,8 @@ const SHELL: Record<string, [number, number, number, number]> = {
   taxi: [2.05, 0.63, 3.75, 0.6], bus: [2.5, 1.9, 7.2, 1.5],
   // Phase 8 exotics + wrecker (radius contract 1.6 for wedge/hyper/gt)
   wedge: [2.3, 0.5, 4.5, 0.42], hyper: [2.25, 0.5, 4.4, 0.42], gt: [2.05, 0.55, 4.6, 0.55], tow: [2.15, 0.77, 4.15, 0.68],
+  // Phase 18
+  kestrel: [2.08, 0.48, 3.95, 0.48], bronto: [2.2, 0.9, 4.4, 0.82],
 };
 function DirtShell({ kind, liveDamage }: { kind: string; liveDamage?: () => number }) {
   const mat = useMemo(() => new THREE.MeshStandardMaterial({ map: carDirtTexture(), transparent: true, opacity: 0, roughness: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), []);
@@ -645,6 +649,19 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
         <LightsBumpers w={2.1} len={4.1} y={0.7} />
         <Mirrors w={2.1} y={1.3} z={1.45} />
       </>); wheels = wheelSet(2.1, 4.1, 0.42, 0.3); break;
+    case "bronto":
+      // Phase 18: BRONTO HAULER — the pickup shell grown: a taller,
+      // heavier body on oversize all-terrain wheels, bull bar, roof
+      // rack and a raised bed. Built for the Downs, priced for work.
+      body = (<>
+        <RB args={[2.2, 0.85, 4.4]} radius={0.09} mat={paint} pos={[0, 0.82, 0]} />
+        <RB args={[1.9, 0.6, 1.4]} radius={0.11} mat={glassMat} pos={[0, 1.5, 0.9]} />
+        <mesh position={[0, 1.18, -1.2]}><boxGeometry args={[1.95, 0.4, 1.55]} /><meshStandardMaterial color="#3d3428" roughness={0.9} /></mesh>
+        <mesh position={[0, 0.62, 2.24]}><boxGeometry args={[1.9, 0.5, 0.1]} /><primitive object={BUMPER} attach="material" /></mesh>
+        <mesh position={[0, 1.86, 0.9]}><boxGeometry args={[1.7, 0.07, 1.3]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <LightsBumpers w={2.2} len={4.4} y={0.84} />
+        <Mirrors w={2.2} y={1.52} z={1.5} />
+      </>); wheels = wheelSet(2.2, 4.4, 0.52, 0.36); break;
     case "van":
       body = (<>
         <RB args={[2.1, 1.12, 4.2]} radius={0.12} mat={paint} pos={[0, 0.92, 0]} />
@@ -669,6 +686,21 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
         <LightsBumpers w={2.0} len={3.9} y={0.56} />
         <Mirrors w={2.0} y={1.0} z={0.4} />
       </>); wheels = wheelSet(2.0, 3.9, 0.37, 0.26); break;
+    case "kestrel":
+      // Phase 18: SABLE KESTREL RS — the coupe shell, track-trimmed:
+      // lower and wider stance, a front splitter, a fixed rear wing
+      // and fat rear rubber. Same construction kit, new proportions.
+      body = (<>
+        <RB args={[2.08, 0.42, 3.95]} radius={0.14} mat={paint} pos={[0, 0.48, 0]} />
+        <RB args={[1.94, 0.15, 1.25]} radius={0.06} mat={paint} pos={[0, 0.66, 1.32]} rot={[0.09, 0, 0]} />
+        <RB args={[1.6, 0.42, 1.5]} radius={0.17} mat={glassMat} pos={[0, 0.88, -0.4]} />
+        <mesh position={[0, 0.24, 2.0]}><boxGeometry args={[2.06, 0.07, 0.34]} /><primitive object={BUMPER} attach="material" /></mesh>
+        <RB args={[1.9, 0.06, 0.4]} radius={0.03} mat={BUMPER} pos={[0, 1.0, -1.95]} />
+        <mesh position={[-0.75, 0.82, -1.95]}><boxGeometry args={[0.08, 0.3, 0.08]} /><primitive object={BUMPER} attach="material" /></mesh>
+        <mesh position={[0.75, 0.82, -1.95]}><boxGeometry args={[0.08, 0.3, 0.08]} /><primitive object={BUMPER} attach="material" /></mesh>
+        <LightsBumpers w={2.08} len={3.95} y={0.52} />
+        <Mirrors w={2.08} y={0.95} z={0.35} />
+      </>); wheels = wheelSet(2.08, 3.95, 0.36, 0.26, 0.4, 0.34); break;
     case "taxi":
       body = (<>
         <RB args={[2.0, 0.58, 3.7]} radius={0.1} mat={paint} pos={[0, 0.6, 0]} />

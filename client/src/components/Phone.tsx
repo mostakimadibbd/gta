@@ -8,10 +8,12 @@ import { CONTACTS, phoneMsgs, onPhoneMsgs } from "../game/phone";
 import { G, persistSettings, stashTotal, windLabel } from "../game/store";
 import { currentSeason, seasonMeta } from "../game/season";
 import { CAR_MODELS, DEALER_CARS } from "../world";
-import { M } from "../game/missionState";
+import { M, NGP } from "../game/missionState";
+import { startNewGamePlus } from "../game/ngplus";
 import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
 import { J, jobStats, fmtTime, RACES, BAY_CIRCUIT, SPARROW_RUN } from "../game/jobs";
-import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet } from "../game/economy";
+import { cup, CUP_POINTS, CUP_CHAMPION_POINTS, cupPointsTotal, cupRoundsDone, resetCup } from "../game/cup";
+import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet, bizLevel, upgradeCost, upgradeBusiness, staffBonusNow, isNightNow, LOAN, LOAN_TIERS, borrowLoan, repayLoan } from "../game/economy";
 import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
 import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
@@ -84,6 +86,7 @@ function gameClock(): string {
 export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onContact, onPhotoMode, onChangeCharacter }: Props) {
   const [app, setApp] = useState<AppId>("home");
   const [webPage, setWebPage] = useState("home"); // Phase 9 SableWeb tab
+  const [ngConfirm, setNgConfirm] = useState(false); // Phase 20: NG+ two-step confirm
   const [, setTick] = useState(0);
   const [playing, setPlaying] = useState(isMenuThemePlaying());
   useEffect(() => onPhoneMsgs(() => setTick((v) => v + 1)), []);
@@ -163,19 +166,30 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             {BUSINESSES.map((b) => {
               const ownedBiz = ECO.owned.includes(b.id);
               const crew = ECO.staffBy[b.id] ?? [];
+              const lvl = bizLevel(b.id);
               return (
                 <div key={b.id}>
                   <div className="bank-row">
-                    <span>{b.name}<small style={{ display: "block" }}>{ownedBiz
+                    <span>{b.name}{ownedBiz ? ` · Lv${lvl}` : ""}<small style={{ display: "block" }}>{ownedBiz
                       ? crew.length ? `Crew: ${crew.join(" · ")}` : "No staff — hire from the roster below (up to 2)"
                       : "Not owned"}</small></span>
                     <b>{ownedBiz ? `+$${businessDailyNet(b)}/day` : `$${b.price.toLocaleString()}`}</b>
                   </div>
+                  {ownedBiz && lvl < 3 && (
+                    <div className="bank-row">
+                      <span>↳ Upgrade to Level {lvl + 1}<small style={{ display: "block" }}>+35% takings — the number above is what the morning tick pays</small></span>
+                      <button type="button" className="phone-toggle" onClick={() => { if (upgradeBusiness(b.id)) setTick((v) => v + 1); }}>Upgrade ${upgradeCost(b).toLocaleString()}</button>
+                    </div>
+                  )}
+                  {ownedBiz && lvl >= 3 && (
+                    <div className="bank-row"><span>↳ Max level<small style={{ display: "block" }}>Takings +70% — the harbour's finest</small></span><b>Lv3</b></div>
+                  )}
                   {ownedBiz && crew.map((name) => {
                     const s = staffDef(name)!;
+                    const now = staffBonusNow(s);
                     return (
                       <div key={name} className="bank-row">
-                        <span>↳ {name}<small style={{ display: "block" }}>{s.trait} · +{Math.round(s.bonus * 100)}% takings · ${s.wage}/day wage</small></span>
+                        <span>↳ {name}<small style={{ display: "block" }}>{s.trait} · +{Math.round(now * 100)}% takings{now > s.bonus ? " (night rate ×2 — live now)" : s.name === "Sana Iqbal" ? " (×2 after dark)" : ""} · ${s.wage}/day wage</small></span>
                         <button type="button" className="phone-toggle" onClick={() => {
                           ECO.staffBy[b.id] = crew.filter((n) => n !== name);
                           persistEco(); setTick((v) => v + 1);
@@ -185,9 +199,10 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
                   })}
                   {ownedBiz && crew.length < MAX_STAFF_PER_BIZ && STAFF_ROSTER.filter((s) => !crew.includes(s.name)).map((s) => {
                     const worksAt = BUSINESSES.find((ob) => (ECO.staffBy[ob.id] ?? []).includes(s.name));
+                    const now = staffBonusNow(s);
                     return (
                       <div key={s.name} className="bank-row">
-                        <span>Hire {s.name}<small style={{ display: "block" }}>{s.trait} · +{Math.round(s.bonus * 100)}% takings · ${s.wage}/day wage{worksAt ? ` · currently at ${worksAt.name}` : ""}</small></span>
+                        <span>Hire {s.name}<small style={{ display: "block" }}>{s.trait} · +{Math.round(now * 100)}% takings{now > s.bonus ? " (night rate ×2 — live now)" : ""} · ${s.wage}/day wage{worksAt ? ` · currently at ${worksAt.name}` : ""}</small></span>
                         <button type="button" className="phone-toggle" disabled={!!worksAt} onClick={() => {
                           ECO.staffBy[b.id] = [...crew, s.name];
                           persistEco(); setTick((v) => v + 1);
@@ -200,6 +215,29 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             })}
             <div className="bank-row"><span>{APARTMENT.name}</span><b>{ECO.ownsApartment ? "Owned 🔑" : `$${APARTMENT.price.toLocaleString()}`}</b></div>
             <div className="bank-row"><span><b>Daily income (paid each morning)</b></span><b>${dailyIncomeTotal().toLocaleString()}</b></div>
+            <h3 className="phone-subhead">SableBank Loans</h3>
+            {LOAN.owed > 0 ? (
+              <div>
+                <div className="bank-row"><span>Outstanding loan<small style={{ display: "block" }}>Principal ${LOAN.principal.toLocaleString()} · 8%/day interest (capped at 2× principal) · 10% auto-repays each morning from your cash</small></span><b>−${LOAN.owed.toLocaleString()}</b></div>
+                <div className="bank-row"><span>Repay now</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button type="button" className="phone-toggle" disabled={G.cash <= 0} onClick={() => { if (repayLoan(100) > 0) setTick((v) => v + 1); }}>Repay $100</button>
+                    <button type="button" className="phone-toggle" disabled={G.cash <= 0} onClick={() => { if (repayLoan(LOAN.owed) > 0) setTick((v) => v + 1); }}>Repay in full</button>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div>
+                {LOAN_TIERS.map((tier) => (
+                  <div key={tier} className="bank-row">
+                    <span>Borrow ${tier.toLocaleString()}<small style={{ display: "block" }}>Instant cash · 8%/day on what's owed · 10% auto-repays each morning</small></span>
+                    <button type="button" className="phone-toggle" disabled={G.wanted >= 3} onClick={() => { if (borrowLoan(tier)) setTick((v) => v + 1); }}>Borrow</button>
+                  </div>
+                ))}
+                {G.wanted >= 3 && <p className="phone-tip">The bank won't lend while you're wanted 3★ or more — lose the heat first.</p>}
+                {isNightNow() && <p className="phone-tip">It's night — Sana Iqbal's rate is doubled right now, wherever she works for you.</p>}
+              </div>
+            )}
             <p className="phone-tip">Income lands with a SableBank message every game-morning — or when you sleep at home. Solano's ledger can't touch this account. Probably.</p>
             <h3 className="phone-subhead">Invest — SableBank Markets</h3>
             <div className="bank-row"><span>Portfolio value</span><b>${portfolioValue().toFixed(0)} {portfolioPL() !== 0 && <small>({portfolioPL() >= 0 ? "+" : "−"}${Math.abs(portfolioPL()).toFixed(0)})</small>}</b></div>
@@ -239,6 +277,20 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <p className="phone-tip">Take a boat to the teal ring at the marina and press E. Beat the ghost boat home for ${BAY_CIRCUIT.purse}.</p>
             <div className="bank-row"><span>🛩 {SPARROW_RUN.name} — Sable Field time trial</span><b>{jobStats.bestTimes[SPARROW_RUN.id] ? `best ${fmtTime(jobStats.bestTimes[SPARROW_RUN.id])}` : "no time yet"}</b></div>
             <p className="phone-tip">Take the Sparrow to the teal ring at Sable Field. Thread the amber rings and land back at the field — beat {fmtTime(SPARROW_RUN.par ?? 120)} for ${SPARROW_RUN.purse}.</p>
+            <h3 className="phone-subhead">🏆 The Sable Cup — championship</h3>
+            <p className="phone-tip">Four rounds: the three street races plus the Bay Circuit. Arm a round here, then start it at its ring — the finish counts. Points 10/6/3/1; {CUP_CHAMPION_POINTS}+ of 40 takes the crown: $2,500, a Harbour Wire headline and a gold Vantara S voucher (20% off at Sable Motors, one use). Your best finish counts — re-run any round while the series is open. (Street Challenge pot races are a different format — they never count.)</p>
+            {cup.rounds.map((r) => (
+              <div key={r.id} className="bank-row">
+                <span>{r.name}<small style={{ display: "block" }}>{r.where}</small></span>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <b>{r.best > 0 ? `P${r.best} · ${CUP_POINTS[r.best - 1]} pts` : "not run"}</b>
+                  {!cup.closed && <button type="button" className="phone-toggle" onClick={() => { J.cupArm = J.cupArm === r.id ? "" : r.id; setTick((v) => v + 1); }}>{J.cupArm === r.id ? "Armed ✓ — to the ring!" : "Enter round"}</button>}
+                </span>
+              </div>
+            ))}
+            <div className="bank-row"><span>Series points</span><b>{cupPointsTotal()}/40 · {cupRoundsDone()}/4 rounds{cup.champion ? " · 🏆 CHAMPION" : cup.closed ? " · closed" : ""}</b></div>
+            {cup.voucher && !cup.voucherUsed && <div className="bank-row"><span>🎟️ Gold voucher</span><b>Vantara S −20% at Sable Motors (one use)</b></div>}
+            {cup.closed && <button type="button" className="phone-row" onClick={() => { resetCup(); setTick((v) => v + 1); }}><span><b>{cup.champion ? "Defend the crown — new series" : "Run a fresh series"}</b><small>Standings reset; an unspent voucher carries over</small></span><span>›</span></button>}
             <h3 className="phone-subhead">Tow work — Lina's Wrecker</h3>
             <div className="bank-row"><span>Tow status</span><b>{J.towPhase === "idle" ? "Off shift" : J.towPhase === "pickup" ? (J.towHooked ? "Hooked — deliver to Lina's" : "Stranded car marked — reverse the hook in") : "Delivering"}</b></div>
             <button type="button" className="phone-row" onClick={() => { J.wantTow = true; onClose(); }}>
@@ -255,6 +307,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>Taxi fares</span><b>{jobStats.taxiFares} · ${jobStats.taxiEarned.toLocaleString()} · best tip ${jobStats.taxiBestTip}</b></div>
             <div className="bank-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
+            <div className="bank-row"><span>🛞 Drifting</span><b>best chain {jobStats.bestDrift.toLocaleString()} pts · {jobStats.driftBanked.toLocaleString()} banked · ${jobStats.driftEarned.toLocaleString()}</b></div>
             <LeaderboardRows />
           </div>
         )}
@@ -280,9 +333,37 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>After the Fall (post-story pack)</span><b>{!M.storyDone ? "Finish the story first" : M.side.after >= 3 ? "Done 🏆" : "Call Lina, then Voss, then Elias"}</b></div>
             <div className="bank-row"><span>After the Fall progress</span><b>{M.side.after}/3</b></div>
             <div className="bank-row"><span>The Meridian Pair (one choice, post-Ch.3)</span><b>{M.pairChoice === "informant" ? "You stood with Voss's informant" : M.pairChoice === "dockcrew" ? "You warned Elias's crew" : M.storyIndex >= 3 ? "Call Voss OR Elias — the first call decides" : "After Chapter 3"}</b></div>
+            <div className="bank-row"><span>The Harbour Wire (post-Ch.4)</span><b>{M.side.wire >= 3 ? "Printed 🏆 — the harbour knows" : M.storyIndex >= 4 || M.storyDone ? `Call Ines Marlo · ${M.side.wire}/3` : "After Chapter 4"}</b></div>
             {SIDE_MISSIONS.filter((mDef) => (M.stats[mDef.id]?.best ?? 0) > 0).map((mDef) => (
               <div key={mDef.id} className="bank-row"><span>{mDef.title}</span><b>best {fmtTime(M.stats[mDef.id].best)}</b></div>
             ))}
+            <h3 className="phone-subhead">New Game+ {NGP.level > 0 ? `· NG+ ${NGP.level}` : ""}</h3>
+            {M.storyDone ? (
+              !ngConfirm ? (
+                <>
+                  <p className="phone-note">Run the story again on this save: chapters, side arcs, the Wire and the Meridian Pair all reset — cash, cars, properties, businesses, skills, your look, Cup and drift records stay. The patrol drills harder each run (cruise +6%/level, capped +18%; busts +10%/level, capped +30%) and every mission pays +25% more per level.</p>
+                  <button type="button" className="phone-row" onClick={() => setNgConfirm(true)}>
+                    <span><b>Start New Game+ {NGP.level + 1}</b><small>Story progress resets — everything you own stays</small></span><span>›</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="phone-note">⚠️ Last check: starting NG+ {NGP.level + 1} resets story and side progress on this save slot (replays and best times stay). Any live mission, race, rental, escort or dispatch call is stood down first. This can't be undone.</p>
+                  <button type="button" className="phone-row" onClick={() => { setNgConfirm(false); if (startNewGamePlus() > 0) onClose(); }}>
+                    <span><b>Yes — start New Game+ {NGP.level + 1}</b><small>Back to the ferry, Rayan</small></span><span>›</span>
+                  </button>
+                  <button type="button" className="phone-row" onClick={() => setNgConfirm(false)}>
+                    <span><b>Not yet</b><small>Keep free-roaming this run</small></span><span>›</span>
+                  </button>
+                </>
+              )
+            ) : (
+              <p className="phone-note">{NGP.level > 0 ? `You're on New Game+ ${NGP.level}. ` : ""}Finish the six chapters and New Game+ unlocks here — the whole story again, with a sharper patrol and richer paydays.</p>
+            )}
+            <h3 className="phone-subhead">Credits</h3>
+            <button type="button" className="phone-row" onClick={() => { G.requestCredits = true; onClose(); }}>
+              <span><b>Watch the end credits</b><small>Port Sable, the cast, and a thank-you · ~45 s, Esc to skip</small></span><span>›</span>
+            </button>
           </div>
         )}
         {app === "news" && (
@@ -392,6 +473,8 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
                 <small>{val >= 50 ? `✓ ${perk}` : perk}</small>
               </div>
             ))}
+            <div className="phone-row"><span>🛞 Drifting</span><b>best chain {jobStats.bestDrift.toLocaleString()} pts · ${jobStats.driftEarned.toLocaleString()} earned</b></div>
+            <div className="phone-row"><span>🏆 Sable Cup</span><b>{cup.champion ? "Champion 🏆" : `${cupPointsTotal()} pts · ${cupRoundsDone()}/4 rounds`}</b></div>
             <div className="phone-row"><span>Stamina now</span><b>{Math.round(G.stamina)}%</b></div>
             <div className="phone-row"><span>Lifetime earned</span><b>${G.lifetimeEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Fines &amp; fees paid</span><b>${G.finesPaid.toLocaleString()}</b></div>

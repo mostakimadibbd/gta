@@ -1088,3 +1088,149 @@ react-three 185.8 + css/html 11.0) vs Phase 15's 794.1 — +0.6%, the
 phase's own code (escort, fleet, farm work, levers). No new eager
 chunks; the officer is a single additional rig; density culling
 reuses the dormancy path, so Low settings strictly reduce draw work.
+
+## Phase 17 — City Life & Story Depth
+
+Presentation notes for the round (all procedural, in the standing
+teal/amber palette; nothing pink/purple; UI stays non-selectable):
+
+- **Bus stop furniture:** each rideable stop gets a kerbside timber
+  pole with an amber board and a dark teal inset panel — deliberately
+  humbler than the Sable Line's steel-and-teal stations, so the two
+  networks read differently at a glance. On the big map the stops are
+  amber squares and the bus itself a larger amber square with a teal
+  core, distinct from the tram's teal ring and the white traffic dots.
+- **The courier van:** an unmarked grey van with a single amber roof
+  marker (Ines's description made visible) — it reads as "the van
+  from the briefing" without a livery. The tail meter lives in the
+  standard hold/meter slot, so it inherits the HUD's styling.
+- **The challenger:** an amber hyper exotic parked at the kerb with
+  its driver standing at the door in a red-brown jacket and shades,
+  turning to face you as you approach. In the race itself the rival
+  renders in the race system's supercar class in the same amber —
+  noted honestly: the parked show car and the racing rival are the
+  same car to the story, two meshes to the engine.
+- **Spilled cargo:** five timber crates with dark strap bands (the
+  world's existing crate language), scattered across the lane; nearby
+  traffic visibly swings wide around the spill and settles back —
+  the swerve is a presentation offset, the AI's lane state is never
+  touched.
+- **The Harbour Wire's paper trail:** headlines land in the Harbour
+  Wire news feed after each part (LEDGER IN THE OPEN → THE TUESDAY
+  ROUTE → PRINT RUN), so the arc is visible in the same feed the
+  story's own chapters print to.
+
+Budget: initial-load JS 806.5 kB gzip (index 431.5 + three 178.2 +
+react-three 185.8 + css/html 11.0) vs Phase 16's 799.1 — +0.9%, the
+phase's own code (Wire missions, BusRide, Phase17 events). No new
+eager chunks; the events own a handful of fixed meshes; the courier
+is one extra CarBody while a tail mission runs.
+
+## Phase 18 — Vehicles & Racing Depth
+
+Presentation notes for the round (all procedural, in the standing
+teal/amber palette; nothing pink/purple; UI stays non-selectable):
+
+- **Sable Kestrel RS:** the coupe shell track-trimmed — a lower,
+  wider stance, a dark front splitter, a fixed rear wing on two
+  uprights and visibly fatter rear tyres. It reads as the coupe's
+  racing sibling at a glance, not a new silhouette system. Dealer
+  colour: racing amber.
+- **Bronto Hauler:** the pickup shell grown — taller body on
+  oversize all-terrain wheels, a steel bull bar, a roof rack and a
+  raised bed, in farm olive. Parked by the Downs barn it belongs to
+  the landscape; the same kind occasionally rolls through the farm
+  corner's road in traffic.
+- **The drift meter:** rides the existing mini-bar (the fishing/gym
+  meter slot) — the label carries the live chain (🛞 DRIFT ×N — pts,
+  release clean to bank), the marker tracks the estimated slip
+  angle, the fill tracks score toward a solid chain. No new HUD
+  furniture, no new per-frame React state (the ~8 Hz poll carries
+  it, as with fishing).
+- **The Sable Cup card:** Phone → Jobs gains a championship card in
+  the phone's existing bank-row language — per-round best/points,
+  an "Armed ✓" state on the entered round, the series line, and a
+  gold voucher row when the crown is won. The voucher shows at both
+  dealer counters as "(gold voucher −20%)" in the prompt itself, so
+  the price you see is the price you pay.
+- **Honest note (drift):** the arcade model has no velocity vector,
+  so there is no true slip angle to draw from — the meter's angle
+  is an estimate from steering lock + speed while the handbrake is
+  held. The scoring is real (chains, banking, collision loss); the
+  angle is a model, and game/drift.ts says so.
+
+Budget: initial-load JS 809.1 kB gzip (index 434.1 + three 178.2 +
+react-three 185.8 + css/html 11.0) vs Phase 17's 806.5 — +0.3%, the
+phase's own code (drift.ts, cup.ts, the two CarBody shells). No new
+eager chunks; the new cars reuse the existing shell/interior
+construction, so per-car cost is unchanged.
+
+## Phase 19 — Economy & Empire
+
+Presentation notes for the round (all procedural, in the standing
+teal/amber palette; nothing pink/purple; UI stays non-selectable):
+
+- **Sable Marina Rentals:** a canvas-texture sign in the SIGNS set
+  ("SABLE MARINA — BOAT RENTALS", teal board, amber letters) on
+  the pier road above the office counter, so the fourth business
+  reads in the world before any prompt does. The rental skiff is
+  the existing Harbour Fisher shell in marina white — a rental
+  should look like a rental.
+- **The rental dock** sits on the pier deck beside the Bay
+  Circuit ring: the same water the championship races on is the
+  water you rent on. Return prompts name the crew collecting the
+  boat; a wreck or an expired pass closes with a marina message
+  in the phone, in the same SableBank message language as the
+  rest of the economy.
+- **Bank app:** businesses gain a "· Lv" badge and an upgrade row
+  in the existing bank-row language (cost + the standing promise
+  that the shown number is the paid number); staff rows now show
+  the CURRENT bonus rate, and Sana Iqbal's row flips to "(night
+  rate ×2 — live now)" after 20:00. The Loans section sits
+  between Daily income and Invest — tiers as borrow rows when
+  clean, one outstanding-loan row with Repay $100 / Repay in full
+  when not. No new panels, no new visual language.
+- **Honest note (Sana's split):** her "double at night" settles
+  as a day/night split of the worked day (14h base + 10h double)
+  because the economy tick settles whole days at 06:00 — the
+  split is documented in game/economy.ts where the money moves,
+  and the live-rate display is the player's window into it.
+
+Budget: initial-load JS 811.3 kB gzip (index 436.3 + three 178.2 +
+react-three 185.8 + css/html 11.0) vs Phase 18's 809.1 — +0.3%,
+the phase's own code (rentals.ts, the economy growth, the Bank
+rows). No new eager chunks.
+
+## Phase 20 — Finale addendum
+
+- **Credits overlay:** a full-screen scrim (dark gradient, ~85%
+  opacity) over the still-rendering city — the world stays alive
+  behind the roll, which is the point of playing it over the live
+  scene rather than a black card. The roll is a single CSS
+  keyframe animation (45 s, linear, forwards) — no JS per frame,
+  no canvas cost beyond the scene the player was already looking
+  at. Type follows the HUD language: amber small-caps section
+  heads (var(--accent)), warm off-white lines, a muted FIN.
+  Input is locked through the standing dialogueActive gate, so
+  no new input plumbing exists to break; Skip is a plain DOM
+  button in the dialog language.
+- **Start screen:** one new line — "v2.0 — Complete Edition" in
+  11 px letterspaced muted teal under the tagline. It is the only
+  visual change to the poster screen; the post chain, tiers and
+  reflection stack are exactly as Phase 19 left them.
+- **NG+ presentation:** deliberately zero new visual language —
+  the badge is text on the existing chapter line, the confirm is
+  the phone's own row/note language, and the reset is announced
+  through the standard Harbour Wire + phone-message channels.
+- **Perf sanity (final):** initial-load JS 812.7 kB gzip (index
+  437.4 + three 178.2 + react-three 185.8 + css 10.6 + html 0.7)
+  vs Phase 19's 811.3 — +0.2%, the phase's own code (ngplus.ts,
+  the credits markup/CSS, the Phone rows). No new chunks, eager
+  or lazy. Phase 17–20 hot-loop check: drift ticks inside the
+  existing Vehicle step with scalar math; dispatch steps inside
+  the existing traffic loop; the rental watch is scalar checks
+  in Phase7's frame loop; loans/upgrades settle inside the
+  guarded daily tick (once per game day, not per frame); NG+
+  multipliers are scalar reads in the cop step, the bust fill
+  and effectivePayout; the credits roll is CSS. No Phase 17–20
+  system adds per-frame React state or a hot-loop allocation.

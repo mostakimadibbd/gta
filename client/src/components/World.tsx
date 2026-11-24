@@ -123,6 +123,7 @@ const SIGNS: { text: string; bg: string; fg: string; pos: [number, number, numbe
   { text: "SOLANO TRUCKING", bg: "#5a3a14", fg: "#ffd98a", pos: [60, 9, 93], rot: Math.PI },
   { text: "PORT SABLE", bg: "#14524f", fg: "#ffffff", pos: [0, 7, 118], rot: Math.PI },
   { text: "SABLE FISH CO.", bg: "#274268", fg: "#ffe9a8", pos: [-80, 5, 93], rot: Math.PI },
+  { text: "SABLE MARINA — BOAT RENTALS", bg: "#0f4442", fg: "#ffca7a", pos: [14, 5, 112], rot: Math.PI }, // Phase 19: the fourth business, office on the pier road
   { text: "MARKET ROW", bg: "#946b2d", fg: "#ffffff", pos: [20, 6, 13], rot: 0 },
   { text: "FERRY AHOY", bg: "#17605c", fg: "#fef9c3", pos: [-93, 5, 60], rot: Math.PI / 2 },
   // ---- Phase 2 billboards: original Port Sable brands ----

@@ -356,6 +356,65 @@ body,
   font-size: 11px;
 }
 
+/* ---- Phase 20: end-credits overlay + start-screen version stamp ----
+   The overlay sits above the Canvas (which keeps rendering the live
+   city behind the translucent scrim); the roll is one CSS animation
+   (no per-frame JS), ~45 s from first line to FIN. */
+.credits-overlay {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(#05090cf2, #05090cd9 30%, #05090cd9 70%, #05090cf2);
+  color: #f7f5ec;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.credits-scroll {
+  position: absolute;
+  left: 0; right: 0;
+  top: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding-bottom: 12vh;
+  animation: credits-roll 45s linear forwards;
+}
+@keyframes credits-roll {
+  from { transform: translateY(0); }
+  to { transform: translateY(-115%); }
+}
+.credits-block { margin-top: 30px; }
+.credits-head {
+  color: var(--accent, #f2b134);
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.credits-line, .credits-block { font-size: 16px; color: #e8e4d8; }
+.credits-end { margin-top: 44px; letter-spacing: 0.4em; color: #9fb3ad; }
+.credits-skip {
+  position: absolute;
+  right: 18px; bottom: 16px;
+  z-index: 2;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(10,14,16,0.85);
+  color: #f7f5ec;
+  cursor: pointer;
+}
+.version-stamp {
+  margin: 6px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #cfe3da99;
+}
+
 .dialog-backdrop {
   position: absolute;
   z-index: 5;

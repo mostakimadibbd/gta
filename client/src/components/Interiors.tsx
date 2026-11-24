@@ -15,6 +15,7 @@ import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTA
 import { ECO, LOFT, persistEco, setHomePref, sleepToMorning } from "../game/economy";
 import { CLOTH, CLOTHING_ITEMS, persistClothing, type ClothingItem } from "../game/phase8";
 import { shopsClosed } from "./Interactions";
+import { dealerPrice, consumeVoucher } from "../game/cup";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 import { neonSignTexture } from "../textures";
@@ -150,7 +151,7 @@ export default function Interiors() {
         if (d2 < 2.6 ** 2) {
           srIdx.current = (srIdx.current + 1) % DEALER_CARS.length;
           const dc = DEALER_CARS[srIdx.current];
-          toast(`Sable Motors — ${CAR_MODELS[dc.kind].name} · $${dc.price.toLocaleString()} (hold E to buy)`);
+          toast(`Sable Motors — ${CAR_MODELS[dc.kind].name} · $${dealerPrice(dc.kind, dc.price).toLocaleString()} (hold E to buy)`);
           sfx.click();
         }
       }
@@ -285,18 +286,21 @@ export default function Interiors() {
           else {
             const dc = DEALER_CARS[srIdx.current];
             const name = CAR_MODELS[dc.kind].name;
-            prompt = `Sable Motors — ${name} · $${dc.price.toLocaleString()} (tap E to browse · hold E to buy)`;
+            // Phase 18: voucher pricing via game/cup.ts (showroom too)
+            const price = dealerPrice(dc.kind, dc.price);
+            prompt = `Sable Motors — ${name} · $${price.toLocaleString()}${price < dc.price ? " (gold voucher −20%)" : ""} (tap E to browse · hold E to buy)`;
             if (srEDown.current > 0) {
               const progress = (performance.now() / 1000 - srEDown.current) / 0.9;
-              G.hold = { label: `Purchasing ${name} — $${dc.price.toLocaleString()}…`, progress: Math.min(1, progress) };
+              G.hold = { label: `Purchasing ${name} — $${price.toLocaleString()}…`, progress: Math.min(1, progress) };
               if (progress >= 1) {
                 srEDown.current = -1; G.hold = null;
-                if (G.cash < dc.price) { toast(`${name} costs $${dc.price.toLocaleString()} — not enough cash.`); sfx.dryFire(); }
+                if (G.cash < price) { toast(`${name} costs $${price.toLocaleString()} — not enough cash.`); sfx.dryFire(); }
                 else if (G.storedCars.length >= 6) toast("Your garage is full (6) — store or sell a car first.");
                 else {
-                  G.cash -= dc.price;
+                  G.cash -= price;
                   G.storedCars.push({ kind: dc.kind, color: dc.color, name, damage: 0, fuel: 90, brokenWindow: false });
                   persistStoredCars();
+                  consumeVoucher(dc.kind);
                   pushPhoneMsg("Sable Motors", `🚗 ${name} delivered to your garage. Press G at a garage to take it out.`);
                   toast(`${name} bought — delivered to your garage`);
                   sfx.cash();

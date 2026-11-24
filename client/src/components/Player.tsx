@@ -227,6 +227,25 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       if (animation.current !== "Idle") { animation.current = "Idle"; setAnimationLabel("Idle"); }
       return;
     }
+    // ---- Phase 17: riding the CITY BUS — BusRide.tsx owns the
+    // position exactly like the tram branch above; same seated pose,
+    // at road level (busSeatY) instead of the elevated deck. ----
+    if (G.busRide >= 0) {
+      G.swimming = false;
+      root.current.visible = true;
+      jumpRequested.current = false;
+      intensity.current = 0;
+      root.current.position.set(positionRef.current.x, G.busSeatY, positionRef.current.z);
+      root.current.rotation.set(0, G.playerHeading, 0);
+      rotationRef.current.set(0, root.current.rotation.y, 0);
+      animateHumanoid(rig, phase.current, 0, tNow);
+      rig.group.position.y = -0.42; // bench-seat drop, same as the tram
+      rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.45;
+      rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
+      rig.lArm.rotation.x = -0.3; rig.rArm.rotation.x = -0.3;
+      if (animation.current !== "Idle") { animation.current = "Idle"; setAnimationLabel("Idle"); }
+      return;
+    }
     // ---- Phase 16: THE ARREST ESCORT — input is locked (camera
     // stays free: the camera reads followPos, which we keep writing);
     // the rig auto-walks to the escort target beside the officer with

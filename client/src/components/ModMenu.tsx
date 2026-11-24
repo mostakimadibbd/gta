@@ -2,14 +2,19 @@
 // in a car inside a garage zone. Respray, engine tune (3 levels), brake
 // upgrade and a tyre swap for spike damage. Everything writes through to
 // the live car AND its stored-garage record, so mods survive sessions.
+// Phase 18: brakes gained their full 3 tiers (they shipped with one),
+// engine tier III repriced to the top of the ladder, and DRIFT TYRES
+// arrived — a toggle mod: +35% drift score rate, −12% wet-asphalt grip
+// (both wired in Vehicle.tsx / game/drift.ts).
 import { useEffect, useState } from "react";
 import { G, persistStoredCars, toast } from "../game/store";
 import { CAR_MODELS } from "../world";
 import { sfx } from "../game/audio";
 
 export const RESPRAYS = ["#c22e2e", "#2e7fb8", "#2e8a5a", "#e8b23a", "#20242a", "#e8e8e8", "#7a4a8a", "#c96a2c"];
-const TUNE_COST = [400, 750, 1200];
-const BRAKE_COST = 300;
+const TUNE_COST = [400, 750, 1800];
+const BRAKE_COST = [300, 650, 1100];
+const DRIFT_TYRE_COST = 600;
 const RESPRAY_COST = 150;
 const TYRE_COST = 40;
 
@@ -29,7 +34,7 @@ export default function ModMenu({ open, onClose }: { open: boolean; onClose: () 
   // mirror the change into the stored record for this car, if it has one
   const syncStored = () => {
     const s = G.storedCars.find((sc) => sc.kind === car.kind && sc.color === car.color);
-    if (s) { s.tuneLvl = car.tuneLvl ?? 0; s.brakeLvl = car.brakeLvl ?? 0; s.flatTyre = car.flatTyre ?? false; persistStoredCars(); }
+    if (s) { s.tuneLvl = car.tuneLvl ?? 0; s.brakeLvl = car.brakeLvl ?? 0; s.flatTyre = car.flatTyre ?? false; s.driftTyres = car.driftTyres ?? false; persistStoredCars(); }
   };
   const buy = (cost: number, apply: () => void, label: string) => {
     if (G.cash < cost) { toast(`${label} costs $${cost} — not enough cash.`); sfx.dryFire(); return; }
@@ -70,13 +75,29 @@ export default function ModMenu({ open, onClose }: { open: boolean; onClose: () 
           </button>
         </div>
 
-        <div className="mod-section">Brakes — sharper stopping</div>
+        <div className="mod-section">Brakes — sharper stopping per tier</div>
         <div className="mod-row">
-          <span>{brakes >= 1 ? "Performance brakes fitted" : `Standard brakes · $${BRAKE_COST}`}</span>
-          <button type="button" className="garage-btn" disabled={brakes >= 1}
-            onClick={() => buy(BRAKE_COST, () => { car.brakeLvl = 1; }, "Brake upgrade")}>
-            {brakes >= 1 ? "Fitted" : "Upgrade"}
+          <span>Level {brakes}/3{brakes >= 3 ? " · maxed" : ` · next $${BRAKE_COST[brakes]}`}</span>
+          <button type="button" className="garage-btn" disabled={brakes >= 3}
+            onClick={() => buy(BRAKE_COST[brakes], () => { car.brakeLvl = brakes + 1; }, `Brakes ${brakes + 1}`)}>
+            {brakes >= 3 ? "Maxed" : "Upgrade"}
           </button>
+        </div>
+
+        <div className="mod-section">Drift tyres — slide compound</div>
+        <div className="mod-row">
+          <span>{car.driftTyres ? "Fitted · +drift score, −wet grip" : `Not fitted · $${DRIFT_TYRE_COST}`}</span>
+          {car.driftTyres ? (
+            <button type="button" className="garage-btn"
+              onClick={() => { car.driftTyres = false; syncStored(); sfx.click(); toast("Drift tyres removed — road compound back on."); setTick((v) => v + 1); }}>
+              Remove
+            </button>
+          ) : (
+            <button type="button" className="garage-btn"
+              onClick={() => buy(DRIFT_TYRE_COST, () => { car.driftTyres = true; }, "Drift tyres")}>
+              Fit
+            </button>
+          )}
         </div>
 
         {car.flatTyre && (

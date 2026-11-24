@@ -4,6 +4,7 @@
 // lives in components/Phase8.tsx; this module owns the data + persistence
 // so the phone (Stats) and Player (rig) can read it without cycles.
 import type { HumanoidOptions } from "../humanoid";
+import { DRIFT } from "./drift";
 
 // ================================================================ FISHING
 export interface FishSpot { name: string; x: number; z: number; castX: number; castZ: number; island?: boolean; }
@@ -126,6 +127,10 @@ export function clearClothingOverride() {
  * state and renders the marker bar under the prompt stack. */
 export interface MiniUi { label: string; marker: number; zone: [number, number] | null; fill: number | null; }
 export function currentMiniUi(): MiniUi | null {
+  // Phase 18: the drift meter rides this same ~8 Hz poll (no new
+  // per-frame React state). Drifting only happens at the wheel;
+  // fishing and the gym are on foot, so the meters never compete.
+  if (DRIFT.open) return { label: `🛞 DRIFT ×${DRIFT.mult} — ${Math.floor(DRIFT.score).toLocaleString()} pts (release clean to bank)`, marker: Math.min(1, DRIFT.angle / 0.55), zone: [0.45, 1], fill: Math.min(1, DRIFT.score / 400) };
   if (F.phase === "charge") return { label: "CAST POWER — tap E to release", marker: F.power, zone: [0.55, 0.8], fill: null };
   if (F.phase === "reel") return { label: "REEL — hold E to wind, ease off before the red", marker: F.marker, zone: [0.35, 0.75], fill: F.progress };
   if (GYM.active) return { label: `${GYM.active.name.toUpperCase()} — tap E in the green (${GYM.hits}/${GYM.need})`, marker: GYM.marker, zone: [GYM.zoneAt - 0.11, GYM.zoneAt + 0.11], fill: GYM.hits / GYM.need };

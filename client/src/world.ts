@@ -48,7 +48,7 @@ export const BUS_STOPS: { x: number; z: number }[] = [
   { x: 27.7, z: -30 }, { x: -67.7, z: 14 }, { x: 34, z: 67.7 },
 ];
 /** Cars the Northgate dealership sells (delivered to your garage). */
-export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv" | "wedge" | "hyper" | "gt"; color: string; price: number }[] = [
+export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv" | "wedge" | "hyper" | "gt" | "kestrel" | "bronto"; color: string; price: number }[] = [
   { kind: "coupe", color: "#3f7fae", price: 4200 },
   { kind: "supercar", color: "#c22e2e", price: 9800 },
   { kind: "suv", color: "#2e4a5a", price: 3600 },
@@ -56,6 +56,11 @@ export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv" | "wedge" | "hype
   { kind: "gt", color: "#31556e", price: 12500 },
   { kind: "wedge", color: "#d99a3d", price: 25000 },
   { kind: "hyper", color: "#e8ecef", price: 40000 },
+  // ---- Phase 18: two more originals. The Kestrel RS is dealer-only
+  // (a track coupe — handling over headline speed); the Bronto Hauler
+  // also stands at the farm (CAR_SPAWNS 32) for countryside work. ----
+  { kind: "kestrel", color: "#c47b1e", price: 18000 },
+  { kind: "bronto", color: "#5c6650", price: 9500 },
 ];
 /** Northgate mansion row (west edge, gated) — visuals in World.tsx. */
 export const NORTH_MANSIONS: { x: number; z: number; color: string; roof: string }[] = [
@@ -363,6 +368,12 @@ export const CAR_MODELS: Record<CarSpawn["kind"], { name: string; topSpeed: numb
   // ---- Phase 9: second boat class + the flyable prop plane ----
   skiff: { name: "Harbour Fisher 180", topSpeed: 58, handling: 48 },
   plane: { name: "Sable Sparrow", topSpeed: 210, handling: 40 },
+  // ---- Phase 18 originals: the Kestrel RS trades headline speed for
+  // the sharpest steering in the range; the Bronto is all torque —
+  // slow on tarmac, and the only car whose grip IMPROVES on dirt
+  // (Vehicle applies the bonus on the surface path). ----
+  kestrel: { name: "Sable Kestrel RS", topSpeed: 216, handling: 86 },
+  bronto: { name: "Bronto Hauler", topSpeed: 126, handling: 50 },
 };
 // ---- Phase 2: hillside scenic overlook (final mood-board image) ----
 export const OVERLOOK = { x: -102, z: -114 };
@@ -590,7 +601,7 @@ export function nearestIntersection(x: number, z: number): [number, number] {
 }
 
 // ---- Drivable parked cars (original model names, Harborfall range) ----
-export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane"; owned: boolean; }
+export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto"; owned: boolean; }
 export const CAR_SPAWNS: CarSpawn[] = [
   { id: 0, x: 3, z: 106, heading: Math.PI, color: "#1f7a72", model: "Sable Sprinter", kind: "sedan", owned: true },   // Rayan's own car at the pier
   { id: 1, x: -17, z: -40, heading: Math.PI / 2, color: "#d99a3d", model: "Harbor Hauler", kind: "pickup", owned: false },
@@ -630,4 +641,8 @@ export const CAR_SPAWNS: CarSpawn[] = [
   { id: 30, x: 92, z: 196, heading: Math.PI, color: "#b4622d", model: "Harbour Fisher 180", kind: "skiff", owned: false }, // Coral marina skiff
   // ---- Phase 15: the farm pickup on the Sable Downs west dirt road ----
   { id: 31, x: -104, z: -78, heading: Math.PI / 2, color: "#5c6650", model: "Harbor Hauler", kind: "pickup", owned: false }, // farm pickup
+  // Phase 18: the farm's Bronto Hauler, parked by the barn — the
+  // countryside's own truck (also on the dealer list). NOT the Farm
+  // Work vehicle: that job is bound to the id-31 pickup's bed.
+  { id: 32, x: -100, z: -86, heading: 0.4, color: "#5c6650", model: "Bronto Hauler", kind: "bronto", owned: false },
 ];

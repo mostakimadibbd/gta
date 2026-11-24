@@ -53,12 +53,17 @@ export interface JobStats {
   bestFish: { name: string; cm: number } | null;
   // ---- Phase 16: farm work (crop-crate loads to Harbour Wraps) ----
   farmLoads: number; farmEarned: number;
+  // ---- Phase 18: drift scoring (game/drift.ts) ----
+  bestDrift: number;    // best single banked chain, points
+  driftBanked: number;  // lifetime banked points
+  driftEarned: number;  // lifetime cash paid out by banking
 }
 export const jobStats: JobStats = {
   taxiFares: 0, taxiEarned: 0, taxiBestTip: 0, deliveries: 0, deliveryEarned: 0,
   racesRun: 0, racesWon: 0, bestTimes: {},
   towDeliveries: 0, towEarned: 0, fishCaught: 0, fishEarned: 0, bestFish: null,
   farmLoads: 0, farmEarned: 0,
+  bestDrift: 0, driftBanked: 0, driftEarned: 0,
 };
 try {
   const raw = localStorage.getItem("harborfall-jobstats");
@@ -78,6 +83,10 @@ export interface RaceDef {
   purse?: number;   // boat: win purse · air: beat-par purse
   par?: number;     // air: seconds to beat for the purse
   cpAlt?: number[]; // air: target altitude per checkpoint (last = land, < 4)
+  /** Phase 17: a Street Challenge world-event race — one rival, one
+   * destination, the $200 stake already taken at accept time; the
+   * finish block pays winner-takes-the-pot ($400) or nothing. */
+  challenge?: boolean;
 }
 export const RACES: RaceDef[] = [
   { id: "docks", name: "Docks Sprint", blurb: "Harbour straights and one hard right at the Yards.",
@@ -111,6 +120,12 @@ export interface RaceOpp { x: number; z: number; heading: number; cp: number; sp
 export interface RaceState {
   def: RaceDef; phase: "countdown" | "run"; goAt: number; startedAt: number;
   cp: number; bet: number; opps: RaceOpp[]; playerDoneAt: number;
+  /** Phase 18: this start was armed from the Sable Cup card (game/cup.ts)
+   * — the finish position counts toward the championship. Street
+   * Challenge event races can never carry it (their def is seeded by
+   * Phase17 directly, never via the start prompts the arm hooks into,
+   * and their single-checkpoint pot format isn't a series round). */
+  cup?: boolean;
 }
 
 // ---------------------------------------------------------------- state
@@ -128,6 +143,11 @@ export const J = {
   // races
   race: null as RaceState | null,
   bets: true,                     // $100 side bet, toggled in the Jobs app
+  // ---- Phase 18: Sable Cup arm — set by the Cup card in Phone → Jobs;
+  // the next start of THAT race (street prompt or Bay Circuit ring)
+  // counts toward the championship. Consumed by whichever race starts
+  // first (a non-Cup start simply discards it). ----
+  cupArm: "",                     // race id, or "" when unarmed
   // ---- Phase 8: tow shift (Lina's wrecker work) ----
   wantTow: false,                 // set by the phone Jobs app
   towPhase: "idle" as "idle" | "pickup" | "deliver",
