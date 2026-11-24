@@ -20,16 +20,33 @@ export const APARTMENT = { name: "Coral Shores Apartment", price: 5000, x: 36, z
  * income; it adds a sleep/respawn home in the north of the city. */
 export const LOFT = { name: "Northgate Loft", price: 9000, x: -68, z: -195.2 };
 
+// ---- Phase 15: business staffing grows up — a named ROSTER. Each
+// business can employ up to MAX_STAFF_PER_BIZ people from the pool;
+// every person has their own takings bonus and wage (one-line trait
+// shown in the Bank app BEFORE hiring, per the Phase 9 rule that the
+// net is visible before you commit). Wages + bonuses land in the
+// same guarded daily tick as the base income. ----
+export interface StaffDef { name: string; trait: string; bonus: number; wage: number; }
+export const STAFF_ROSTER: StaffDef[] = [
+  { name: "Tom Beck", trait: "The original hand — dependable, no surprises", bonus: 0.5, wage: 35 },
+  { name: "Marta Reyes", trait: "Ex-hotel manager — squeezes more from every shift", bonus: 0.55, wage: 38 },
+  { name: "Dev Okafor", trait: "Part-timer — smaller bonus, cheapest wage on the roster", bonus: 0.4, wage: 25 },
+  { name: "Sana Iqbal", trait: "Harbour legend — the best takings in town, and she knows it", bonus: 0.75, wage: 55 },
+];
+export const MAX_STAFF_PER_BIZ = 2;
+export const staffDef = (name: string) => STAFF_ROSTER.find((s) => s.name === name);
+
 export const ECO = {
   owned: [] as string[],
   ownsApartment: false,
   ownsLoft: false, // Phase 14
   daySerial: 0,
   lastPaidSerial: -1,
-  // ---- Phase 9: business staffing (management-lite). A staffed
-  // business earns +50% and pays a $35/day wage — both land in the
-  // same guarded daily tick.
+  // Phase 9 shape (one anonymous hand per business) — kept only as
+  // the migration source for staffBy below.
   staff: [] as string[],
+  // Phase 15: business id → up to 2 roster names employed there.
+  staffBy: {} as Record<string, string[]>,
 };
 try {
   const raw = localStorage.getItem("harborfall-eco");
@@ -41,6 +58,15 @@ try {
     ECO.daySerial = e.daySerial ?? 0;
     ECO.lastPaidSerial = e.lastPaidSerial ?? -1;
     ECO.staff = Array.isArray(e.staff) ? e.staff : [];
+    if (e.staffBy && typeof e.staffBy === "object") {
+      for (const [biz, names] of Object.entries(e.staffBy)) {
+        if (Array.isArray(names)) ECO.staffBy[biz] = names.filter((n) => typeof n === "string" && staffDef(n)).slice(0, MAX_STAFF_PER_BIZ);
+      }
+    }
+    // migration: a Phase 9–14 anonymous hand becomes Tom Beck (his
+    // numbers ARE the old +50%/−$35), so no existing save's daily
+    // income changes by a cent on upgrade.
+    for (const biz of ECO.staff) if (!ECO.staffBy[biz]) ECO.staffBy[biz] = ["Tom Beck"];
   }
 } catch { /* fresh economy */ }
 export function persistEco() {
@@ -50,12 +76,18 @@ export function persistEco() {
     localStorage.setItem("harborfall-loft", ECO.ownsLoft ? "1" : "0");
   } catch { /* ignore */ }
 }
-export const STAFF_WAGE = 35; // $/day per staffed business
-export const STAFF_BONUS = 0.5; // +50% income while staffed
-export const dailyIncomeTotal = () => BUSINESSES.filter((b) => ECO.owned.includes(b.id)).reduce((a, b) => {
-  const staffed = ECO.staff.includes(b.id);
-  return a + b.income + (staffed ? Math.round(b.income * STAFF_BONUS) : 0) - (staffed ? STAFF_WAGE : 0);
-}, 0);
+export const STAFF_WAGE = 35; // legacy Phase 9 numbers — Tom Beck's line in the roster keeps them
+export const STAFF_BONUS = 0.5;
+/** Per-business daily net with its current roster (Bank app display
+ * + the daily tick use this one function, so what's shown is what's
+ * paid). */
+export function businessDailyNet(b: BusinessDef): number {
+  const crew = ECO.staffBy[b.id] ?? [];
+  let net = b.income;
+  for (const name of crew) { const s = staffDef(name); if (s) net += Math.round(b.income * s.bonus) - s.wage; }
+  return net;
+}
+export const dailyIncomeTotal = () => BUSINESSES.filter((b) => ECO.owned.includes(b.id)).reduce((a, b) => a + businessDailyNet(b), 0);
 
 /** The one daily tick: pay business income once per game day. */
 export function advanceDay() {

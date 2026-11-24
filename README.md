@@ -124,7 +124,8 @@ corrupt harbour boss's debt ledger.
   barber + **Port Ink** tattoos; a post-story mission pack, **After
   the Fall** (three jobs, one real choice); the **SableWeb** phone
   browser (five pages of live game data) and a persistent photo
-  **Gallery**; business **staffing** (+50% takings, $35/day wage);
+  **Gallery**; business **staffing** (Phase 15: a named 4-person
+  roster, up to 2 per business, each with their own bonus and wage);
   shop hours enforced everywhere; and day-scoped persistence for
   wrecks, broken props and smashed glass. The 500-feature ledger
   (docs/BLUEPRINT.md §15) now stands at **82 ✅ · 9 🟡 · 2 ⬜** of 93
@@ -231,7 +232,7 @@ saved in `localStorage` and applies identically on web and desktop.
 | E at bottle crates (Club Solace / pier) | Restock throwing bottles (+6) |
 | E at the pier / island dock | Fish — hold E to charge, release to cast, tap E on the bite, hold E to reel (keep the marker in the green) |
 | E at Lantern Park gym stations | Workout session ($10, once a day each) — tap E in the moving zone ×8 |
-| E at Thread & Tide (Market Row) | Tap: browse outfits · hold: buy (worn until you change character/variant) |
+| E at Thread & Tide (Market Row) | Enter the shop (07:00–23:00) · inside at the counter — tap: browse outfits · hold: buy (worn until you change character/variant) |
 | Phone → Jobs → Tow shift | Tow stranded cars with the wrecker at Lina's — reverse the hook in, hold still to hitch, deliver to the yard ($150) |
 | Phone → SableBank → Invest | Buy/sell three local stocks in $100 lots |
 | Click / J (hold for SMG) | Punch / fire weapon |
@@ -262,9 +263,15 @@ screen to orbit the camera. The side panel collapses behind the ☰ button.
 
 ### Graphics quality (Phase 5, smoothness Phase 8)
 Three tiers — **Low / Medium / High** — auto-detected on first run
-(touch + small screen + low memory start lower) and self-tuning: a
-2.5-second FPS sample after you start playing steps the tier down once
-if the device struggles. Phase 8 adds **dynamic resolution** (the
+and self-tuning: a 2.5-second FPS sample after you start playing
+steps the tier down once if the device struggles. Phase 15 hardens
+the detection: High is only auto-assigned when the browser *reports*
+strong hardware (≥8 GB device memory and ≥8 cores, fine pointer) —
+browsers that don't report memory (Safari, Firefox) start at Medium
+instead of being assumed strong. Raising the tier to High yourself
+is sample-checked for 2 s; if the machine sustains under 30 FPS it
+steps back to Medium with a toast. The dynamic-resolution ladder
+also gained a 1.0 floor, so sustained load sheds resolution first. Phase 8 adds **dynamic resolution** (the
 render resolution walks a ladder toward your tier's cap to hold frame
 rate) and a **continuous adaptive tier** (sustained low FPS drops one
 tier with a toast) — picking a tier yourself turns the auto-drop off

@@ -18,6 +18,9 @@ export interface MissionDef {
    * the ALT intro/outro/payout (Ch.5 hard-codes "elias" via M.choice;
    * pack missions store theirs in M.packChoice — see altActive()). */
   altFlag?: string;
+  /** Phase 15: the mutually-exclusive side pair — starting one sets
+   * M.pairChoice and locks the other for this playthrough. */
+  pair?: "informant" | "dockcrew";
 }
 const L = (who: string, text: string): DialogueLine => ({ who, text });
 
@@ -293,6 +296,44 @@ export const SIDE_MISSIONS: MissionDef[] = [
       L("Old Elias", "Same time every year. The harbour provides, Kade. Now — so do you."),
     ],
     objectiveText: "Run the regatta lights BY BOAT: pier → west channel → island dock → home", kind: "checkpoints", targets: [[4, 140], [-40, 152], [-64, 168], [12, 124]], timeLimit: 300, payout: 700 },
+];
+
+// ---- Phase 15: THE MERIDIAN PAIR — one shipment, two loyalties.
+// Offered by phone after Chapter 3 (Voss or Elias — whoever you call
+// FIRST gets your answer): help Voss's informant play out the sting,
+// OR warn Elias's dock crew so the shipment "never arrives". Starting
+// one sets M.pairChoice (persisted) and locks the other for this
+// playthrough; each pays differently and moves your Docks reputation
+// the opposite way (see GameSystems' completion branch). ----
+export const PAIR_MISSIONS: MissionDef[] = [
+  { id: "pairA", pair: "informant", title: "The Meridian Pair I — The Informant", giver: "Detective Mara Voss",
+    intro: [
+      L("Det. Mara Voss", "Tonight, Kade. A Solano shipment — the Meridian run — lands at the East Yards crane office, and my informant inside the crew is ready to mark it for seizure."),
+      L("Rayan Kade", "And Elias's people are crewing that dock. If I help you, I'm informing on the harbour's own."),
+      L("Det. Mara Voss", "You are. There's no clean version of this one, so I won't dress it up. Meet the informant at the crane office, confirm the mark, and the seizure is clean — no arrests on the dock floor. The crew walks, Solano pays."),
+      L("Rayan Kade", "The crew walks… but they'll know a harbour mouth talked. And that it was standing next to me."),
+      L("Det. Mara Voss", "Then decide with your eyes open. Call Elias instead and this conversation never happened — but neither does the seizure."),
+    ],
+    outro: [
+      L("Det. Mara Voss", "Marked and seized, Kade. Clean as surgery. Solano's lawyers are already screaming about paperwork they can't find."),
+      L("Rayan Kade", "And the docks will remember my face next to yours, Detective. That bill comes later."),
+      L("Det. Mara Voss", "Then spend the money well. You did the harbour a service it won't thank you for."),
+    ],
+    objectiveText: "Meet Voss's informant at the East Yards crane office and confirm the shipment mark", kind: "goto", targets: [[60, 100]], timeLimit: 240, payout: 800 },
+  { id: "pairB", pair: "dockcrew", title: "The Meridian Pair II — The Warning", giver: "Old Elias",
+    intro: [
+      L("Old Elias", "Sit, lad, and listen like your life rents the chair. The Meridian shipment lands tonight at the East Yards — and Voss has an informant INSIDE my crew. There's a sting being built on my dock."),
+      L("Rayan Kade", "If I warn your crew, I'm burning a police operation. Voss will know a harbour mouth talked."),
+      L("Old Elias", "Aye, she will. And my boys keep their jobs, their freedom, and their dinners at home. Get to the crane office before her people move — tell the crew chief the mark is blown and the shipment scatters to the wind."),
+      L("Rayan Kade", "And Solano?"),
+      L("Old Elias", "Solano loses a shipment and never learns why. The harbour protects its own, Kade. It always has. Decide — call Voss and this stays a story I once told you."),
+    ],
+    outro: [
+      L("Old Elias", "Scattered like gulls, every crate of it. By the time her marked vans rolled in, the East Yards were sweeping empty concrete."),
+      L("Rayan Kade", "Voss will work it out eventually, old man."),
+      L("Old Elias", "Eventually is a harbour word for never, when the docks close ranks. Nobody at these tables saw anything tonight — and nobody ever will. That's worth more than money, and you'll feel it every time you walk this pier."),
+    ],
+    objectiveText: "Reach the East Yards crane office and warn the dock crew before the sting lands", kind: "goto", targets: [[60, 100]], timeLimit: 240, payout: 550 },
 ];
 
 /** Next unplayed part of a side arc, or null when the arc is finished. */

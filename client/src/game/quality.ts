@@ -12,7 +12,7 @@
 //            softer shadow radius, full water shader. Phase 11: + the
 //            ray-traced-STYLE reflection stack (screen-space reflections
 //            + planar-reflection water) when the player override allows.
-import { G, persistSettings } from "./store";
+import { G, persistSettings, toast } from "./store";
 import { setTextureAnisotropy } from "../textures";
 
 export type QualityTier = "low" | "medium" | "high";
@@ -25,11 +25,20 @@ export function detectTier(): QualityTier {
   try {
     const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     const small = Math.min(window.innerWidth, window.innerHeight) < 520;
-    const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
-    const cores = navigator.hardwareConcurrency ?? 8;
-    if ((coarse && small) || mem <= 2) return "low";
-    if (coarse || small || mem <= 4 || cores <= 4) return "medium";
-    return "high";
+    const nav = navigator as Navigator & { deviceMemory?: number };
+    // Phase 15 playability: deviceMemory is ABSENT on Safari/Firefox —
+    // the old `?? 8` default handed HIGH to every desktop that didn't
+    // report it, including modest laptops (the "not properly playable"
+    // report). High now requires POSITIVE strong signals: a reported
+    // deviceMemory ≥ 8 AND ≥ 8 cores AND a fine pointer. Anything
+    // unreported or weaker starts at Medium (the governor + the
+    // one-time FPS sample still protect it from there, and the player
+    // can raise it manually — the raise is sample-checked, below).
+    const mem = nav.deviceMemory;
+    const cores = navigator.hardwareConcurrency ?? 0;
+    if ((coarse && small) || (mem !== undefined && mem <= 2)) return "low";
+    if (!coarse && mem !== undefined && mem >= 8 && cores >= 8) return "high";
+    return "medium";
   } catch { return "medium"; }
 }
 
@@ -55,21 +64,43 @@ export function setTier(t: QualityTier) {
 // ---- one-time FPS sample: 2.5 s after the game starts; can step DOWN once,
 // never up, never twice in a session -------------------------------------
 let sampled = false;
-export function runFpsSampleOnce() {
-  if (sampled) return;
-  sampled = true;
+function sampleFps(ms: number, onDone: (fps: number) => void) {
   let frames = 0;
   const t0 = performance.now();
   const loop = () => {
     frames++;
     const el = performance.now() - t0;
-    if (el < 2500) { requestAnimationFrame(loop); return; }
-    const fps = frames / (el / 1000);
+    if (el < ms) { requestAnimationFrame(loop); return; }
+    onDone(frames / (el / 1000));
+  };
+  requestAnimationFrame(loop);
+}
+export function runFpsSampleOnce() {
+  if (sampled) return;
+  sampled = true;
+  sampleFps(2500, (fps) => {
     const cur = tier();
     if (fps < 27 && cur !== "low") setTier(cur === "high" ? "medium" : "low");
     else if (fps < 42 && cur === "high") setTier("medium");
-  };
-  requestAnimationFrame(loop);
+  });
+}
+
+// ---- Phase 15: when the player MANUALLY raises the tier to High, run
+// one lightweight 2 s sample (once per raise); if High sustains under
+// 30 FPS it steps back to Medium with the standard smoothness toast.
+// The PerfGovernor's DPR lever keeps working either way — this only
+// catches machines where even the DPR floor can't save High. --------
+let highSampleBusy = false;
+export function sampleIfHighRaised() {
+  if (highSampleBusy || tier() !== "high") return;
+  highSampleBusy = true;
+  sampleFps(2000, (fps) => {
+    highSampleBusy = false;
+    if (tier() === "high" && fps < 30) {
+      setTier("medium");
+      toast("Graphics adjusted for smoothness — now MEDIUM. Change anytime in Settings.");
+    }
+  });
 }
 
 // ---- gates (single source of truth) --------------------------------------

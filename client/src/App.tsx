@@ -17,7 +17,8 @@ import Tram from "./components/Tram";
 import { TRAM, TRAM_MAP_LINE, TRAM_STOPS } from "./game/tram";
 import { currentSeason } from "./game/season";
 import { M, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission, altActive } from "./game/missionState";
-import { STORY_MISSIONS, SIDE_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
+import { STORY_MISSIONS, SIDE_MISSIONS, PAIR_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
+import { pushNews } from "./game/feed";
 import Phase7Systems from "./components/Phase7";
 import Phase8Systems from "./components/Phase8";
 import Phase9Systems from "./components/Phase9";
@@ -31,7 +32,7 @@ import { isBind, BIND_ACTIONS, binds, setBind, resetBinds, codeLabel, type BindA
 import { activeSlot, switchSlot, slotSummary, SLOT_COUNT } from "./game/saveslots";
 import { applyCarReflTier } from "./components/CarBody";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
-import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints } from "./world";
+import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints, FARM_ROADS } from "./world";
 import { skyEnvTexture, setNormalsEnabled } from "./textures";
 import { gates, initQuality, runFpsSampleOnce, type QualityTier } from "./game/quality";
 import Weather from "./components/Weather";
@@ -753,10 +754,32 @@ export default function App() {
     return () => { multiplayerRef.current?.disconnect(); multiplayerRef.current = null; };
   }, [connectToRoom, serverUrl]);
   useEffect(() => { let m = true; void loadPhysicsEngine().then((e) => { if (m) { physicsRef.current = e; setPhysicsSource(e.source); setPhysicsReady(true); } }); return () => { m = false; }; }, []);
-  // Phase 6 first-load order: on Low/Medium the CC0 photo textures decode
-  // AFTER spawn (they're shared texture objects — they sharpen in place);
-  // High preloads them during the loading screen.
-  useEffect(() => { if (G.settings.quality !== "high") setCc0Deferred(true); }, []);
+  // Phase 6 first-load order: CC0 photo textures decode AFTER spawn
+  // (they're shared texture objects — they sharpen in place).
+  // Phase 15 playability: this now applies on EVERY tier — High used
+  // to preload during the loading screen, which put the full CC0
+  // decode (the 1.27 MB chunk + image decode) squarely on the path to
+  // the first playable frame. beginPlay releases the queue on idle.
+  useEffect(() => { setCc0Deferred(true); }, []);
+
+  // ---- Phase 15 survivability: global error net. A runtime error in
+  // a system the React boundaries can't see (event handlers, timers,
+  // async loads) used to surface as a silently frozen or black canvas.
+  // Now: log it, and tell the player ONCE (throttled) in plain words
+  // that the game kept running. The Phase 14 ComposerBoundary still
+  // owns composer/render failures specifically. ----
+  useEffect(() => {
+    let lastShown = -60;
+    const onErr = (e: ErrorEvent | PromiseRejectionEvent) => {
+      // eslint-disable-next-line no-console
+      console.error("[Harborfall] runtime error (game kept running):", e);
+      const now = performance.now() / 1000;
+      if (now - lastShown > 30) { lastShown = now; gameToast("Something glitched — the game kept running."); }
+    };
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onErr);
+    return () => { window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onErr); };
+  }, []);
 
   // network state sender
   useEffect(() => {
@@ -826,6 +849,18 @@ export default function App() {
       for (const c of G.cars) if (!c.storedAway) dot(c.state.x, c.state.z, mm.car, 2.4);
       for (const c of G.traffic) dot(c.x, c.z, mm.car, 2);
       for (const c of G.cops) if (c.active) dot(c.x, c.z, mm.police, 3.4);
+      // Phase 15: Sable Downs farm roads (dirt brown) + the live
+      // dispatch incident blip — a white-ringed red cross, a colour
+      // no other map element uses, so an active call reads instantly
+      g.fillStyle = "#7d5c3d";
+      for (const r of FARM_ROADS) g.fillRect(mx(r.x - r.w / 2), mz(r.z - r.d / 2), r.w * S, r.d * S);
+      if (G.incident) {
+        const ix = mx(G.incident.x), iz = mz(G.incident.z), ir = Math.max(4, 7 * S);
+        g.strokeStyle = "#ffffff"; g.lineWidth = 2;
+        g.beginPath(); g.arc(ix, iz, ir + 2, 0, 7); g.stroke();
+        g.strokeStyle = "#e23232"; g.lineWidth = Math.max(2, 3 * S);
+        g.beginPath(); g.moveTo(ix - ir, iz); g.lineTo(ix + ir, iz); g.moveTo(ix, iz - ir); g.lineTo(ix, iz + ir); g.stroke();
+      }
       if (G.objective && M.phase === "play") dot(G.objective.x, G.objective.z, mm.marker, 4);
       // Phase 7: job / race target dot + the GPS route on the big map
       const jt = jobTarget();
@@ -1066,7 +1101,12 @@ export default function App() {
   const beginPlay = () => {
     const story = storyModeRef.current;
     sfx.playStart(); stopMenuTheme(); setStarted(true); startedRef.current = true; setCharOpen(false); savedPosRef.current = null;
-    setCc0Deferred(false); // Low/Medium: CC0 textures start decoding now
+    // Phase 15: CC0 textures release on IDLE after spawn-in (never on
+    // the path to the first playable frame, any tier) — the shared
+    // texture objects sharpen in place when the decode lands.
+    const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    if (ric) ric(() => setCc0Deferred(false), { timeout: 2500 });
+    else window.setTimeout(() => setCc0Deferred(false), 1200);
     runFpsSampleOnce(); // Phase 5: one 2.5 s sample may step the tier down once
     // spawn-in sweep: start high over the spawn point, ease down to Rayan
     const sx = G.playerPos.x, sz = G.playerPos.z;
@@ -1418,6 +1458,19 @@ export default function App() {
         onChangeCharacter={() => { setPhoneOpen(false); G.requestCharSelect = true; }}
         onContact={(name, line, hint) => {
           setPhoneOpen(false);
+          // Phase 15: THE MERIDIAN PAIR — after Chapter 3, the FIRST of
+          // Voss / Elias you call about the shipment gets your answer:
+          // starting their branch sets M.pairChoice (persisted) and
+          // locks the other branch for this playthrough.
+          if (started && !M.active && !dialogueRef.current && M.storyIndex >= 3 && !M.pairChoice) {
+            const pairDef = name === "Det. Mara Voss" ? PAIR_MISSIONS[0] : name === "Old Elias" ? PAIR_MISSIONS[1] : null;
+            if (pairDef) {
+              M.pairChoice = pairDef.pair!; persistMission();
+              pushNews("Harbour Wire: quiet phones on the docks", "Two harbour names made a call tonight about the Meridian shipment — and one of them stopped returning calls right after. The docks notice these things.");
+              startMission(pairDef);
+              return;
+            }
+          }
           // Phase 5 Step 7a: Lina (after Ch.2) and Voss (after Ch.4) offer
           // their side-story arcs by phone — calling them starts the next
           // unplayed part instead of the ambient chat.

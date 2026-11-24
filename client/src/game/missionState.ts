@@ -17,6 +17,8 @@ export const M = {
   choice: "" as "" | "voss" | "elias",
   // ---- Phase 9: the post-story pack's own branching choice ----
   packChoice: "" as string,
+  // ---- Phase 15: mutually-exclusive side pair lock (see load below)
+  pairChoice: "" as "" | "informant" | "dockcrew",
   // ---- Phase 7: checkpoints, replay, per-mission stats, heist prep ----
   checkpointStep: 0, // furthest step reached this attempt (retry point)
   lastFailed: null as null | { def: MissionDef; step: number }, // R = retry from checkpoint
@@ -24,22 +26,28 @@ export const M = {
   heistClean: false, // heist prep finished unseen → strongroom bonus
   stats: {} as Record<string, { attempts: number; best: number }>, // best = fastest seconds
 };
-try {
-  M.storyIndex = Math.min(6, Number(localStorage.getItem("harborfall-story") ?? 0) || 0);
-  M.storyDone = localStorage.getItem("harborfall-story-done") === "1";
+// Phase 15 playability: per-key guards, same reasoning as store.ts —
+// one corrupt JSON (side/mstats were parsed mid-block) used to skip
+// the cash + story loads below it, booting the player "broke at
+// Chapter 1" despite a healthy save sitting in storage.
+const loadKey = (fn: () => void) => { try { fn(); } catch { /* one bad key never blocks the rest */ } };
+loadKey(() => { M.storyIndex = Math.min(6, Number(localStorage.getItem("harborfall-story") ?? 0) || 0); });
+loadKey(() => { M.storyDone = localStorage.getItem("harborfall-story-done") === "1"; });
+loadKey(() => {
   const sideRaw = localStorage.getItem("harborfall-side");
   if (sideRaw) { const s = JSON.parse(sideRaw) as Partial<typeof M.side>; M.side.lina = Math.min(3, s.lina ?? 0); M.side.voss = Math.min(3, s.voss ?? 0); M.side.heist = Math.min(2, s.heist ?? 0); M.side.after = Math.min(3, s.after ?? 0); }
-  M.packChoice = localStorage.getItem("harborfall-packchoice") ?? "";
-  M.heistClean = localStorage.getItem("harborfall-heistclean") === "1";
-  const mstats = localStorage.getItem("harborfall-mstats");
-  if (mstats) M.stats = JSON.parse(mstats) as typeof M.stats;
-  const ch = localStorage.getItem("harborfall-choice");
-  if (ch === "voss" || ch === "elias") M.choice = ch;
-  const cash = Number(localStorage.getItem("harborfall-cash") ?? NaN);
-  if (Number.isFinite(cash)) G.cash = cash;
-  G.lifetimeEarned = Number(localStorage.getItem("harborfall-earned") ?? 0) || 0;
-  G.finesPaid = Number(localStorage.getItem("harborfall-fines") ?? 0) || 0;
-} catch { /* storage unavailable */ }
+});
+loadKey(() => { M.packChoice = localStorage.getItem("harborfall-packchoice") ?? ""; });
+loadKey(() => { M.heistClean = localStorage.getItem("harborfall-heistclean") === "1"; });
+loadKey(() => { const mstats = localStorage.getItem("harborfall-mstats"); if (mstats) M.stats = JSON.parse(mstats) as typeof M.stats; });
+loadKey(() => { const ch = localStorage.getItem("harborfall-choice"); if (ch === "voss" || ch === "elias") M.choice = ch; });
+loadKey(() => { const cash = Number(localStorage.getItem("harborfall-cash") ?? NaN); if (Number.isFinite(cash)) G.cash = cash; });
+loadKey(() => { G.lifetimeEarned = Number(localStorage.getItem("harborfall-earned") ?? 0) || 0; });
+loadKey(() => { G.finesPaid = Number(localStorage.getItem("harborfall-fines") ?? 0) || 0; });
+// ---- Phase 15: the mutually-exclusive side pair (post-Ch.3) — which
+// branch the player took ("informant" | "dockcrew"), persisted so the
+// other mission stays locked for this playthrough (per save slot) ----
+loadKey(() => { const p = localStorage.getItem("harborfall-pairchoice"); if (p === "informant" || p === "dockcrew") M.pairChoice = p; });
 export function persist() {
   try {
     localStorage.setItem("harborfall-story", String(M.storyIndex));
@@ -52,6 +60,7 @@ export function persist() {
     localStorage.setItem("harborfall-mstats", JSON.stringify(M.stats));
     if (M.choice) localStorage.setItem("harborfall-choice", M.choice);
     if (M.packChoice) localStorage.setItem("harborfall-packchoice", M.packChoice);
+    if (M.pairChoice) localStorage.setItem("harborfall-pairchoice", M.pairChoice);
   } catch { /* ignore */ }
 }
 /** Phase 9: is this mission's ALT branch active? Ch.5 keys off M.choice;

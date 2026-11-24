@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { buildings, trees, props, lamps, palms, houses, ROAD_COORDS, ROAD_WIDTH, WATER_Z, MANSION, FUEL_STATIONS, OVERLOOK, BRIDGE, CORAL_ROAD_X, CORAL_ROAD_Z, REGISTERS, PAWN_SHOP, groundYAt, NORTH_ROAD_X, NORTH_ROAD_Z, NORTH_MANSIONS, DEALER_CARS, VENDOR, HOSPITAL_DOOR, ISLAND } from "../world";
+import { buildings, trees, props, lamps, palms, houses, ROAD_COORDS, ROAD_WIDTH, WATER_Z, MANSION, FUEL_STATIONS, OVERLOOK, BRIDGE, CORAL_ROAD_X, CORAL_ROAD_Z, REGISTERS, PAWN_SHOP, groundYAt, NORTH_ROAD_X, NORTH_ROAD_Z, NORTH_MANSIONS, DEALER_CARS, VENDOR, HOSPITAL_DOOR, ISLAND, FARM_ROADS, FARM } from "../world";
 import { G } from "../game/store";
 import type { GameTheme } from "../themes";
 import {
@@ -673,6 +673,19 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
       benches: mk(new THREE.BoxGeometry(1.8, 0.15, 0.5), "#6b4a2f", vis.filter((p) => p.kind === "bench").map((p) => ({ x: p.x, z: p.z, rot: p.rot, y: 0.35 }))),
       hydrants: mk(new THREE.BoxGeometry(0.35, 0.8, 0.35), "#dc2626", vis.filter((p) => p.kind === "hydrant").map((p) => ({ x: p.x, z: p.z, rot: p.rot, y: 0.4 }))),
     };
+  }, []);
+  // Phase 15: Sable Downs crop rows — one instanced mesh of tufts
+  // across the farm field (6 rows × 9), built once like propSet.
+  const cropSet = useMemo(() => {
+    const items: Array<{ x: number; z: number }> = [];
+    for (let r = 0; r < 6; r++) for (let c = 0; c < 9; c++) {
+      items.push({ x: FARM.field.x - FARM.field.w / 2 + 1 + c * ((FARM.field.w - 2) / 8), z: FARM.field.z - FARM.field.d / 2 + 0.8 + r * ((FARM.field.d - 1.6) / 5) });
+    }
+    const im = new THREE.InstancedMesh(new THREE.ConeGeometry(0.32, 0.85, 6), new THREE.MeshStandardMaterial({ color: "#5d7d3a", roughness: 1, flatShading: true }), items.length);
+    const m = new THREE.Matrix4();
+    items.forEach((it, i) => { m.makeTranslation(it.x, 0.42, it.z); im.setMatrixAt(i, m); });
+    im.instanceMatrix.needsUpdate = true; im.frustumCulled = false;
+    return im;
   }, []);
   const lampGlowMat = useRef<THREE.PointsMaterial>(null);
   const lampGlowGeo = useMemo(() => {
@@ -1584,6 +1597,45 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
           <mesh position={[0, 1.1, 0]} castShadow><boxGeometry args={[0.14, 2.2, 0.14]} /><meshStandardMaterial color="#5d4a38" roughness={0.9} /></mesh>
           <mesh position={[0, 2, 0.1]}><planeGeometry args={[3.4, 0.85]} /><meshStandardMaterial map={signSableDowns} side={THREE.DoubleSide} roughness={0.85} /></mesh>
         </group>
+      </group>
+
+      {/* Phase 15: SABLE DOWNS FARM NETWORK — three dirt roads off the
+          ring (world.ts FARM_ROADS; surfaceKindAt gives them dirt
+          grip), a barn + farmhouse (blockers in STATIC_BLOCKERS), the
+          crop field and the farm pickup's home corner */}
+      <group>
+        {FARM_ROADS.map((r, i) => (
+          <mesh key={i} position={[r.x, 0.04, r.z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <planeGeometry args={[r.w, r.d]} /><meshStandardMaterial color="#6e5136" roughness={1} />
+          </mesh>
+        ))}
+        {/* the barn: red walls, gambrel-ish cap, open dark doorway */}
+        <group position={[FARM.barn.x, 0, FARM.barn.z]}>
+          <mesh position={[0, 1.6, 0]} castShadow><boxGeometry args={[8.4, 3.2, 6.4]} /><meshStandardMaterial color="#8a3324" roughness={0.9} /></mesh>
+          <mesh position={[0, 3.6, 0]} rotation={[0, 0, 0]} castShadow><boxGeometry args={[9, 0.9, 7]} /><meshStandardMaterial color="#5d4a38" roughness={0.95} /></mesh>
+          <mesh position={[0, 1.2, 3.22]}><boxGeometry args={[2.6, 2.4, 0.06]} /><meshStandardMaterial color="#2a1c12" roughness={1} /></mesh>
+          <mesh position={[0, 2.6, 3.22]}><boxGeometry args={[1.2, 0.9, 0.06]} /><meshStandardMaterial color="#e8e2d2" roughness={0.8} /></mesh>
+        </group>
+        {/* the farmhouse: cream walls, porch, warm windows */}
+        <group position={[FARM.house.x, 0, FARM.house.z]}>
+          <mesh position={[0, 1.4, 0]} castShadow><boxGeometry args={[7.2, 2.8, 6]} /><meshStandardMaterial color="#e3d9c2" roughness={0.9} /></mesh>
+          <mesh position={[0, 3.1, 0]} castShadow><boxGeometry args={[7.8, 0.7, 6.6]} /><meshStandardMaterial color="#4a3a2c" roughness={0.95} /></mesh>
+          <mesh position={[0, 0.5, 3.3]}><boxGeometry args={[6.4, 0.18, 1.4]} /><meshStandardMaterial color="#6d4c33" roughness={0.9} /></mesh>
+          {[-2, 2].map((x, i) => (
+            <mesh key={i} position={[x, 1.6, 3.02]}><boxGeometry args={[1.1, 1, 0.05]} /><meshStandardMaterial color="#ffd9a0" emissive="#ffca7a" emissiveIntensity={0.5} /></mesh>
+          ))}
+        </group>
+        {/* crop field: tilled rows + the instanced tufts */}
+        <mesh position={[FARM.field.x, 0.03, FARM.field.z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <planeGeometry args={[FARM.field.w, FARM.field.d]} /><meshStandardMaterial color="#54402a" roughness={1} />
+        </mesh>
+        <primitive object={cropSet} />
+        {/* hay bales by the barn door */}
+        {[[-101, -99], [-112, -98.5]].map(([x, z], i) => (
+          <mesh key={i} position={[x, 0.8, z]} rotation={[Math.PI / 2, 0, i * 0.7]} castShadow>
+            <cylinderGeometry args={[0.8, 0.8, 1.25, 10]} /><meshStandardMaterial color="#d9b45c" roughness={1} flatShading />
+          </mesh>
+        ))}
       </group>
 
       {/* ======== AIRPORT (east edge): runway, parked airliner, tower, terminal.

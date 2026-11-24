@@ -1033,3 +1033,19 @@ Initial-load JS: 789.8 kB gzip (index 414.8 + three 178.2 +
 react-three 185.8 + css/html 11) vs Phase 13's 770.2 — the +2.5% is
 the phase's own code (ragdoll, destruct, saveslots, keybinds, races,
 two rooms); lazy chunks (cc0Data, Phone, panels) stay lazy.
+
+## Phase 15 — playability pass + closable tasks (2026-11-24)
+
+Visual/world additions, all in the existing teal/amber register:
+
+| Addition | Where | Notes |
+|---|---|---|
+| Thread & Tide walk-in interior | pocket 11 (cx 390) | cream walls, pale boards, two racks wearing the actual CLOTHING_ITEMS colours, counter + mirror, changing-room curtain; the Market Row street rack remains as signage |
+| Sable Downs farm network | NW corner, off the dirt ring | 3 dirt roads (drawn on both maps in dirt brown), red barn + cream farmhouse (blockers), tilled field with 54 instanced crop tufts, hay bales, farm pickup spawn |
+| Dispatch beacon | on the two svc vans | flashing amber (ambulance) / red (fire) box while dispatched, strobed in syncMeshes; incident = white-ringed red cross on minimap + big map |
+| DPR ladder floor | governor | ladder is now [1.0, 1.1, 1.25, 1.35, 1.5] — one more resolution step down under sustained load before any tier discussion |
+
+No palette changes, no new post effects, no eager chunks:
+initial-load JS 794.1 kB gzip (index 419.2 + three 178.2 +
+react-three 185.8 + css/html 11) vs Phase 14's 789.8 — the phase's
+own code (dispatch, farm, shop room, roster, pair) at +0.5%.

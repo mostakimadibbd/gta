@@ -155,7 +155,20 @@ export const inCoral = (x: number, z: number) => x >= CORAL.x0 && x <= CORAL.x1 
  *   asphalt 1.0 · dirt (Sable Downs loop) 0.72 · grass infield 0.8 ·
  *   sand (Lantern Beach band + Sable Island) 0.55 */
 export type SurfaceKind = "asphalt" | "dirt" | "grass" | "sand";
+/** Phase 15: the Sable Downs farm road network — three dirt roads off
+ * the Phase 9 ring (west to the farmstead, north to the farmhouse,
+ * south to the z=−40 road), so the countryside corner is a small
+ * connected network, not a lone loop. Rectangles (centre + size);
+ * surfaceKindAt returns dirt on them (grip 0.72 via step_vehicle_v3),
+ * World.tsx draws them, App draws them on the maps. */
+export const FARM_ROADS: { x: number; z: number; w: number; d: number }[] = [
+  { x: -106.5, z: -78, w: 21, d: 6 },  // west: ring → farmstead + crop field
+  { x: -78, z: -106.5, w: 6, d: 21 },  // north: ring → farmhouse
+  { x: -78, z: -49, w: 6, d: 19 },     // south: ring → the z=−40 city road
+];
+export const FARM = { barn: { x: -107, z: -103 }, house: { x: -95, z: -106 }, field: { x: -107, z: -91.5, w: 13, d: 9 } };
 export function surfaceKindAt(x: number, z: number): SurfaceKind {
+  for (const r of FARM_ROADS) if (Math.abs(x - r.x) <= r.w / 2 && Math.abs(z - r.z) <= r.d / 2) return "dirt";
   const dd = Math.hypot(x + 78, z + 78); // Sable Downs ring, centre (−78, −78)
   if (dd >= 13 && dd <= 20.5) return "dirt";
   if (dd < 13) return "grass";
@@ -372,6 +385,9 @@ export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[]
   // ---- Phase 14 frontages (World.tsx Phase14Frontages) ----
   { x: 64, z: -70, hw: 5.5, hd: 3 },     // Sable Fitness pavilion, Lantern Park
   { x: -68, z: -200, hw: 6, hd: 4 },     // Northgate Loft building
+  // ---- Phase 15: Sable Downs farmstead (World.tsx farm group) ----
+  { x: -107, z: -103, hw: 4.2, hd: 3.2 }, // the barn
+  { x: -95, z: -106, hw: 3.6, hd: 3 },    // the farmhouse
   // parking-garage perimeter walls: they seal the under-deck bays at
   // ground level AND act as the deck-2 guard walls (see VISUAL_AUDIT)
   { x: -65.5, z: -263.6, hw: 9.5, hd: 0.45 },  // deck south wall
@@ -410,6 +426,7 @@ export const CAFE_EXT_DOOR = { x: 8, z: 100.6 };
 // Park's south-west corner (the old outdoor gym corner grew walls),
 // and the Northgate Loft on the mansion-row approach ----
 export const GYM_EXT_DOOR = { x: 64, z: -66.3 };
+export const CLOTHING_EXT_DOOR = { x: 18, z: 30.5 }; // Thread & Tide, Market Row (Phase 15: walk-in)
 export const LOFT_EXT_DOOR = { x: -68, z: -195.2 };
 
 // ---- Phase 7 world sweep: toll booth on the Coral causeway (bridge
@@ -493,7 +510,7 @@ export const MANSION_DRIVE = { x: MANSION.x + 4.4, z: MANSION.z + 4.4, hw: 3.6, 
 // ---- Phase 3: enterable interiors live in an offset pocket (z ≈ -175),
 // far outside the city grid. Player movement clamps to the room while
 // G.interior is set, so city collision never applies there.
-export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft";
+export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing";
 export interface InteriorDef { cx: number; cz: number; w: number; d: number; spawnIn: [number, number]; exitDoor: [number, number]; }
 export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   garage: { cx: 0, cz: -175, w: 18, d: 13, spawnIn: [0, -171.2], exitDoor: [0, -169.4] },
@@ -510,6 +527,10 @@ export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   // ---- Phase 14: Sable Fitness + the Northgate Loft (pockets 9 + 10) ----
   gym: { cx: 318, cz: -175, w: 18, d: 13, spawnIn: [318, -171.2], exitDoor: [318, -169.4] },
   loft: { cx: 354, cz: -175, w: 16, d: 12, spawnIn: [354, -171.6], exitDoor: [354, -170] },
+  // ---- Phase 15: Thread & Tide walk-in shop (pocket 11) — the
+  // Market Row street rack is signage now; the counter moved inside
+  // (counter point in game/phase8.ts CLOTHING_COUNTER) ----
+  clothing: { cx: 390, cz: -175, w: 16, d: 12, spawnIn: [390, -171.6], exitDoor: [390, -170] },
 };
 
 export function isBlocked(x: number, z: number, radius: number): boolean {
@@ -594,4 +615,6 @@ export const CAR_SPAWNS: CarSpawn[] = [
   { id: 28, x: 124, z: 70, heading: Math.PI, color: "#e8e4da", model: "Sable Sparrow", kind: "plane", owned: false },   // faces north up the runway
   { id: 29, x: -58, z: 160, heading: 0, color: "#7a8a5a", model: "Harbour Fisher 180", kind: "skiff", owned: false },    // island dock skiff
   { id: 30, x: 92, z: 196, heading: Math.PI, color: "#b4622d", model: "Harbour Fisher 180", kind: "skiff", owned: false }, // Coral marina skiff
+  // ---- Phase 15: the farm pickup on the Sable Downs west dirt road ----
+  { id: 31, x: -104, z: -78, heading: Math.PI / 2, color: "#5c6650", model: "Harbor Hauler", kind: "pickup", owned: false }, // farm pickup
 ];

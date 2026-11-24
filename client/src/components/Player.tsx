@@ -188,10 +188,16 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
         wastedRag.current = seedRagdoll(px0, pz0, h, gy0, -Math.sin(h) * 1.4, 0.6, -Math.cos(h) * 1.4, dt);
       }
       const rag = wastedRag.current;
-      stepRagdoll(rag, groundYAt(rag.pos[0], rag.pos[2]), dt, fallbackPhysics);
-      root.current.position.set(rag.pos[0], groundYAt(rag.pos[0], rag.pos[2]), rag.pos[2]);
-      root.current.rotation.set(0, rag.heading, 0);
-      poseRigFromRagdoll(rig, rag, 1, groundYAt(rag.pos[0], rag.pos[2]));
+      // Phase 15 survivability: if the solver ever throws or blows up
+      // to NaN, drop the ragdoll and hold the rig at the death spot —
+      // the respawn flow must never freeze on a solver fault.
+      try {
+        stepRagdoll(rag, groundYAt(rag.pos[0], rag.pos[2]), dt, fallbackPhysics);
+        if (!Number.isFinite(rag.pos[0]) || !Number.isFinite(rag.pos[2])) throw new Error("ragdoll NaN");
+        root.current.position.set(rag.pos[0], groundYAt(rag.pos[0], rag.pos[2]), rag.pos[2]);
+        root.current.rotation.set(0, rag.heading, 0);
+        poseRigFromRagdoll(rig, rag, 1, groundYAt(rag.pos[0], rag.pos[2]));
+      } catch { wastedRag.current = null; root.current.position.set(px0, gy0, pz0); }
       return;
     }
     if (G.status !== "wasted") wastedRag.current = null;

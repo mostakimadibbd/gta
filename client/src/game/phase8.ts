@@ -90,6 +90,11 @@ export const CLOTHING_ITEMS: ClothingItem[] = [
   { id: "jacket-black", label: "Midnight Jacket + charcoal jeans", price: 200, topStyle: "jacket", top: "#22252b", bottom: "#2c3038" },
 ];
 export const CLOTHING_SHOP = { x: 18, z: 30.5, name: "Thread & Tide" };
+/** Phase 15: the shop is a WALK-IN interior now (world.ts INTERIORS
+ * .clothing) — CLOTHING_SHOP stays the Market Row frontage (street
+ * rack = signage, door point); the browse/buy counter lives INSIDE
+ * at this pocket point, and Phase8's shop logic keys off it. */
+export const CLOTHING_COUNTER = { x: 390, z: -178.5 };
 export const CLOTH = {
   current: null as ClothingItem | null,
   // Phase 14: every item ever bought — the Northgate Loft wardrobe

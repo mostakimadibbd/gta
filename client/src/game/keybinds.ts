@@ -32,6 +32,19 @@ export const DEFAULT_BINDS: Record<BindAction, string> = {
   weapon: "KeyQ", phone: "KeyU", map: "KeyM",
 };
 
+/** Phase 15 playability: codes that may NEVER be bound — WASD/arrows
+ * are the fixed movement keys (Player/Vehicle read them raw, before
+ * bind translation: binding Jump to W made W return the jump token
+ * and killed forward movement), Tab is the fixed weapon-cycle
+ * alternate, Escape closes dialogs. Binding one of these used to be
+ * accepted and silently broke movement. (Declared before the load
+ * block below, which sanitizes saved binds against it.) */
+export const RESERVED_CODES: Record<string, string> = {
+  KeyW: "movement (W)", KeyA: "movement (A)", KeyS: "movement (S)", KeyD: "movement (D)",
+  ArrowUp: "movement (↑)", ArrowDown: "movement (↓)", ArrowLeft: "movement (←)", ArrowRight: "movement (→)",
+  Tab: "weapon cycle (Tab)", Escape: "pause / close (Esc)",
+};
+
 export const binds: Record<BindAction, string> = { ...DEFAULT_BINDS };
 try {
   const raw = localStorage.getItem("harborfall-keybinds");
@@ -44,6 +57,12 @@ try {
     // a corrupt/duplicate saved set falls back to defaults wholesale
     const codes = BIND_ACTIONS.map((a) => binds[a.id]);
     if (new Set(codes).size !== codes.length) Object.assign(binds, DEFAULT_BINDS);
+    // Phase 15: a Phase-14 save may already hold a RESERVED code
+    // (the old capture accepted WASD) — reset just those actions to
+    // their defaults so movement works on first boot of this build.
+    for (const a of BIND_ACTIONS) {
+      if (RESERVED_CODES[binds[a.id]]) binds[a.id] = DEFAULT_BINDS[a.id];
+    }
   }
 } catch { /* defaults */ }
 
@@ -61,8 +80,11 @@ export function actionForCode(code: string): BindAction | null {
 }
 
 /** Try to bind `action` to `code`. Refuses (returns the conflicting
- * action's label) when another action already owns the code. */
+ * action's label) when another action already owns the code, and
+ * refuses reserved movement/system keys outright. */
 export function setBind(action: BindAction, code: string): { ok: boolean; conflict?: string } {
+  const reserved = RESERVED_CODES[code];
+  if (reserved) return { ok: false, conflict: reserved };
   const owner = actionForCode(code);
   if (owner && owner !== action) {
     return { ok: false, conflict: BIND_ACTIONS.find((a) => a.id === owner)?.label ?? owner };

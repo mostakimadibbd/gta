@@ -11,7 +11,7 @@
 //     Picking a tier manually (pause menu / phone) sets autoDrop=false
 //     for the session: the player's choice outranks the governor.
 import { G, toast, persistSettings } from "./store";
-import { setTier, type QualityTier } from "./quality";
+import { setTier, sampleIfHighRaised, type QualityTier } from "./quality";
 
 export const perf = {
   fps: 0,          // last 1 s average (HUD readout + governor input)
@@ -28,7 +28,10 @@ export const perf = {
 // (autoDrop only gates the TIER lever below — manualTier never
 // disables DPR adaptation), so a manual High stays smooth by
 // shedding pixels before anything else. ----
-export const DPR_LADDER = [1.1, 1.25, 1.35, 1.5];
+// Phase 15: the ladder gains a 1.0 floor — under sustained load the
+// governor may now shed resolution to native 1.0 before any tier drop
+// is considered (caps per tier unchanged).
+export const DPR_LADDER = [1.0, 1.1, 1.25, 1.35, 1.5];
 export const tierDprCap = (t: QualityTier) => (t === "high" ? 1.5 : t === "medium" ? 1.35 : 1.25);
 
 /** Manual tier choice (pause Graphics / phone Settings): respect it —
@@ -37,6 +40,9 @@ export const tierDprCap = (t: QualityTier) => (t === "high" ? 1.5 : t === "mediu
 export function manualTier(t: QualityTier) {
   perf.autoDrop = false;
   setTier(t);
+  // Phase 15: a manual raise to High is sample-checked once (2 s);
+  // if the machine sustains <30 FPS it steps back down with a toast.
+  if (t === "high") sampleIfHighRaised();
 }
 
 /** One adaptive step down, with the subtitle-style toast. */

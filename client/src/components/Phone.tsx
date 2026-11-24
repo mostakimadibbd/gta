@@ -11,7 +11,7 @@ import { CAR_MODELS, DEALER_CARS } from "../world";
 import { M } from "../game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
 import { J, jobStats, fmtTime, RACES, BAY_CIRCUIT, SPARROW_RUN } from "../game/jobs";
-import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_WAGE, STAFF_BONUS } from "../game/economy";
+import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet } from "../game/economy";
 import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
 import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
@@ -162,21 +162,39 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <h3 className="phone-subhead">Your businesses</h3>
             {BUSINESSES.map((b) => {
               const ownedBiz = ECO.owned.includes(b.id);
-              const staffed = ECO.staff.includes(b.id);
+              const crew = ECO.staffBy[b.id] ?? [];
               return (
-                <div key={b.id} className="bank-row">
-                  <span>{b.name}<small style={{ display: "block" }}>{ownedBiz
-                    ? staffed ? `Staffed: +$${Math.round(b.income * STAFF_BONUS)} bonus − $${STAFF_WAGE} wages` : "Unstaffed — hire a manager to earn +50%"
-                    : "Not owned"}</small></span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <b>{ownedBiz ? `+$${b.income + (staffed ? Math.round(b.income * STAFF_BONUS) - STAFF_WAGE : 0)}/day` : `$${b.price.toLocaleString()}`}</b>
-                    {ownedBiz && (
-                      <button type="button" className="phone-toggle" onClick={() => {
-                        ECO.staff = staffed ? ECO.staff.filter((s) => s !== b.id) : [...ECO.staff, b.id];
-                        persistEco(); setTick((v) => v + 1);
-                      }}>{staffed ? "Let go" : "Hire staff"}</button>
-                    )}
-                  </span>
+                <div key={b.id}>
+                  <div className="bank-row">
+                    <span>{b.name}<small style={{ display: "block" }}>{ownedBiz
+                      ? crew.length ? `Crew: ${crew.join(" · ")}` : "No staff — hire from the roster below (up to 2)"
+                      : "Not owned"}</small></span>
+                    <b>{ownedBiz ? `+$${businessDailyNet(b)}/day` : `$${b.price.toLocaleString()}`}</b>
+                  </div>
+                  {ownedBiz && crew.map((name) => {
+                    const s = staffDef(name)!;
+                    return (
+                      <div key={name} className="bank-row">
+                        <span>↳ {name}<small style={{ display: "block" }}>{s.trait} · +{Math.round(s.bonus * 100)}% takings · ${s.wage}/day wage</small></span>
+                        <button type="button" className="phone-toggle" onClick={() => {
+                          ECO.staffBy[b.id] = crew.filter((n) => n !== name);
+                          persistEco(); setTick((v) => v + 1);
+                        }}>Let go</button>
+                      </div>
+                    );
+                  })}
+                  {ownedBiz && crew.length < MAX_STAFF_PER_BIZ && STAFF_ROSTER.filter((s) => !crew.includes(s.name)).map((s) => {
+                    const worksAt = BUSINESSES.find((ob) => (ECO.staffBy[ob.id] ?? []).includes(s.name));
+                    return (
+                      <div key={s.name} className="bank-row">
+                        <span>Hire {s.name}<small style={{ display: "block" }}>{s.trait} · +{Math.round(s.bonus * 100)}% takings · ${s.wage}/day wage{worksAt ? ` · currently at ${worksAt.name}` : ""}</small></span>
+                        <button type="button" className="phone-toggle" disabled={!!worksAt} onClick={() => {
+                          ECO.staffBy[b.id] = [...crew, s.name];
+                          persistEco(); setTick((v) => v + 1);
+                        }}>Hire</button>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -255,6 +273,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>The Harbour Heist</span><b>{M.side.heist >= 2 ? "Done 🏆" : M.side.heist === 1 ? "Prepped — call Elias" : M.storyIndex >= 4 || M.storyDone ? "Call Old Elias" : "After Chapter 4"}</b></div>
             <div className="bank-row"><span>After the Fall (post-story pack)</span><b>{!M.storyDone ? "Finish the story first" : M.side.after >= 3 ? "Done 🏆" : "Call Lina, then Voss, then Elias"}</b></div>
             <div className="bank-row"><span>After the Fall progress</span><b>{M.side.after}/3</b></div>
+            <div className="bank-row"><span>The Meridian Pair (one choice, post-Ch.3)</span><b>{M.pairChoice === "informant" ? "You stood with Voss's informant" : M.pairChoice === "dockcrew" ? "You warned Elias's crew" : M.storyIndex >= 3 ? "Call Voss OR Elias — the first call decides" : "After Chapter 3"}</b></div>
             {SIDE_MISSIONS.filter((mDef) => (M.stats[mDef.id]?.best ?? 0) > 0).map((mDef) => (
               <div key={mDef.id} className="bank-row"><span>{mDef.title}</span><b>best {fmtTime(M.stats[mDef.id].best)}</b></div>
             ))}

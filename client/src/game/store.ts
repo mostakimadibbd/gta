@@ -15,6 +15,11 @@ export interface NpcCar extends VehicleState {
   kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
   rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
   busRoute?: boolean; wp?: number; stopT?: number;
+  // ---- Phase 15: emergency dispatch state (svc units only) — set by
+  // game/dispatch.ts, driven by the dedicated branch in GameSystems'
+  // traffic loop; leg 0 = reach the turn intersection, leg 1 = final
+  // approach, then on-scene timer, then back to circulation ----
+  dispatch?: { x: number; z: number; kind: "collision" | "fire" | "medical"; leg: 0 | 1; turnAt: number; sceneT: number } | null;
   // ---- Phase 12 AI staggering: cached results of the two expensive
   // traffic scans (signal stop-line distance + same-lane queue gap).
   // Far cars rescan on a 1-in-3 slice and reuse these between scans;
@@ -87,6 +92,9 @@ export const G = {
   dayPaused: false,
   nightFactor: 0,
   objective: null as null | { x: number; z: number; label: string; kind: string },
+  // ---- Phase 15: live emergency-dispatch incident (game/dispatch.ts
+  // state mirrored here for the minimap/big-map blip in App) ----
+  incident: null as null | { x: number; z: number; kind: "collision" | "fire" | "medical" },
   eventQueue: [] as string[], // "crime:steal" | "crime:hit" | "crime:ped" | "damage" ...
   // ---- Phase 2: weather ----
   weather: "Clear" as WeatherKind,
@@ -106,7 +114,7 @@ export const G = {
   timeS: 0, // elapsed game clock (set by GameSystems every frame)
   firstPerson: false,
   swimming: false,
-  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft",
+  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing",
   // ---- Phase 7: wind, sitting, replay requests, camera flash, boosts ----
   wind: 0.5, // 0..1 slow gust value — palm sway, boat bob, HUD/phone label
   sitting: false, // player parked on a bench / chair (Player pose + lock)
@@ -209,11 +217,17 @@ export function syncWeaponMirrors() {
 /** Phase 8: persist the per-district reputation map. */
 export function persistZoneRep() { try { localStorage.setItem("harborfall-rep", JSON.stringify(G.zoneRep)); } catch { /* ignore */ } }
 export const stashTotal = () => G.inventory.reduce((a, i) => a + i.value, 0);
+// Phase 15 playability: each persisted key loads under its OWN guard.
+// These used to share one try{} — a single corrupt JSON value (skills
+// was first) threw and silently skipped EVERY later load in the block,
+// including the settings object and the reflSafeV migration below:
+// the game booted on defaults and looked "reset / not playable".
+const loadKey = (fn: () => void) => { try { fn(); } catch { /* one bad key never blocks the rest */ } };
+loadKey(() => { const skills = localStorage.getItem("harborfall-skills"); if (skills) G.skills = { ...G.skills, ...(JSON.parse(skills) as Partial<typeof G.skills>) }; });
+loadKey(() => { const stash = localStorage.getItem("harborfall-stash"); if (stash) G.inventory = JSON.parse(stash) as StashItem[]; });
+loadKey(() => { const stored = localStorage.getItem("harborfall-stored-cars"); if (stored) G.storedCars = (JSON.parse(stored) as StoredCar[]).slice(0, 6); });
+loadKey(() => { const st = localStorage.getItem("harborfall-settings"); if (st) G.settings = { ...G.settings, ...(JSON.parse(st) as Partial<typeof G.settings>) }; });
 try {
-  const skills = localStorage.getItem("harborfall-skills"); if (skills) G.skills = { ...G.skills, ...(JSON.parse(skills) as Partial<typeof G.skills>) };
-  const stash = localStorage.getItem("harborfall-stash"); if (stash) G.inventory = JSON.parse(stash) as StashItem[];
-  const stored = localStorage.getItem("harborfall-stored-cars"); if (stored) G.storedCars = (JSON.parse(stored) as StoredCar[]).slice(0, 6);
-  const st = localStorage.getItem("harborfall-settings"); if (st) G.settings = { ...G.settings, ...(JSON.parse(st) as Partial<typeof G.settings>) };
   // ---- Phase 14 ONE-TIME MIGRATION (reflSafeV): the Phase 11–13 build
   // defaulted reflFx ON, and on some machines (Retina Mac / Brave) the
   // High + SSR stack crashed the tab to a black screen. Existing saves
@@ -223,8 +237,8 @@ try {
   // DPR/SSR — but the choice is theirs, not the crash's). ----
   const sAny = G.settings as typeof G.settings & { reflSafeV?: number };
   if (sAny.reflSafeV !== 1) { sAny.reflSafeV = 1; sAny.reflFx = false; persistSettings(); }
-  const rep = localStorage.getItem("harborfall-rep"); if (rep) G.zoneRep = JSON.parse(rep) as Record<string, number>;
 } catch { /* storage unavailable */ }
+loadKey(() => { const rep = localStorage.getItem("harborfall-rep"); if (rep) G.zoneRep = JSON.parse(rep) as Record<string, number>; });
 
 try {
   G.ownsMansion = localStorage.getItem("harborfall-mansion") === "1";

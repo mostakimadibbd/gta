@@ -19,6 +19,7 @@ import { sfx } from "../game/audio";
 import CarBody, { type CarKind } from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 import { seedRagdoll, stepRagdoll, poseRigFromRagdoll } from "../game/ragdoll";
+import { tickDispatch, stepDispatchDrive } from "../game/dispatch";
 
 // Phase 13: seasonal sun-warp scratch (written by seasonSun each frame)
 const _sunWarp: SunWarp = { elev: 0, ang: 0 };
@@ -231,6 +232,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
 }) {
   initWorld();
   const trafficRefs = useRef<Array<THREE.Group | null>>([]);
+  const beaconRefs = useRef<Array<THREE.Mesh | null>>([]); // Phase 15: dispatch beacon flash
   const pedRefs = useRef<Array<THREE.Group | null>>([]);
   const pedRigs = useMemo<HumanoidRig[]>(() => G.peds.map((pd, i) => {
     const o = PED_OUTFITS[i % PED_OUTFITS.length];
@@ -452,6 +454,8 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     const px = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.x : G.playerPos.x;
     const pz = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.z : G.playerPos.z;
     const pSpeed = G.driving ? Math.abs(G.cars[G.activeCarId]?.state.speed ?? 0) : 0;
+    // Phase 15: emergency dispatch generation/assignment (game/dispatch.ts)
+    tickDispatch(t, px, pz);
 
     // ---- traffic AI (Port Sable + Coral + Northgate loops) ----
     // Phase 6 (A2): traffic obeys the cycling signals, queues behind
@@ -465,8 +469,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     for (let ti = 0; ti < G.traffic.length; ti++) {
       const car = G.traffic[ti];
       const distP = Math.hypot(car.x - px, car.z - pz);
-      // streaming dormancy (hysteresis 165 / 140)
-      if (!car.dormant && distP > 165) car.dormant = true;
+      // streaming dormancy (hysteresis 165 / 140) — Phase 15: a
+      // dispatched unit never sleeps mid-call
+      if (!car.dormant && distP > 165 && !car.dispatch) car.dormant = true;
       else if (car.dormant && distP < 140) car.dormant = false;
       if (car.dormant) { car.speed = 0; continue; }
       // Phase 9: a traffic car at full damage is a WRECK — it stays where
@@ -501,6 +506,17 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         if (trafficSteerRefs[ti]) trafficSteerRefs[ti].current = car.steerVis;
         if (trafficBrakeRefs.current[ti]) trafficBrakeRefs.current[ti].current = car.speed < 1.5 || (car.stopT ?? 0) > 0;
         continue;
+      }
+      // ---- Phase 15: a dispatched service unit is driven by the
+      // dispatch sim (grid route → on-scene → clear); the normal
+      // traffic decision below resumes the step it clears ----
+      if (car.svc && car.dispatch) {
+        if (stepDispatchDrive(car, dt, t)) {
+          car.pitch += (THREE.MathUtils.clamp(-(car.speed - prevSpeed) / Math.max(dt, 0.001) * 0.0028, -0.05, 0.055) - car.pitch) * Math.min(1, dt * 6);
+          if (trafficSteerRefs[ti]) trafficSteerRefs[ti].current = 0;
+          if (trafficBrakeRefs.current[ti]) trafficBrakeRefs.current[ti].current = car.speed < 1.5;
+          continue;
+        }
       }
       // ---- rush-hour reserve: parked off-peak, driving at the peaks ----
       if (car.rushOnly) {
@@ -668,15 +684,22 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         // sim step; the pelvis point becomes the ped's logical
         // position while down. Far peds keep the static collapse. ----
         if ((ped.x - px) ** 2 + (ped.z - pz) ** 2 < 40 ** 2) {
-          if (!ped.rag) {
-            const kvx = ped.kvx ?? 0, kvz = ped.kvz ?? 0;
-            const kSpeed = Math.hypot(kvx, kvz);
-            ped.rag = seedRagdoll(ped.x, ped.z, ped.heading, groundYAt(ped.x, ped.z),
-              kvx, Math.min(2.2, kSpeed * 0.22), kvz, dt);
-            ped.kvx = 0; ped.kvz = 0; // consumed into the skeleton
-          }
-          stepRagdoll(ped.rag, groundYAt(ped.x, ped.z), dt, phys);
-          ped.x = ped.rag.pos[0]; ped.z = ped.rag.pos[2];
+          // Phase 15 survivability: the solver runs under a guard. A
+          // bad seed, a WASM-side throw or a NaN blow-up must degrade
+          // THIS ped to the static collapse — never throw out of the
+          // frame loop and freeze the whole canvas.
+          try {
+            if (!ped.rag) {
+              const kvx = ped.kvx ?? 0, kvz = ped.kvz ?? 0;
+              const kSpeed = Math.hypot(kvx, kvz);
+              ped.rag = seedRagdoll(ped.x, ped.z, ped.heading, groundYAt(ped.x, ped.z),
+                kvx, Math.min(2.2, kSpeed * 0.22), kvz, dt);
+              ped.kvx = 0; ped.kvz = 0; // consumed into the skeleton
+            }
+            stepRagdoll(ped.rag, groundYAt(ped.x, ped.z), dt, phys);
+            if (!Number.isFinite(ped.rag.pos[0]) || !Number.isFinite(ped.rag.pos[2])) throw new Error("ragdoll NaN");
+            ped.x = ped.rag.pos[0]; ped.z = ped.rag.pos[2];
+          } catch { ped.rag = null; }
         }
         continue;
       }
@@ -1272,13 +1295,31 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           else if (side === "after" && M.side.after >= 3) pushPhoneMsg("Tamim Kade", "Heard you ran the lights clean, brother. Five years inside and the harbour still turns for a Kade. Dinner's on me — Lina's cooking, my treat. 🐟");
           else if (M.side[side] >= 3) pushPhoneMsg(side === "lina" ? "Lina Park" : "Det. Mara Voss", side === "lina" ? "That's the whole line done, Rayan. The garage owes you — come by any time." : "File closed and filed. The parole board has everything. Thank you, Kade.");
           cb.current.event("missionEnd");
+        } else if (def.pair) {
+          // Phase 15: the Meridian Pair lands its consequence in the
+          // world — reputation at The Docks moves opposite ways, and
+          // both harbours hear about it (news + a call from the side
+          // you didn't choose is NOT sent: they simply go quiet).
+          if (def.pair === "informant") {
+            G.zoneRep["The Docks"] = Math.min(100, (G.zoneRep["The Docks"] ?? 0) + 45);
+            persistZoneRep();
+            pushNews("Harbour Wire: MERIDIAN SHIPMENT SEIZED", "Harbour Patrol took a full Solano shipment at the East Yards last night in a sting nobody on the dock floor saw coming. Crews walked free — but the docks are asking, loudly, whose mouth marked the crates.");
+            pushPhoneMsg("Old Elias", "Heard what happened at the Yards, lad. The crew's asking questions I can't answer for you. Watch yourself on my pier for a while.");
+          } else {
+            G.zoneRep["The Docks"] = 0;
+            persistZoneRep();
+            pushNews("Harbour Wire: THE SHIPMENT THAT NEVER ARRIVED", "A marked Harbour Patrol operation at the East Yards seized exactly nothing last night — empty concrete, swept clean. Officially: an intelligence failure. On the docks: a story about a warning that travelled faster than the vans.");
+            pushPhoneMsg("Det. Mara Voss", "My sting hit an empty yard, Kade. I won't ask. But the next time you need the patrol to look the other way — remember tonight, because I will.");
+          }
+          persist();
+          cb.current.event("missionEnd");
         } else { M.repeatIndex += 1; persist(); cb.current.event("missionEnd"); }
       });
       cb.current.event("missionEnd");
     }
     function syncMeshes(tt: number) {
       frameNo.current += 1;
-      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.visible = !c.dormant; g.position.set(c.x, groundYAt(c.x, c.z), c.z); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, c.roll ?? 0); } });
+      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { g.visible = !c.dormant; g.position.set(c.x, groundYAt(c.x, c.z), c.z); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, c.roll ?? 0); } const bc = beaconRefs.current[i]; if (bc) bc.visible = !!c.dispatch && (tt * 2.4) % 1 < 0.62; });
       const reportT = performance.now() / 1000;
       G.peds.forEach((pd, i) => {
         const g = pedRefs.current[i]; if (!g) return;
@@ -1337,8 +1378,12 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         // during get-up it lerps FROM the walk/idle pose the block
         // above just wrote (weight 1 while down, → 0 as blend runs)
         if (ragLive && rag && rig) {
-          poseRigFromRagdoll(rig, rag, 1 - rag.blend, groundYAt(rag.pos[0], rag.pos[2]));
-          if (rag.blend >= 1) pd.rag = null;
+          // Phase 15: posing is guarded for the same reason as the
+          // step — a corrupt point set drops the ragdoll, not the game.
+          try {
+            poseRigFromRagdoll(rig, rag, 1 - rag.blend, groundYAt(rag.pos[0], rag.pos[2]));
+            if (rag.blend >= 1) pd.rag = null;
+          } catch { pd.rag = null; }
         }
         // phone screen glow — visible at night while a ped is scrolling
         const glow = phoneGlowRefs.current[i];
@@ -1494,6 +1539,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       {stage >= 4 && G.traffic.map((c, i) => (
         <group key={i} ref={(n) => { trafficRefs.current[i] = n; }} position={[c.x, 0, c.z]}>
           <CarBody kind={c.kind ?? TRAFFIC_KINDS[i % TRAFFIC_KINDS.length]} color={c.color} steerRef={trafficSteerRefs[i]} liveDamage={() => G.traffic[i].damage} brakeRef={trafficBrakeRefs.current[i]} beams />
+          {/* Phase 15: flashing beacon while this unit is dispatched
+              (visibility strobed in syncMeshes; hidden otherwise) */}
+          {c.svc && <mesh ref={(n) => { beaconRefs.current[i] = n; }} visible={false} position={[0, 2.35, -0.2]}><boxGeometry args={[0.5, 0.22, 0.5]} /><meshBasicMaterial color={c.svc === "fire" ? "#ff3838" : "#ffd23e"} /></mesh>}
           {/* Phase 7: emergency-service dressing on the van bodies —
               light bar (dark in normal service) + ambulance cross /
               fire ladder on the roof */}

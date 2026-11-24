@@ -19,7 +19,7 @@ import { groundYAt, GARAGE_ZONES } from "../world";
 import { gameHour, shopsClosed } from "./Interactions";
 import {
   F, FISHING_SPOTS, rollCatch, GYM, GYM_STATIONS, persistGym,
-  CLOTHING_ITEMS, CLOTHING_SHOP, CLOTH, persistClothing,
+  CLOTHING_ITEMS, CLOTHING_SHOP, CLOTHING_COUNTER, CLOTH, persistClothing,
 } from "../game/phase8";
 
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -218,7 +218,11 @@ export default function Phase8Systems() {
     }
 
     // ================= THREAD & TIDE (clothing counter) =================
-    atShop.current = onFoot && (px - CLOTHING_SHOP.x) ** 2 + (pz - CLOTHING_SHOP.z) ** 2 < 2.8 ** 2 && F.phase === "idle" && !GYM.active;
+    // Phase 15: the counter is INSIDE the walk-in shop pocket now —
+    // clothOk replaces onFoot exactly like gymOk does for the gym;
+    // the street rack at CLOTHING_SHOP is signage only.
+    const clothOk = !G.driving && !G.status && !G.dialogueActive && G.interior === "clothing";
+    atShop.current = clothOk && (px - CLOTHING_COUNTER.x) ** 2 + (pz - CLOTHING_COUNTER.z) ** 2 < 2.8 ** 2 && F.phase === "idle" && !GYM.active;
     if (atShop.current && !prompt) {
       const item = CLOTHING_ITEMS[clothIdx.current];
       const wearing = CLOTH.current?.id === item.id;
@@ -384,7 +388,9 @@ export default function Phase8Systems() {
         </mesh>
       ))}
 
-      {/* ---- Thread & Tide clothing rack, Market Row ---- */}
+      {/* ---- Thread & Tide, Market Row — Phase 15: this street rack
+          is SIGNAGE only (it marks the door); browsing/buying moved
+          inside the walk-in shop (Interiors pocket 11) ---- */}
       <group position={[CLOTHING_SHOP.x, groundYAt(CLOTHING_SHOP.x, CLOTHING_SHOP.z), CLOTHING_SHOP.z]}>
         <mesh position={[-1.1, 0.8, 0]} castShadow><boxGeometry args={[0.08, 1.6, 0.08]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.5} /></mesh>
         <mesh position={[1.1, 0.8, 0]} castShadow><boxGeometry args={[0.08, 1.6, 0.08]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.5} /></mesh>

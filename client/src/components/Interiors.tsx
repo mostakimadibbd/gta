@@ -11,7 +11,7 @@ import { G, toast, nowS, bark, persistStoredCars } from "../game/store";
 import { isBind } from "../game/keybinds";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
-import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, GYM_EXT_DOOR, LOFT_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
+import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, GYM_EXT_DOOR, LOFT_EXT_DOOR, CLOTHING_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
 import { ECO, LOFT, persistEco, setHomePref, sleepToMorning } from "../game/economy";
 import { CLOTH, CLOTHING_ITEMS, persistClothing, type ClothingItem } from "../game/phase8";
 import { shopsClosed } from "./Interactions";
@@ -71,6 +71,9 @@ const FLOOR_CF = new THREE.MeshStandardMaterial({ color: "#8a5a3c", roughness: 0
 // slate over light oak
 const WALL_GY = new THREE.MeshStandardMaterial({ color: "#1d2b2e", roughness: 0.9 });
 const FLOOR_GY = new THREE.MeshStandardMaterial({ color: "#23272c", roughness: 0.95 });
+// Phase 15: Thread & Tide — warm cream walls over pale boards
+const WALL_TT = new THREE.MeshStandardMaterial({ color: "#ddd2ba", roughness: 0.9 });
+const FLOOR_TT = new THREE.MeshStandardMaterial({ color: "#9a7a54", roughness: 0.75 });
 const WALL_LF = new THREE.MeshStandardMaterial({ color: "#3a3f45", roughness: 0.85 });
 const FLOOR_LF = new THREE.MeshStandardMaterial({ color: "#7a5a3d", roughness: 0.7 });
 
@@ -103,6 +106,7 @@ export default function Interiors() {
   const cafeSign = useMemo(() => signTexture("CAFÉ CORAL", "#2b1c10", "#ffca7a"), []);
   const gymSign = useMemo(() => signTexture("SABLE FITNESS", "#0f4442", "#ffca7a"), []);
   const loftSign = useMemo(() => signTexture("NORTHGATE LOFT", "#232a31", "#ffca7a"), []);
+  const ttSign = useMemo(() => signTexture("THREAD & TIDE", "#17303a", "#ffb340"), []);
   // Phase 13: showroom turntables (rotated in useFrame) + the café's
   // two regulars — static seated rigs, posed once (they're mid-chat
   // and in no hurry; a slow head-bob in useFrame keeps them alive)
@@ -131,7 +135,12 @@ export default function Interiors() {
   useEffect(() => {
     const down = (e: KeyboardEvent) => { if (isBind(e, "interact") && !e.repeat) srEDown.current = performance.now() / 1000; };
     const up = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== "e") return;
+      // Phase 15 playability: this keyup used to check the PHYSICAL
+      // "e" key while its keydown twin used the interact BINDING —
+      // with interact remapped, the showroom's tap-to-browse never
+      // fired and its hold state cleared on the wrong key. Both
+      // halves now read the binding, like Phase7/8/9.
+      if (!isBind(e, "interact")) return;
       const held = srEDown.current > 0 ? performance.now() / 1000 - srEDown.current : 9;
       srEDown.current = -1;
       if (G.hold?.label.startsWith("Purchasing")) G.hold = null;
@@ -349,6 +358,14 @@ export default function Interiors() {
             };
           }
         } else if (near(L.cx, L.cz - 4.6, 2.6)) prompt = "The whole harbour from up here — bridge, island light, the bay turning amber at dusk.";
+      } else if (G.interior === "clothing") {
+        // ---- Phase 15: THREAD & TIDE — the counter logic lives in
+        // Phase8 (it publishes after this component); here: the exit
+        // + a welcome line. Hours are enforced at the STREET door —
+        // a player already inside when 23:00 lands can finish up. ----
+        const [x, z] = INTERIORS.clothing.exitDoor;
+        if (near(x, z, 2.2)) { prompt = "Press E — leave Thread & Tide"; act = go(CLOTHING_EXT_DOOR.x, CLOTHING_EXT_DOOR.z + 1.2, ""); }
+        else if (near(INTERIORS.clothing.cx, INTERIORS.clothing.cz + 3.4, 2.2)) prompt = "Thread & Tide — racks on both walls, the counter's at the back. Tap E to browse, hold E to buy.";
       } else if (near(GARAGE_EXT_DOOR.x, GARAGE_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Lina's Garage";
         act = go(INTERIORS.garage.spawnIn[0], INTERIORS.garage.spawnIn[1], "garage");
@@ -376,6 +393,13 @@ export default function Interiors() {
       } else if (near(GYM_EXT_DOOR.x, GYM_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Sable Fitness";
         act = go(INTERIORS.gym.spawnIn[0], INTERIORS.gym.spawnIn[1], "gym");
+      } else if (near(CLOTHING_EXT_DOOR.x, CLOTHING_EXT_DOOR.z, 2.8)) {
+        // Phase 15: shop hours enforced at the door (07:00–23:00)
+        if (shopsClosed()) { prompt = "Thread & Tide — closed (opens 07:00)"; warn = true; }
+        else {
+          prompt = "Press E — enter Thread & Tide";
+          act = go(INTERIORS.clothing.spawnIn[0], INTERIORS.clothing.spawnIn[1], "clothing");
+        }
       } else if (near(LOFT_EXT_DOOR.x, LOFT_EXT_DOOR.z, 2.8)) {
         // ---- Phase 14: the Loft is bought at its own door, like the
         // villa at its gate — owning both properties is supported;
@@ -416,6 +440,7 @@ export default function Interiors() {
   const H0 = INTERIORS.hangar;
   const S0 = INTERIORS.showroom, CF0 = INTERIORS.cafe;
   const GY0 = INTERIORS.gym, LF0 = INTERIORS.loft;
+  const TT0 = INTERIORS.clothing;
   return (
     <group>
       {/* ================= LINA'S GARAGE — interior ================= */}
@@ -787,6 +812,44 @@ export default function Interiors() {
           <mesh position={[0, 1, 0]}><sphereGeometry args={[0.55, 10, 8]} /><meshStandardMaterial color="#2e5d43" roughness={0.95} /></mesh>
         </group>
         <mesh position={[0, 1.4, LF0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#232a31" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
+      </group>
+
+      {/* ================= Phase 15: THREAD & TIDE (walk-in) ========== */}
+      <RoomShell cx={TT0.cx} cz={TT0.cz} w={TT0.w} d={TT0.d} h={3.4} wall={WALL_TT} floor={FLOOR_TT} ceiling />
+      <group position={[TT0.cx, 0, TT0.cz]}>
+        <pointLight position={[0, 2.9, 0]} intensity={20} distance={15} decay={1.7} color="#ffe9c4" />
+        <mesh position={[0, 2.55, TT0.d / 2 - 0.2]} rotation={[0, Math.PI, 0]}>
+          <planeGeometry args={[5.2, 0.95]} />
+          <meshStandardMaterial map={ttSign} emissive="#ffffff" emissiveMap={ttSign} emissiveIntensity={0.8} />
+        </mesh>
+        {/* clothing racks along both side walls — the stock itself,
+            coloured from CLOTHING_ITEMS like the street signage rack */}
+        {[-1, 1].map((side) => (
+          <group key={side} position={[side * (TT0.w / 2 - 1.1), 0, -0.5]} rotation={[0, side * Math.PI / 2, 0]}>
+            <mesh position={[-1.6, 0.8, 0]} castShadow><boxGeometry args={[0.08, 1.6, 0.08]} /><primitive object={METAL} attach="material" /></mesh>
+            <mesh position={[1.6, 0.8, 0]} castShadow><boxGeometry args={[0.08, 1.6, 0.08]} /><primitive object={METAL} attach="material" /></mesh>
+            <mesh position={[0, 1.58, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.03, 0.03, 3.3, 8]} /><primitive object={METAL} attach="material" /></mesh>
+            {CLOTHING_ITEMS.map((it, i) => (
+              <mesh key={it.id} position={[-1.35 + i * 0.54, 1.2, 0]} castShadow>
+                <boxGeometry args={[0.44, 0.64, 0.1]} />
+                <meshStandardMaterial color={it.top} roughness={0.85} />
+              </mesh>
+            ))}
+          </group>
+        ))}
+        {/* the counter at the back (CLOTHING_COUNTER point, rel 0,−3.5):
+            till, folded stack, mirror card */}
+        <group position={[0, 0, -3.5]}>
+          <mesh position={[0, 0.55, 0]} castShadow><boxGeometry args={[3.4, 1.1, 0.9]} /><primitive object={WOOD} attach="material" /></mesh>
+          <mesh position={[1.1, 1.22, 0]}><boxGeometry args={[0.5, 0.24, 0.4]} /><meshStandardMaterial color="#22262b" roughness={0.4} metalness={0.3} /></mesh>
+          <mesh position={[-1, 1.16, 0]}><boxGeometry args={[0.7, 0.12, 0.5]} /><meshStandardMaterial color="#1f7a72" roughness={0.85} /></mesh>
+          <mesh position={[0, 1.7, -0.55]}><boxGeometry args={[1.1, 1.5, 0.04]} /><meshStandardMaterial color="#b9d4d8" metalness={0.9} roughness={0.08} /></mesh>
+        </group>
+        {/* changing-room curtain corner */}
+        <group position={[-TT0.w / 2 + 1.6, 0, TT0.d / 2 - 1.6]}>
+          <mesh position={[0, 1.3, 0]} castShadow><boxGeometry args={[2.2, 2.6, 0.08]} /><meshStandardMaterial color="#7a2e2e" roughness={0.95} /></mesh>
+        </group>
+        <mesh position={[0, 1.4, TT0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#17303a" emissive="#ffb340" emissiveIntensity={0.3} /></mesh>
       </group>
     </group>
   );
