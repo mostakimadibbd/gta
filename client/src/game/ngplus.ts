@@ -21,7 +21,9 @@
 // marina rental (endRental — the boat is collected, never kept),
 // any race, tram/bus rides, world events, hold prompts and any
 // in-progress job (Phase 21 audit: taxi/delivery/tow/farm phases
-// and the tow tether — they used to leak across the reset) — so no
+// and the tow tether — they used to leak across the reset; the
+// Phase 22 odd jobs — courier chain + the valet's customer car —
+// joined the list the phase they shipped) — so no
 // half-reset state can leak into the new run. Wanted is cleared:
 // the new story starts, as the first one did, with a clean record.
 //
@@ -32,7 +34,7 @@ import { M, NGP, persist, endMission } from "./missionState";
 import { cancelEscort, ESCORT } from "./escort";
 import { standDownDispatch } from "./dispatch";
 import { RENT, endRental } from "./rentals";
-import { J } from "./jobs";
+import { J, endValetJob, collectValetCar } from "./jobs";
 import { resetDrift } from "./drift";
 import { pushPhoneMsg } from "./phone";
 import { pushNews } from "./feed";
@@ -71,6 +73,18 @@ export function startNewGamePlus(): number {
   J.delPhase = "idle"; J.delLeg = 0; J.delPoint = null;
   J.towPhase = "idle"; J.towCarId = -1; J.towHooked = false; J.towStillT = 0;
   J.farmPhase = "idle"; J.farmLoad = 0;
+  // Phase 22: the odd jobs join the stand-down list. The courier
+  // chain is pure state — reset it. The valet job holds a WORLD
+  // object: if the player is sitting in the customer's car, step
+  // them out first (the rental pattern above), then end the job,
+  // which collects the car — a guest's car must not leak into the
+  // new run either.
+  J.courierPhase = "idle"; J.courierLeg = 0; J.courierPoint = null; J.courierLeft = 0;
+  if (J.valetPhase !== "idle" || J.valetCarId >= 0) {
+    if (G.driving && G.activeCarId === J.valetCarId) { G.driving = false; G.activeCarId = -1; }
+    endValetJob(false);
+    if (J.valetCollect) { collectValetCar(); J.valetCollect = false; }
+  }
   resetDrift();
   G.tramRide = -1; G.busRide = -1;
   G.eventNow = null;

@@ -11,7 +11,7 @@ import { CAR_MODELS, DEALER_CARS } from "../world";
 import { M, NGP } from "../game/missionState";
 import { startNewGamePlus } from "../game/ngplus";
 import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
-import { J, jobStats, fmtTime, RACES, BAY_CIRCUIT, SPARROW_RUN } from "../game/jobs";
+import { J, jobStats, fmtTime, RACES, BAY_CIRCUIT, SPARROW_RUN, VALET_FRONTAGES } from "../game/jobs";
 import { cup, CUP_POINTS, CUP_CHAMPION_POINTS, cupPointsTotal, cupRoundsDone, resetCup } from "../game/cup";
 import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet, bizLevel, upgradeCost, upgradeBusiness, staffBonusNow, isNightNow, LOAN, LOAN_TIERS, borrowLoan, repayLoan } from "../game/economy";
 import { staffOnShiftNow } from "../game/staffworld";
@@ -305,11 +305,24 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
               <span><b>Start farm shift</b><small>Take the farm pickup at the Downs barn · $120 per load + $150 shift bonus</small></span><span>›</span>
             </button>
             <div className="bank-row"><span>Farm loads hauled</span><b>{jobStats.farmLoads} · ${jobStats.farmEarned.toLocaleString()}</b></div>
+            <h3 className="phone-subhead">Odd jobs board — valet &amp; courier</h3>
+            <div className="bank-row"><span>Valet status</span><b>{J.valetPhase === "idle" ? "Off the hook board" : J.valetPhase === "pickup" ? `Collect the car at ${VALET_FRONTAGES[J.valetFront]?.name ?? "the frontage"}` : `Parking — ${Math.max(0, Math.ceil(J.valetLeft))}s left, keep her unmarked`}</b></div>
+            <button type="button" className="phone-row" onClick={() => { J.wantValet = true; onClose(); }}>
+              <span><b>Take a valet job</b><small>A guest's car at Club Solace, Hotel Northgate or the Coral resort · $90 − $6/damage point (floor $20) + $30 unmarked</small></span><span>›</span>
+            </button>
+            <div className="bank-row"><span>Courier status</span><b>{J.courierPhase === "idle" ? "No chain running" : `Drop ${J.courierLeg + 1}/3 — ${J.courierPoint?.name ?? ""} · ${Math.max(0, Math.ceil(J.courierLeft))}s (clock runs on foot / bicycle only)`}</b></div>
+            <button type="button" className="phone-row" onClick={() => { J.wantCourier = true; onClose(); }}>
+              <span><b>Start courier chain</b><small>3 drops on foot or bicycle · $45 a drop + $60 full-chain bonus</small></span><span>›</span>
+            </button>
+            <div className="bank-row"><span>Valet parks</span><b>{jobStats.valetJobs} · ${jobStats.valetEarned.toLocaleString()}</b></div>
+            <div className="bank-row"><span>Courier drops</span><b>{jobStats.courierDrops} · ${jobStats.courierEarned.toLocaleString()}</b></div>
             <h3 className="phone-subhead">Earnings</h3>
             <div className="bank-row"><span>Taxi fares</span><b>{jobStats.taxiFares} · ${jobStats.taxiEarned.toLocaleString()} · best tip ${jobStats.taxiBestTip}</b></div>
             <div className="bank-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
             <div className="bank-row"><span>🛞 Drifting</span><b>best chain {jobStats.bestDrift.toLocaleString()} pts · {jobStats.driftBanked.toLocaleString()} banked · ${jobStats.driftEarned.toLocaleString()}</b></div>
+            <div className="bank-row"><span>Valet</span><b>{jobStats.valetJobs} parks · ${jobStats.valetEarned.toLocaleString()}</b></div>
+            <div className="bank-row"><span>Courier</span><b>{jobStats.courierDrops} drops · ${jobStats.courierEarned.toLocaleString()}</b></div>
             <LeaderboardRows />
           </div>
         )}
@@ -488,6 +501,8 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="phone-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
             <div className="phone-row"><span>Tow</span><b>{jobStats.towDeliveries} drops · ${jobStats.towEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Farm work</span><b>{jobStats.farmLoads} loads · ${jobStats.farmEarned.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Valet</span><b>{jobStats.valetJobs} parks · ${jobStats.valetEarned.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Courier</span><b>{jobStats.courierDrops} drops · ${jobStats.courierEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Fishing</span><b>{jobStats.fishCaught} caught · ${jobStats.fishEarned.toLocaleString()}{jobStats.bestFish ? ` · best ${jobStats.bestFish.name} ${jobStats.bestFish.cm}cm` : ""}</b></div>
             <div className="phone-row"><span>Portfolio</span><b>${portfolioValue().toFixed(0)} ({portfolioPL() >= 0 ? "+" : "−"}${Math.abs(portfolioPL()).toFixed(0)})</b></div>
             <div className="phone-row"><span>Business income</span><b>${dailyIncomeTotal().toLocaleString()}/day</b></div>

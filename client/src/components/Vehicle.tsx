@@ -13,6 +13,7 @@ import { SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
 import { completeBreakIn, carAlarms } from "../game/theft";
 import { J } from "../game/jobs";
 import { tickDrift, resetDrift } from "../game/drift";
+import { honkHorn } from "../game/horn";
 import { tier } from "../game/quality";
 import { padKeys, padAxes } from "../game/gamepad";
 import { touchSteer } from "../game/touch";
@@ -144,7 +145,7 @@ export default function Vehicle(p: Props) {
       if (isBind(e, "sprint") && G.driving) keys.current.add("shift");
       // Phase 9: Shift/Ctrl are the plane's climb/descend controls
       if ((key === "shift" || key === "control") && G.driving) keys.current.add(key);
-      if (key === "b" && G.driving && !e.repeat) { sfx.horn(); e.preventDefault(); }
+      if (key === "b" && G.driving && !e.repeat) { honkHorn(); e.preventDefault(); } // Phase 22: the street hears it now (game/horn.ts)
       if ((isBind(e, "interact") || key === "f") && !e.repeat) {
         // Phase 13: while riding the tram, E belongs to the tram
         // (App fires G.interact) — never enter a car off the guideway

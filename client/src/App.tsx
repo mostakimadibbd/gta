@@ -28,6 +28,7 @@ import StaffWorld from "./components/StaffWorld";
 import { BUS, BUS_STOPS_RIDE } from "./game/bus";
 import Phase9Ui from "./components/Phase9Ui";
 import { jobTarget } from "./game/jobs";
+import { isRushNow } from "./game/rhythm";
 import { currentMiniUi, clearClothingOverride, type MiniUi } from "./game/phase8";
 import { galleryAdd, clearLookOverride } from "./game/phase9";
 import { padCam } from "./game/gamepad";
@@ -382,8 +383,8 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; aiming: boolean; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0, aiming: false };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; aiming: boolean; rush: boolean; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0, aiming: false, rush: false };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -961,6 +962,7 @@ export default function App() {
         mini: currentMiniUi(), // Phase 8: fishing/gym minigame bar (8 Hz poll)
         fps: showFps() ? Math.round(perf.fps) : 0,
         aiming: G.aiming, // Phase 9: free-aim crosshair
+        rush: isRushNow(), // Phase 22: city-rhythm chip on the clock line (same 8 Hz poll)
       });
       setCamFlash(nowS() - G.camFlashAt < 0.22);
       // ---- Phase 6 flow bits polled with the HUD: door fade, respawn
@@ -1335,6 +1337,7 @@ export default function App() {
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="9" cy="9" r="3.4" /><path d="M9 2.5v1.6M2.5 9h1.6M4.9 4.9l1.1 1.1M13.1 4.9l-1.1 1.1" /><path d="M10 20h7.2a3.4 3.4 0 0 0 .6-6.7 4.6 4.6 0 0 0-8.7 1A3.2 3.2 0 0 0 10 20Z" /></svg>
               {hud.weather}
             </div>
+            {hud.rush && <div className="rush-chip" title="Rush hour (07:00–09:00 · 17:00–19:00) — the streets and pavements fill up, and the Cityliner runs a tighter stop">🚦 Rush hour</div>}
             <div className="minimap-disc"><canvas ref={minimapRef} className="minimap" width={148} height={148} aria-label="Minimap" /></div>
             <div className="health-wrap"><div className="health-bar" style={{ width: `${hud.health}%` }} /><span>{hud.health}</span></div>
             <div className="stamina-wrap" title="Stamina — sprint, swim and pedal drain it"><div className={`stamina-bar ${hud.stamina <= 20 ? "low" : ""}`} style={{ width: `${hud.stamina}%` }} /></div>

@@ -1273,3 +1273,39 @@ rows). No new eager chunks.
   StaffWorld.tsx, the Vehicle feel blocks). No new chunks. The
   staff signature check is one short string build per frame; the
   feel systems are scalar math on values the step already computes.
+
+## Phase 22 — City Rhythm & Odd Jobs addendum
+
+- **City rhythm:** no new visuals — the change is population and
+  timing. At rush the existing ambient pool simply runs fuller
+  (share ×1.3 toward the High cap) and the pavements carry the
+  full crowd fraction more of the day; at deep night both thin to
+  ×0.7, so 03:00 reads emptier than 18:00 ever did. The one new
+  HUD element is the **Rush hour chip**: amber glass pill
+  (rgba(64,42,8,.78) ground, #ffcf87 text, amber border) under the
+  weather chip — squarely in the harbour teal/amber palette, no
+  new colours introduced.
+- **Valet cars:** the three customer cars reuse existing CarBody
+  shells (coupe / SUV / classic) in guest colours (slate, harbour
+  blue, oxblood) with "Guest's …" model names — no new geometry.
+  The objective is the standard amber job pillar at the bay; the
+  frontage spawn points are the world's existing hail kerbs, so
+  the car reads as a guest's car at a hotel door, not a prop.
+- **Courier sprint:** marker-only (the standard job pillar + GPS
+  route); the countdown lives in the marker label and the Jobs
+  app, so the sprint reads through the game's existing job
+  language. No new meshes.
+- **Horn reactions:** the ped startle is the existing knock-slide
+  integration plus the arms-up flinch pose (Phase 6 A6 language) —
+  a hop aside, not a new animation. The traffic pull-over reuses
+  the Phase 17 swerve mesh offset (same 1.9u lateral path, now
+  shared and clamped), so a honked-at car eases kerb-ward exactly
+  the way a cargo-dodging car already does; the AI underneath
+  never moves.
+- **Perf sanity:** initial-load JS 817.0 kB gzip (index 441.7 +
+  three 178.2 + react-three 185.8 + css 10.6 + html 0.7) vs Phase
+  21's 814.4 — +0.3%, the phase's own code (rhythm.ts, horn.ts,
+  the jobs/Phase7/Phone additions). No new chunks; cc0Data stays
+  lazy. Rhythm is two scalar reads per traffic step; the horn
+  reaction runs only on a horn event (cooldown-gated); the Rush
+  chip rides the existing 8 Hz HUD poll.

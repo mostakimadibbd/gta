@@ -22,6 +22,8 @@ import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 import { seedRagdoll, stepRagdoll, poseRigFromRagdoll } from "../game/ragdoll";
 import { tickDispatch, stepDispatchDrive } from "../game/dispatch";
 import { ESCORT, startEscort, stepEscort, cancelEscort } from "../game/escort";
+import { rhythmFactor } from "../game/rhythm";
+import { HORN } from "../game/horn";
 
 // Phase 13: seasonal sun-warp scratch (written by seasonSun each frame)
 const _sunWarp: SunWarp = { elev: 0, ang: 0 };
@@ -385,6 +387,10 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   const trafficBrakeRefs = useRef<Array<{ current: boolean }>>(G.traffic.map(() => ({ current: false })));
   const copSteerRefs = useMemo(() => G.cops.map(() => ({ current: 0 })), []);
   const honkCd = useRef(0);
+  // Phase 22: player-horn reactions (game/horn.ts) — last event
+  // consumed + the 1.5 s reaction cooldown clock
+  const hornSeq = useRef(0);
+  const hornReactAt = useRef(-9);
   const frameNo = useRef(0);
   const crashCd = useRef(0);
   // Phase 12: fixed-step accumulator + sim tick (AI staggering slices)
@@ -497,11 +503,52 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     honkCd.current = Math.max(0, honkCd.current - dt);
     crashCd.current = Math.max(0, crashCd.current - dt);
     const hourNow = (G.dayTime * 24 + 6) % 24;
-    const rush = (hourNow >= 7 && hourNow < 9.5) || (hourNow >= 16.5 && hourNow < 19);
-    // Phase 16: player performance levers, read live every step
+    // Phase 22: CITY RHYTHM (game/rhythm.ts) is now the single
+    // source for the rush peaks — it replaces this loop's old
+    // private window (07:00–09:30 / 16:30–19:00), so the reserve
+    // pool, the crowds, the bus dwell and the HUD chip all agree.
+    const rhythm = rhythmFactor(hourNow);
+    const rush = rhythm > 1;
+    // Phase 16: player performance levers, read live every step.
+    // Phase 22: the rhythm MULTIPLIES the traffic lever's share,
+    // capped at 1 — the High-density cap (the full ambient pool);
+    // rhythm can never activate more than High already allows.
     const streamScale = viewStreamScale();
     const streamFar = 165 * streamScale, streamNear = 140 * streamScale;
-    const densShare = trafficDensityShare();
+    const densShare = Math.min(1, trafficDensityShare() * rhythm);
+    // ---- Phase 22: HORN REACTIONS (game/horn.ts) — the player's
+    // horn, heard by the street. Consumed here, in the world step:
+    // at most one reaction per 1.5 s no matter how the horn is
+    // mashed. Peds within ~8u startle (a step-aside hop on the
+    // knock-velocity channel + the flinch pose); a traffic car
+    // directly ahead within ~10u may pull toward the kerb for ~2 s
+    // via the swerve-offset path (visual only — hornPull/hornSwerve
+    // further down). Service units, the bus and dispatched cars
+    // never react; cops aren't traffic. No wanted effect, ever. ----
+    if (HORN.seq !== hornSeq.current) {
+      hornSeq.current = HORN.seq;
+      if (t - hornReactAt.current >= 1.5) {
+        hornReactAt.current = t;
+        const sh = Math.sin(HORN.heading), ch = Math.cos(HORN.heading);
+        for (const ped of G.peds) {
+          if (!ped.active || t < ped.downUntil) continue;
+          const dx = ped.x - HORN.x, dz = ped.z - HORN.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > 8 ** 2 || d2 < 0.01) continue;
+          const d = Math.sqrt(d2);
+          ped.kvx = (ped.kvx ?? 0) + (dx / d) * 2.4;
+          ped.kvz = (ped.kvz ?? 0) + (dz / d) * 2.4;
+          ped.flinchUntil = Math.max(ped.flinchUntil ?? 0, t + 0.35);
+        }
+        for (const car of G.traffic) {
+          if (car.dormant || car.dispatch || car.svc || car.busRoute || car.parked || car.damage >= 100) continue;
+          const dx = car.x - HORN.x, dz = car.z - HORN.z;
+          const ahead = dx * sh + dz * ch;              // along the horn's forward
+          const lateral = dx * ch - dz * sh;            // sideways from it
+          if (ahead > 1.5 && ahead < 10 && Math.abs(lateral) < 2.6 && Math.random() < 0.7) car.hornPull = 2;
+        }
+      }
+    }
     for (let ti = 0; ti < G.traffic.length; ti++) {
       const car = G.traffic[ti];
       const distP = Math.hypot(car.x - px, car.z - pz);
@@ -526,7 +573,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // it died for the rest of the game-day instead of healing off-screen
       // (the wreck set is persisted day-scoped by Phase9; the tow job and
       // the diversion scan there keep traffic flowing around it)
-      if (car.damage >= 100) { car.speed = 0; continue; }
+      if (car.damage >= 100) { car.speed = 0; car.hornPull = 0; car.hornSwerve = 0; continue; } // Phase 22: a wreck never keeps a horn offset
       const prevSpeed = car.speed;
       // ---- the bus follows its waypoint route and dwells at stops ----
       if (car.busRoute) {
@@ -537,7 +584,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           const dx = wp.x - car.x, dz = wp.z - car.z;
           const dist = Math.hypot(dx, dz);
           if (dist < 3.2) {
-            if (wp.stop) car.stopT = 4.5;
+            // Phase 22: at rush hour the Cityliner dwells shorter
+            // (3.2 s vs 4.5 s) — busier service, tighter headway.
+            if (wp.stop) car.stopT = rush ? 3.2 : 4.5;
             car.wp = ((car.wp ?? 1) + 1) % BUS_ROUTE.length;
           }
           const desired = Math.atan2(dx, dz);
@@ -674,6 +723,17 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         car.cargoSwerve *= Math.max(0, 1 - dt * 0.45);
         if (Math.abs(car.cargoSwerve) < 0.02) car.cargoSwerve = 0;
       }
+      // ---- Phase 22: HORN PULL-OVER — while hornPull runs down
+      // (~2 s), the car eases toward its kerb: hornSwerve points
+      // away from the road centre (the sign of its lane offset) and
+      // fades over the last half-second. syncMeshes renders it as a
+      // lateral offset on the same path as cargoSwerve; the AI's
+      // lane/fixed/speed are never touched. ----
+      if (car.hornPull) {
+        car.hornPull = Math.max(0, car.hornPull - dt);
+        car.hornSwerve = (car.lane >= 0 ? 1 : -1) * Math.min(1, car.hornPull / 0.5);
+        if (car.hornPull <= 0) car.hornSwerve = 0;
+      }
       // turn at intersections (road lists are per-city)
       const crossRoads = car.side === "coral" ? (car.axis === "x" ? CORAL_ROAD_X : CORAL_ROAD_Z)
         : car.side === "north" ? (car.axis === "x" ? NORTH_ROAD_X : NORTH_ROAD_Z) : ROAD_COORDS;
@@ -727,8 +787,11 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     G.peds.forEach((ped, i) => {
       let frac = elevNow > 0.05 ? 1 : 0.45; // deep night: under half the walkers
       if (ped.zone === "The Docks") frac = elevNow > -0.35 && elevNow < 0.55 ? 1 : 0.55; // dusk beach crowd
-      if (rush) frac = Math.min(1, frac + 0.25); // morning/evening pavement peaks
-      frac = Math.min(1, frac * pedFactor);
+      // Phase 22: the old flat +0.25 rush bump is now the rhythm
+      // multiplier (game/rhythm.ts) — ×1.3 at the peaks, ×0.7 in
+      // the deep night — composed multiplicatively with the
+      // player's ped-density lever and capped at 1, the High cap.
+      frac = Math.min(1, frac * pedFactor * rhythm);
       ped.active = ((i * 7) % G.peds.length) / G.peds.length < frac;
       // never density-culled: a downed ped (the scene must resolve)
       // and the witness currently reporting the player
@@ -1564,7 +1627,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     }
     function syncMeshes(tt: number) {
       frameNo.current += 1;
-      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { const sw = c.cargoSwerve ?? 0; g.visible = !c.dormant; g.position.set(c.x + (c.axis === "z" ? sw * 1.9 : 0), groundYAt(c.x, c.z), c.z + (c.axis === "x" ? sw * 1.9 : 0)); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, c.roll ?? 0); } const bc = beaconRefs.current[i]; if (bc) bc.visible = !!c.dispatch && (tt * 2.4) % 1 < 0.62; });
+      G.traffic.forEach((c, i) => { const g = trafficRefs.current[i]; if (g) { const sw = THREE.MathUtils.clamp((c.cargoSwerve ?? 0) + (c.hornSwerve ?? 0), -1.2, 1.2); g.visible = !c.dormant; g.position.set(c.x + (c.axis === "z" ? sw * 1.9 : 0), groundYAt(c.x, c.z), c.z + (c.axis === "x" ? sw * 1.9 : 0)); g.rotation.order = "YXZ"; g.rotation.set(c.pitch, c.heading, c.roll ?? 0); } const bc = beaconRefs.current[i]; if (bc) bc.visible = !!c.dispatch && (tt * 2.4) % 1 < 0.62; });
       const reportT = performance.now() / 1000;
       G.peds.forEach((pd, i) => {
         const g = pedRefs.current[i]; if (!g) return;

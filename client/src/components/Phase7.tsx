@@ -17,6 +17,9 @@ import {
   J, HAIL_POINTS, DEST_POINTS, PICKUP_POINTS, RACES, RACE_PRIZES, BAY_CIRCUIT, SPARROW_RUN,
   jobStats, persistJobStats, jobTarget, fmtTime, jobBusy, drivingKind, type RaceDef, type Poi,
   FARM_LOAD_POINT, FARM_DROP_POINT, FARM_PAY_PER_LOAD, FARM_SHIFT_BONUS, FARM_PICKUP_SPAWN_ID,
+  VALET_FRONTAGES, VALET_BASE_PAY, VALET_DAMAGE_PER_POINT, VALET_PAY_FLOOR, VALET_CLEAN_BONUS,
+  spawnValetCar, collectValetCar, endValetJob,
+  COURIER_PAY_PER_DROP, COURIER_CHAIN_BONUS, COURIER_DROPS, courierLegSeconds,
 } from "../game/jobs";
 import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, setHomePref, persistEco } from "../game/economy";
 import { RENT, RENTAL_DOCK, RENTAL_FEE, rentBoat, endRental, rentalCar } from "../game/rentals";
@@ -102,6 +105,7 @@ export default function Phase7Systems() {
   const crateRefs = useRef<Array<THREE.Mesh | null>>([]);
   const countStage = useRef(-1);
   const raceOutAt = useRef(-1); // race abort timer (out of car)
+  const valetOutAt = useRef(-1); // Phase 22: valet abort timer (out of the customer's car)
 
   useEffect(() => {
     const dn = (e: KeyboardEvent) => { if (isBind(e, "interact") && !e.repeat) eDownAt.current = performance.now() / 1000; };
@@ -312,6 +316,130 @@ export default function Phase7Systems() {
             J.farmPhase = "load";
             toast(`🌾 Load delivered +$${pay} — back to the barn for more (${J.farmLoad}/3)`);
           }
+        }
+      }
+    }
+
+    // ================= ODD JOBS: VALET (Phase 22) =================
+    // The customer's car (game/jobs.ts spawnValetCar) waits at a
+    // hotel/club frontage. Keys change hands when the player gets
+    // IN; the park leg is timed from that moment, and the pay is
+    // settled on the damage the car gained while it was theirs.
+    if (J.wantValet) {
+      J.wantValet = false;
+      if (J.valetPhase === "idle" && !jobBusy()) {
+        J.valetFront = Math.floor(Math.random() * VALET_FRONTAGES.length);
+        J.valetCarId = spawnValetCar(J.valetFront);
+        J.valetPhase = "pickup"; J.valetCollect = false; valetOutAt.current = -1;
+        const f = VALET_FRONTAGES[J.valetFront];
+        toast(`🅿️ Valet: a guest at ${f.name} is handing over their keys — the car's at the frontage (amber marker).`);
+        pushPhoneMsg("Valet Stand", `New keys on the hook: ${f.name}. $${VALET_BASE_PAY} to park her, minus $${VALET_DAMAGE_PER_POINT} a point of new damage (never under $${VALET_PAY_FLOOR}), plus $${VALET_CLEAN_BONUS} if she arrives unmarked. The bay's lit on your map.`);
+      } else toast("Finish what you're running first — then we'll talk valet work.");
+    }
+    // the job ended while the player was still in the car — the
+    // stand collects it the moment they step out (rental discipline)
+    if (J.valetCollect && J.valetCarId >= 0 && !(G.driving && G.activeCarId === J.valetCarId)) {
+      collectValetCar(); J.valetCollect = false;
+      toast("🅿️ The valet stand collected the car.");
+    }
+    if (J.valetPhase !== "idle" && J.valetFront >= 0) {
+      const f = VALET_FRONTAGES[J.valetFront];
+      const vc = J.valetCarId >= 0 ? G.cars[J.valetCarId] : null;
+      if (vc && vc.damage >= 100) {
+        endValetJob(true); // the wreck stays in the world, like a rental wreck
+        pushPhoneMsg("Valet Stand", "You TOTALLED a guest's car?! The stand's writing it off — and your name's mud on the hook board.");
+        toast("🅿️ Valet failed — the customer's car is wrecked.");
+        sfx.dryFire();
+      } else if (J.valetPhase === "pickup") {
+        if (car && vc && car === vc) {
+          J.valetPhase = "park";
+          J.valetDamage0 = vc.damage;
+          const dist = Math.hypot(f.bayX - f.x, f.bayZ - f.z);
+          J.valetEndsAt = t + Math.round(dist / 6 + 30);
+          J.valetLeft = J.valetEndsAt - t;
+          bark("Guest", "Bay's lit on your map — and I just had her detailed, friend.");
+          toast(`🅿️ Keys in hand — park it in the ${f.name} bay before the clock runs out.`);
+        }
+      } else if (J.valetPhase === "park" && vc) {
+        J.valetLeft = Math.max(0, J.valetEndsAt - t);
+        if (car && car === vc) {
+          valetOutAt.current = -1;
+          if ((vc.state.x - f.bayX) ** 2 + (vc.state.z - f.bayZ) ** 2 < 4.2 ** 2 && speed < 1) {
+            const dmg = Math.max(0, Math.round(vc.damage - J.valetDamage0));
+            let pay = Math.max(VALET_PAY_FLOOR, VALET_BASE_PAY - dmg * VALET_DAMAGE_PER_POINT);
+            if (dmg <= 0) pay += VALET_CLEAN_BONUS;
+            G.cash += pay; G.lifetimeEarned += pay;
+            jobStats.valetJobs += 1; jobStats.valetEarned += pay;
+            persistJobStats();
+            endValetJob(false);
+            pushPhoneMsg("Valet Stand", dmg <= 0
+              ? `Perfect park — $${pay} (incl. the $${VALET_CLEAN_BONUS} unmarked bonus). The guest never knew.`
+              : `Parked, $${pay} — ${dmg} point${dmg === 1 ? "" : "s"} of new damage at $${VALET_DAMAGE_PER_POINT} each.`);
+            toast(`🅿️ Valet parked — +$${pay}${dmg <= 0 ? " (unmarked!)" : ""}`);
+            sfx.cash();
+          } else if (J.valetLeft <= 0) {
+            endValetJob(false);
+            pushPhoneMsg("Valet Stand", "Too slow — the guest took a cab and the stand took the keys back. No pay.");
+            toast("🅿️ Valet failed — out of time.");
+            sfx.dryFire();
+          }
+        } else {
+          // out of the customer's car: 5 s grace, the race rule
+          if (valetOutAt.current < 0) valetOutAt.current = t;
+          if (t - valetOutAt.current > 5) {
+            endValetJob(false);
+            pushPhoneMsg("Valet Stand", "You walked away from a guest's car — the stand collected it. No pay.");
+            toast("🅿️ Valet failed — you left the customer's car.");
+            sfx.dryFire();
+          }
+        }
+      }
+    }
+
+    // ================= ODD JOBS: COURIER SPRINT (Phase 22) =================
+    // Three drops in sequence, on foot or by bicycle. The countdown
+    // only runs in courier mode — sitting in a car pauses it (the
+    // marker label says so) — and each drop pays on arrival.
+    if (J.wantCourier) {
+      J.wantCourier = false;
+      if (J.courierPhase === "idle" && !jobBusy()) {
+        J.courierPhase = "run"; J.courierLeg = 0;
+        J.courierPoint = pick(DEST_POINTS);
+        J.courierLeft = courierLegSeconds(Math.hypot(J.courierPoint.x - px, J.courierPoint.z - pz));
+        toast("🚴 Courier chain started — first drop lit on the marker. Feet and pedals only: the clock pauses while you drive.");
+        pushPhoneMsg("Sable Courier Co-op", `Three drops, one chain. $${COURIER_PAY_PER_DROP} a drop, $${COURIER_CHAIN_BONUS} more if you land all three. Run or ride — cars don't count, and the clock knows it.`);
+      } else toast("Finish what you're running first — then we'll talk courier work.");
+    }
+    if (J.courierPhase === "run" && J.courierPoint) {
+      const onBike = drivingKind() === "bicycle";
+      const eligible = !G.driving || onBike;
+      if (eligible) {
+        J.courierLeft -= dt;
+        const cx = onBike && car ? car.state.x : px, cz = onBike && car ? car.state.z : pz;
+        if ((cx - J.courierPoint.x) ** 2 + (cz - J.courierPoint.z) ** 2 < 3.4 ** 2) {
+          G.cash += COURIER_PAY_PER_DROP; G.lifetimeEarned += COURIER_PAY_PER_DROP;
+          jobStats.courierDrops += 1; jobStats.courierEarned += COURIER_PAY_PER_DROP;
+          J.courierLeg += 1;
+          sfx.cash();
+          if (J.courierLeg >= COURIER_DROPS) {
+            G.cash += COURIER_CHAIN_BONUS; G.lifetimeEarned += COURIER_CHAIN_BONUS;
+            jobStats.courierEarned += COURIER_CHAIN_BONUS; persistJobStats();
+            J.courierPhase = "idle"; J.courierPoint = null;
+            pushPhoneMsg("Sable Courier Co-op", `Chain complete — last drop +$${COURIER_PAY_PER_DROP} and the $${COURIER_CHAIN_BONUS} full-chain bonus. The harbour's fastest legs strike again.`);
+            toast(`🚴 Courier chain complete! +$${COURIER_PAY_PER_DROP} drop + $${COURIER_CHAIN_BONUS} bonus`);
+          } else {
+            persistJobStats();
+            const from = J.courierPoint;
+            const next = pick(DEST_POINTS.filter((d) => d !== from));
+            J.courierPoint = next;
+            J.courierLeft = courierLegSeconds(Math.hypot(next.x - from.x, next.z - from.z));
+            toast(`🚴 Drop ${J.courierLeg}/${COURIER_DROPS} +$${COURIER_PAY_PER_DROP} — next drop lit (${next.name})`);
+          }
+        } else if (J.courierLeft <= 0) {
+          J.courierPhase = "idle"; J.courierPoint = null;
+          pushPhoneMsg("Sable Courier Co-op", "The clock beat you — chain closed. Drops you landed stay paid; the bonus walks.");
+          toast("🚴 Courier chain failed — out of time on the leg.");
+          sfx.dryFire();
         }
       }
     }

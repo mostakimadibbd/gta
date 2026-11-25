@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { sfx } from "../game/audio";
+import { honkHorn } from "../game/horn";
 import { toggleGyro, gyroEnabled, gyroPreferred } from "../game/gyro";
 import { touchMove, setTouchSteer } from "../game/touch";
 
@@ -154,7 +154,7 @@ export default function TouchControls({ driving, onPause }: { driving: boolean; 
       ) : (
         <div className="touch-actions">
           <HoldButton label="EXIT" k="e" />
-          <HoldButton label="HORN" onTap={() => sfx.horn()} />
+          <HoldButton label="HORN" onTap={() => honkHorn()} />
           <HoldButton label="DRIFT" k=" " />
           <HoldButton label="BRAKE" k="s" className="pedal" />
           <HoldButton label="GAS" k="w" className="pedal gas" />

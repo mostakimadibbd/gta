@@ -289,6 +289,28 @@ corrupt harbour boss's debt ledger.
   confirm promises). Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜**
   (the employees 🟡 grew — staff are in the world now; what remains
   is rota simulation and management play, a scope call).
+- **Phase 22 — "City Rhythm & Odd Jobs"** — **City rhythm**: the
+  city now breathes with the clock — one rhythm function drives
+  every density path: at **rush hour** (07:00–09:00 and 17:00–
+  19:00) traffic and crowds scale ×1.3 and the Cityliner dwells
+  shorter at stops; in the **deep night** (00:00–05:00) the city
+  thins to ×0.7. It multiplies your density settings (never past
+  the High caps; buses, taxis, emergency units and staff are never
+  thinned out), and a **Rush hour** chip shows by the HUD clock
+  during peaks. **Odd jobs board** (Phone → Jobs): **Valet** — a
+  guest's car waits at Club Solace, Hotel Northgate or the Coral
+  resort; park it in the marked bay against the clock for $90,
+  minus $6 per point of damage you add (floor $20), plus $30 if it
+  arrives unmarked. **Courier Sprint** — three drops in sequence
+  on foot or bicycle, each on its own countdown (the clock pauses
+  while you drive — feet and pedals only), $45 a drop + $60 for
+  the full chain. **The horn matters now**: honk (B) and peds
+  nearby startle aside; a car directly ahead may pull toward the
+  kerb for a couple of seconds — a cosmetic touch of life, on a
+  short cooldown, and it never raises wanted. The round opens
+  with an audit of Phase 21 (staff shifts, driving feel, balance
+  numbers — all verified clean, no fixes needed). Ledger
+  unchanged: **86 ✅ · 7 🟡 · 0 ⬜**.
 - **Phase 10 — realism + physics pass** (no new features): the
   post chain gains **radial chromatic aberration** and a stricter
   bloom threshold; **fog colour follows the day cycle**; **stars**

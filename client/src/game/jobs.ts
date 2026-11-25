@@ -3,7 +3,7 @@
 // (they never touch M.active / story progress) but share the objective
 // marker idiom: Phase7.tsx renders the pillar at jobTarget() and the big
 // map draws the GPS route to it. Stats persist in localStorage.
-import { G } from "./store";
+import { G, LASTCAR, clearLastCar } from "./store";
 
 export interface Poi { name: string; x: number; z: number; }
 
@@ -57,6 +57,9 @@ export interface JobStats {
   bestDrift: number;    // best single banked chain, points
   driftBanked: number;  // lifetime banked points
   driftEarned: number;  // lifetime cash paid out by banking
+  // ---- Phase 22: odd jobs board (valet + courier sprint) ----
+  valetJobs: number; valetEarned: number;
+  courierDrops: number; courierEarned: number;
 }
 export const jobStats: JobStats = {
   taxiFares: 0, taxiEarned: 0, taxiBestTip: 0, deliveries: 0, deliveryEarned: 0,
@@ -64,6 +67,7 @@ export const jobStats: JobStats = {
   towDeliveries: 0, towEarned: 0, fishCaught: 0, fishEarned: 0, bestFish: null,
   farmLoads: 0, farmEarned: 0,
   bestDrift: 0, driftBanked: 0, driftEarned: 0,
+  valetJobs: 0, valetEarned: 0, courierDrops: 0, courierEarned: 0,
 };
 try {
   const raw = localStorage.getItem("harborfall-jobstats");
@@ -161,6 +165,22 @@ export const J = {
   wantFarm: false,                // set by the phone Jobs app
   farmPhase: "idle" as "idle" | "load" | "deliver",
   farmLoad: 0,                    // loads completed this shift (of 3)
+  // ---- Phase 22: ODD JOBS BOARD — VALET + COURIER SPRINT. Same
+  // shape as the other jobs (want flag from the phone, phase fields
+  // here, frame logic in Phase7.tsx). ----
+  wantValet: false,               // set by the phone Jobs app
+  valetPhase: "idle" as "idle" | "pickup" | "park",
+  valetFront: -1,                 // index into VALET_FRONTAGES
+  valetCarId: -1,                 // G.cars index of the customer's car
+  valetDamage0: 0,                // its damage when the player took the keys
+  valetEndsAt: 0,                 // clock-elapsed deadline for the park leg
+  valetLeft: 0,                   // seconds left, refreshed by Phase7 for the marker label
+  valetCollect: false,            // job over — collect the car once it's not driven
+  wantCourier: false,             // set by the phone Jobs app
+  courierPhase: "idle" as "idle" | "run",
+  courierLeg: 0,                  // drops completed this chain (of 3)
+  courierPoint: null as Poi | null,
+  courierLeft: 0,                 // seconds left on this leg's countdown
 };
 
 /** The world point the job/race marker pillar + GPS route should show. */
@@ -181,12 +201,20 @@ export function jobTarget(): { x: number; z: number; label: string } | null {
   if (J.towPhase === "deliver") return { x: -25, z: 100.6, label: "Tow job — deliver to Lina's yard" };
   if (J.farmPhase === "load") return { x: FARM_LOAD_POINT.x, z: FARM_LOAD_POINT.z, label: `Farm work — load crates at the barn (${J.farmLoad}/3 done)` };
   if (J.farmPhase === "deliver") return { x: FARM_DROP_POINT.x, z: FARM_DROP_POINT.z, label: `Farm work — deliver load ${J.farmLoad + 1}/3 to Harbour Wraps` };
+  if (J.valetPhase !== "idle" && J.valetFront >= 0) {
+    const f = VALET_FRONTAGES[J.valetFront];
+    if (J.valetPhase === "pickup") return { x: f.x, z: f.z, label: `Valet — collect the customer's car at ${f.name}` };
+    return { x: f.bayX, z: f.bayZ, label: `Valet — park it in the ${f.name} bay, unmarked (${Math.max(0, Math.ceil(J.valetLeft))}s)` };
+  }
+  if (J.courierPhase === "run" && J.courierPoint) {
+    return { x: J.courierPoint.x, z: J.courierPoint.z, label: `Courier — drop ${J.courierLeg + 1}/3 at ${J.courierPoint.name} (${Math.max(0, Math.ceil(J.courierLeft))}s)` };
+  }
   return null;
 }
 
 export const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 /** True while any job/race owns the player's attention (missions win). */
-export const jobBusy = () => J.taxiPhase !== "idle" || J.delPhase !== "idle" || !!J.race || J.towPhase !== "idle" || J.farmPhase !== "idle";
+export const jobBusy = () => J.taxiPhase !== "idle" || J.delPhase !== "idle" || !!J.race || J.towPhase !== "idle" || J.farmPhase !== "idle" || J.valetPhase !== "idle" || J.courierPhase !== "idle";
 
 /** Phase 16 farm-work anchors: the loading spot in front of the barn
  * (barn blocker spans z −106.2…−99.8 at x −111.2…−102.8; (−100.5,−97.5)
@@ -198,3 +226,96 @@ export const FARM_PAY_PER_LOAD = 120;
 export const FARM_SHIFT_BONUS = 150;
 export const FARM_PICKUP_SPAWN_ID = 31;
 export const drivingKind = () => (G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].kind : null);
+
+// ================================================================
+// Phase 22: ODD JOBS BOARD — VALET.
+// A customer's car waits at one of three hotel/club frontages; the
+// player takes the keys and parks it in the stand's marked bay
+// against the clock. Pay: $90 base, −$6 per point of damage the car
+// takes while it's yours (floor $20), +$30 if it arrives unmarked.
+// The car is a DYNAMIC, UNOWNED G.cars entry — the rental discipline
+// (game/rentals.ts) exactly: it is never owned, never fleet, never
+// stored, and never left as the session's last car; when the job
+// ends it is collected (immediately, or the moment the player steps
+// out of it). A wreck closes the job as a fail and stays in the
+// world, as the rental wreck does — a corpse doesn't pop out of
+// existence in front of the player.
+// ================================================================
+export interface ValetFrontage { name: string; x: number; z: number; bayX: number; bayZ: number; heading: number; }
+export const VALET_FRONTAGES: ValetFrontage[] = [
+  // Club Solace — door on the pier road (CLUB_EXT_DOOR 44,110.2);
+  // the bay is down the harbour road, a short clean run west.
+  { name: "Club Solace", x: 44, z: 106, bayX: 14, bayZ: 103.5, heading: Math.PI / 2 },
+  // Hotel Northgate — the hail kerb on the hotel block; the bay
+  // sits on the Northgate east–west road (z −216) west of it.
+  { name: "Hotel Northgate", x: 9, z: -226, bayX: -16, bayZ: -219.5, heading: Math.PI / 2 },
+  // Coral Shores resort strip — Goods frontage on the shore road;
+  // the bay is at the Coral crossroads (x 72 / z 224).
+  { name: "Coral Shores Resort", x: 48, z: 212, bayX: 75.5, bayZ: 224, heading: 0 },
+];
+export const VALET_BASE_PAY = 90;
+export const VALET_DAMAGE_PER_POINT = 6;
+export const VALET_PAY_FLOOR = 20;
+export const VALET_CLEAN_BONUS = 30;
+const VALET_CAR_KINDS = [
+  { kind: "coupe", model: "Guest's Kestrel Coupe", color: "#7a8894" },
+  { kind: "suv", model: "Guest's Harbour SUV", color: "#31435c" },
+  { kind: "classic", model: "Guest's Classic Saloon", color: "#6e3b2e" },
+] as const;
+
+/** Spawn the customer's car at a frontage. Returns its G.cars index. */
+export function spawnValetCar(frontIdx: number): number {
+  const f = VALET_FRONTAGES[frontIdx];
+  const spec = VALET_CAR_KINDS[frontIdx % VALET_CAR_KINDS.length];
+  G.cars.push({
+    id: 2200 + G.cars.length, x: f.x, z: f.z, heading: f.heading, color: spec.color,
+    model: spec.model, kind: spec.kind, owned: false,
+    state: { x: f.x, z: f.z, heading: f.heading, speed: 0 },
+    stolen: false, damage: 0, fuel: 80,
+    brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
+    flatTyre: false, tuneLvl: 0, brakeLvl: 0, driftTyres: false, pitchVel: 0, rollVel: 0,
+  });
+  return G.cars.length - 1;
+}
+
+/** Collect the customer's car: it leaves the world (the stand takes
+ * it back), and any last-car pointer at it is cleared first — the
+ * rental rule, verbatim. Safe to call when no valet car exists. */
+export function collectValetCar() {
+  const idx = J.valetCarId;
+  if (idx < 0) return;
+  const car = G.cars[idx];
+  if (LASTCAR.carIndex === idx) clearLastCar();
+  if (car && !car.storedAway) {
+    car.storedAway = true;
+    car.state = { x: 0, z: -500, heading: 0, speed: 0 };
+  }
+  J.valetCarId = -1;
+}
+
+/** End the valet job's paperwork (any reason). If the player is
+ * still sitting in the car it is collected on step-out instead
+ * (Phase7 watches J.valetCollect); otherwise collectValetCar runs
+ * now. A wrecked car is left where it lies, like the rental wreck. */
+export function endValetJob(wrecked: boolean) {
+  J.valetPhase = "idle"; J.valetFront = -1; J.valetEndsAt = 0;
+  if (wrecked) { if (LASTCAR.carIndex === J.valetCarId) clearLastCar(); J.valetCarId = -1; J.valetCollect = false; return; }
+  if (J.valetCarId >= 0 && G.driving && G.activeCarId === J.valetCarId) J.valetCollect = true;
+  else collectValetCar();
+}
+
+// ================================================================
+// Phase 22: ODD JOBS BOARD — COURIER SPRINT.
+// Three drop points in sequence, on foot or by bicycle (the job is
+// feet-and-pedals work; sitting in a car PAUSES the countdown —
+// the clock only runs while you're actually couriering). $45 per
+// drop on arrival, +$60 for completing the full chain. A leg whose
+// countdown runs out ends the chain (drops already paid stay paid).
+// Starting a new chain simply replaces the state — the old chain
+// has no world objects to clean up, so abandonment is total.
+// ================================================================
+export const COURIER_PAY_PER_DROP = 45;
+export const COURIER_CHAIN_BONUS = 60;
+export const COURIER_DROPS = 3;
+/** Seconds for a leg: distance-scaled, sprint-and-pedal friendly. */
+export const courierLegSeconds = (dist: number) => Math.round(dist / 5.5 + 22);

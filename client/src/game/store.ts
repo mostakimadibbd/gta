@@ -17,6 +17,7 @@ export interface NpcCar extends VehicleState {
   densRank?: number; densTotal?: number; // Phase 16: ambient-pool rank for the traffic-density lever (initWorld)
   busRoute?: boolean; wp?: number; stopT?: number;
   cargoSwerve?: number; // Phase 17: lateral offset a Spilled Cargo event pushed this car into (decays at turns)
+  hornPull?: number; hornSwerve?: number; // Phase 22: seconds left of a horn pull-over + its kerb-ward visual offset (decays in the traffic loop)
   // ---- Phase 15: emergency dispatch state (svc units only) — set by
   // game/dispatch.ts, driven by the dedicated branch in GameSystems'
   // traffic loop; leg 0 = reach the turn intersection, leg 1 = final
