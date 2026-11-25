@@ -177,14 +177,34 @@ export function staffDailyBonus(s: StaffDef, gross: number): number {
 /** Per-business daily net with its current roster and upgrade level
  * (Bank app display + the daily tick use this one function, so
  * what's shown is what's paid — the Phase 16 contract). */
-export function businessDailyNet(b: BusinessDef): number {
+export function businessDailyNet(b: BusinessDef, forSerial: number = ECO.daySerial): number {
   const gross = Math.round(b.income * levelMult(bizLevel(b.id)));
   const crew = ECO.staffBy[b.id] ?? [];
   let net = gross;
   for (const name of crew) { const s = staffDef(name); if (s) net += staffDailyBonus(s, gross) - s.wage; }
+  // Phase 23: CLUB WEEKEND DOOR BONUS — owning the Club Solace
+  // share pays +25% of the house gross on Friday and Saturday
+  // nights (the club's real doors, game/club.ts: 20:00–04:00, fall
+  // inside those days). It lives HERE, inside the one net function,
+  // so the Bank figure and the morning tick can never disagree
+  // (the Phase 16 contract). The term keys to a DAY SERIAL: the
+  // tick settles the day that just ended (advanceDay passes that
+  // serial explicitly), while the Bank displays the CURRENT serial
+  // — the day in progress, whose night tonight settles at tomorrow's
+  // tick under the same serial. Crew percentages stay on the base
+  // gross; the door bonus is on the house take only.
+  if (b.id === "club" && isClubWeekendNight(forSerial)) net += Math.round(gross * CLUB_WEEKEND_UPLIFT);
   return net;
 }
-export const dailyIncomeTotal = () => BUSINESSES.filter((b) => ECO.owned.includes(b.id)).reduce((a, b) => a + businessDailyNet(b), 0);
+export const dailyIncomeTotal = (forSerial: number = ECO.daySerial) => BUSINESSES.filter((b) => ECO.owned.includes(b.id)).reduce((a, b) => a + businessDailyNet(b, forSerial), 0);
+
+// ---- Phase 23: the game WEEK. Day serials count from a fresh
+// save's first morning; serial 0 is a Monday. The club term above
+// is the week's first consumer — Fri/Sat nights are when Port
+// Sable goes out. ----
+export const weekdayOf = (serial: number) => ((serial % 7) + 7) % 7; // 0 Mon · 1 Tue · 2 Wed · 3 Thu · 4 Fri · 5 Sat · 6 Sun
+export const isClubWeekendNight = (serial: number) => { const w = weekdayOf(serial); return w === 4 || w === 5; };
+export const CLUB_WEEKEND_UPLIFT = 0.25;
 
 /** Borrow a tier. Blocked while a loan is outstanding, and the
  * bank won't serve a player the patrol is actively hunting (3★+). */
@@ -222,10 +242,14 @@ export function repayLoan(amount: number): number {
 
 /** The one daily tick: pay business income once per game day. */
 export function advanceDay() {
+  // Phase 23: the day being SETTLED is the serial that just ended —
+  // its night (the club's Fri/Sat door takings) belongs to it, so
+  // capture it before the increment and settle under its number.
+  const settledSerial = ECO.daySerial;
   ECO.daySerial += 1;
   if (ECO.lastPaidSerial < ECO.daySerial) {
     ECO.lastPaidSerial = ECO.daySerial;
-    const total = dailyIncomeTotal();
+    const total = dailyIncomeTotal(settledSerial);
     if (total > 0) {
       G.cash += total; G.lifetimeEarned += total;
       pushPhoneMsg("SableBank", `🌅 Daily business income +$${total} — your Port Sable businesses paid out. Balance: $${G.cash.toLocaleString()}.`);

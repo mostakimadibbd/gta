@@ -1309,3 +1309,43 @@ rows). No new eager chunks.
   lazy. Rhythm is two scalar reads per traffic step; the horn
   reaction runs only on a horn event (cooldown-gated); the Rush
   chip rides the existing 8 Hz HUD poll.
+
+## Phase 23 — Night & Fares addendum
+
+- **Club Solace, dressed for the night:** the room keeps its Phase 3
+  shell (stage, beams, SOLACE neon) and gains the working-venue
+  layer. The dance floor is now a **6×4 tile grid** over the old
+  inlay: each tile's emissive lerps slowly between the house teal
+  (#2ee6c8) and amber (#ffb340) with checkerboard phase offsets, so
+  a soft wave crosses the floor instead of a uniform pulse. The
+  palette discipline holds — teal/amber only, no pink/purple.
+- **The floor is fuller:** dancers go from 4 to **7**, spread across
+  the grid on the same rig and arms-up sway the room has always
+  used. No new animation system; density does the work.
+- **The bouncer:** a broad, bald, black-jacket rig stands at the
+  exterior door beside the queue, forearms pinned across his chest
+  after the idle pass — he reads as door staff from across the pier
+  road, which is the entire job. The queue (Phase 6) still waits
+  beside him.
+- **The drink's warmth:** the Harbour Sunset's vignette is a DOM
+  overlay (radial gradient, transparent centre → warm amber edges,
+  pointer-events none) driven by the 8 Hz HUD poll — it sits under
+  the door fade and never touches the post chain, so it costs no
+  render pass. Cosmetic only, as documented everywhere it appears.
+- **The bass:** an original WebAudio loop (sine bass figure + soft
+  kick through its own gain) that exists only inside the room —
+  started/stopped on the interior transition, so the street stays
+  silent and the room has a pulse the moment the fade lands.
+- **Taxi personalities are presentational too:** the type is carried
+  by words, not new art — the marker label, the hail toast's
+  description, the boarding bark and the completion breakdown. The
+  Nervous passenger's mid-ride complaint is timed to the first
+  knock, which is what makes the zero-tip rule *felt* rather than
+  discovered at the kerb.
+- **Perf sanity:** initial-load JS 819.4 kB gzip (index 444.1 +
+  three 178.2 + react-three 185.8 + css 10.7 + html 0.7) vs Phase
+  22's 817.0 — +0.3%, the phase's own code (club.ts, the bass
+  scheduler, the Interiors/Phase7/economy additions). No new
+  chunks; cc0Data stays lazy. The floor cycle is 24 material lerps
+  on scratch colours inside Interiors' existing useFrame; the
+  drink vignette rides the 8 Hz poll as a boolean.

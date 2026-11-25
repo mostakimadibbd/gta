@@ -383,8 +383,8 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; aiming: boolean; rush: boolean; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0, aiming: false, rush: false };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; aiming: boolean; rush: boolean; drink: boolean; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0, aiming: false, rush: false, drink: false };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -963,6 +963,7 @@ export default function App() {
         fps: showFps() ? Math.round(perf.fps) : 0,
         aiming: G.aiming, // Phase 9: free-aim crosshair
         rush: isRushNow(), // Phase 22: city-rhythm chip on the clock line (same 8 Hz poll)
+        drink: G.timeS < G.drinkUntil, // Phase 23: club-drink warm vignette window (same poll)
       });
       setCamFlash(nowS() - G.camFlashAt < 0.22);
       // ---- Phase 6 flow bits polled with the HUD: door fade, respawn
@@ -1475,6 +1476,7 @@ export default function App() {
           <div className="area-card-sub">{areaCard.sub}</div>
         </div>
       )}
+      {hud.drink && <div className="drink-warm" aria-hidden="true" />}
       {fadeOn && <div className="fade-black" aria-hidden="true" />}
       {respawnScreen && (
         <div className="respawn-screen">

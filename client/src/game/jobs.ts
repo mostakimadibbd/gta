@@ -44,6 +44,7 @@ export const PICKUP_POINTS: Poi[] = [
 
 export interface JobStats {
   taxiFares: number; taxiEarned: number; taxiBestTip: number;
+  taxiTips: number; // Phase 23: lifetime tips across all fares (personalities)
   deliveries: number; deliveryEarned: number;
   racesRun: number; racesWon: number;
   bestTimes: Record<string, number>;
@@ -62,7 +63,7 @@ export interface JobStats {
   courierDrops: number; courierEarned: number;
 }
 export const jobStats: JobStats = {
-  taxiFares: 0, taxiEarned: 0, taxiBestTip: 0, deliveries: 0, deliveryEarned: 0,
+  taxiFares: 0, taxiEarned: 0, taxiBestTip: 0, taxiTips: 0, deliveries: 0, deliveryEarned: 0,
   racesRun: 0, racesWon: 0, bestTimes: {},
   towDeliveries: 0, towEarned: 0, fishCaught: 0, fishEarned: 0, bestFish: null,
   farmLoads: 0, farmEarned: 0,
@@ -140,6 +141,14 @@ export const J = {
   fareDest: null as Poi | null,   // where they want to go
   boardAt: 0, boardDamage: 0, fareDist: 0,
   taxiCooldownUntil: 0,
+  // ---- Phase 23: fare PERSONALITIES (see settleFare below). Rolled
+  // when the fare hails, shown in the marker label + hail toast, and
+  // fully reset wherever the fare itself is cleared (completion,
+  // abandonment, the NG+ stand-down in game/ngplus.ts). ----
+  taxiType: "" as "" | TaxiType,
+  taxiBarks: 0,                   // chatty lines fired this ride
+  taxiBarkAt: 0,                  // clock time of the next chatty line
+  taxiDmgBarked: false,           // the nervous passenger's first-knock complaint
   // delivery chain (3 legs from Lina's)
   delPhase: "idle" as "idle" | "pickup" | "dropoff",
   delLeg: 0, delPoint: null as Poi | null,
@@ -189,7 +198,7 @@ export function jobTarget(): { x: number; z: number; label: string } | null {
     const cp = J.race.def.cps[J.race.cp];
     if (cp) return { x: cp[0], z: cp[1], label: `${J.race.def.name} — checkpoint ${J.race.cp + 1}/${J.race.def.cps.length}` };
   }
-  if (J.taxiPhase === "pickup" && J.fare) return { x: J.fare.x, z: J.fare.z, label: `Fare waiting — ${J.fare.name}` };
+  if (J.taxiPhase === "pickup" && J.fare) return { x: J.fare.x, z: J.fare.z, label: `Fare waiting — ${J.fare.name}${J.taxiType ? ` (${TAXI_TYPE_LABEL[J.taxiType]})` : ""}` };
   if (J.taxiPhase === "dropoff" && J.fareDest) return { x: J.fareDest.x, z: J.fareDest.z, label: `Fare → ${J.fareDest.name}` };
   if (J.delPhase !== "idle" && J.delPoint) {
     return { x: J.delPoint.x, z: J.delPoint.z, label: J.delPhase === "pickup" ? `Collect parcel — ${J.delPoint.name}` : `Deliver to — ${J.delPoint.name}` };
@@ -319,3 +328,68 @@ export const COURIER_CHAIN_BONUS = 60;
 export const COURIER_DROPS = 3;
 /** Seconds for a leg: distance-scaled, sprint-and-pedal friendly. */
 export const courierLegSeconds = (dist: number) => Math.round(dist / 5.5 + 22);
+
+// ================================================================
+// Phase 23: TAXI PASSENGER PERSONALITIES.
+// Every fare rolls a type when they hail (40% Calm — the pre-Phase
+// -23 baseline fare, unchanged maths — and 20% each of the others):
+//   · HURRIED — the clock is the job: land with more than 25% of
+//     the par time still in hand and the speed bonus is +40% of the
+//     fare instead of the usual +25% (it replaces it — one speed
+//     bonus per fare, never both).
+//   · NERVOUS — ANY damage to the cab on the ride zeroes the tip,
+//     whatever else you earned; they complain the moment it happens.
+//   · CHATTY — pays the standard maths and talks: 2–3 subtitle
+//     barks across the ride, pure flavour, all original lines.
+// ALL tip maths lives in settleFare — the ONE place a fare's tip is
+// computed (Phase7's completion block calls it and nothing else
+// touches tips). The personality state itself is J.taxiType & co.
+// (above) and resets with the fare everywhere the fare resets.
+// ================================================================
+export type TaxiType = "calm" | "hurried" | "chatty" | "nervous";
+export const TAXI_TYPE_LABEL: Record<TaxiType, string> = {
+  calm: "Calm", hurried: "Hurried", chatty: "Chatty", nervous: "Nervous",
+};
+/** How the hail toast describes them before you ever see them. */
+export const TAXI_TYPE_HINT: Record<TaxiType, string> = {
+  calm: "looks easy-going",
+  hurried: "keeps checking the time — in a hurry",
+  chatty: "already talking to the bus stop sign",
+  nervous: "is hugging their bag like it might float away",
+};
+export function rollTaxiType(): TaxiType {
+  const r = Math.random();
+  return r < 0.4 ? "calm" : r < 0.6 ? "hurried" : r < 0.8 ? "chatty" : "nervous";
+}
+export const TAXI_BOARD_LINES: Record<TaxiType, string> = {
+  calm: "Thanks! Just get me there in one piece.",
+  hurried: "Ferry leaves in twenty and I am NOT missing it. Fast pays — land me there with time to spare and the tip's +40%.",
+  chatty: "Oh good, a cab! You'll never guess what happened at the market this morning — well, sit back, I'll tell it properly…",
+  nervous: "Please — gently. Any knock, any at all, and I can't tip you. I bruise like a peach and so does my luggage.",
+};
+export const CHATTY_LINES = [
+  "—so I told Marta, I said, the harbour keeps everyone's secrets except mine, apparently—",
+  "My cousin drives the Cityliner. Swears the night route's haunted. It is not. Probably.",
+  "You know the pier used to end two streets earlier? True story. Well. Mostly.",
+];
+export const NERVOUS_DAMAGE_LINE = "Was that— did we just HIT something?! That's the tip gone, driver. Gone.";
+export const NERVOUS_DROPPED_LINE = "Never again. I'll walk. In the rain. Uphill. Both ways.";
+
+/** THE tip calculation — the only place it happens. `par` is the
+ * fare's expected duration (distance / 9, Phase 7's long-standing
+ * yardstick); `dmg` is damage GAINED on the ride. Returns the tip
+ * (unrounded — the caller rounds, as fares always have) and a
+ * one-line note for the completion message. */
+export function settleFare(type: TaxiType | "", fare: number, elapsed: number, par: number, dmg: number): { tip: number; note: string } {
+  let tip = 0;
+  let note = "";
+  const fast = elapsed <= par * 1.25;        // the standard speed window
+  const inHand = elapsed <= par * 0.75;      // >25% of the par still in hand
+  if (type === "hurried" && inHand) { tip += fare * 0.4; note = "Hurried fare, landed with time in hand — +40%"; }
+  else if (fast) { tip += fare * 0.25; if (type === "hurried") note = "Hurried fare — not quick enough for the +40%"; }
+  if (dmg <= 2) tip += 8;
+  if (dmg > 15) { tip = 0; note = "Too rough a ride — the tip's gone"; }
+  if (type === "nervous" && dmg > 0) { tip = 0; note = "Nervous fare — a knock on the way killed the tip"; }
+  if (!note) note = type === "chatty" ? "Talked the whole way — and tipped for the company" : "A clean harbour fare";
+  return { tip, note };
+}

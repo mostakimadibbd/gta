@@ -70,6 +70,9 @@ export function startNewGamePlus(): number {
   // idle and the tow tether lets go (the target car simply stays
   // where it lies, as it does when the hook drops any other way).
   J.taxiPhase = "idle"; J.fare = null; J.fareDest = null;
+  // Phase 23: the fare's personality is fare state too — a new run
+  // must not inherit a Hurried ghost or a half-told Chatty story.
+  J.taxiType = ""; J.taxiBarks = 0; J.taxiBarkAt = 0; J.taxiDmgBarked = false;
   J.delPhase = "idle"; J.delLeg = 0; J.delPoint = null;
   J.towPhase = "idle"; J.towCarId = -1; J.towHooked = false; J.towStillT = 0;
   J.farmPhase = "idle"; J.farmLoad = 0;

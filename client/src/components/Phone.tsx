@@ -13,7 +13,7 @@ import { startNewGamePlus } from "../game/ngplus";
 import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
 import { J, jobStats, fmtTime, RACES, BAY_CIRCUIT, SPARROW_RUN, VALET_FRONTAGES } from "../game/jobs";
 import { cup, CUP_POINTS, CUP_CHAMPION_POINTS, cupPointsTotal, cupRoundsDone, resetCup } from "../game/cup";
-import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet, bizLevel, upgradeCost, upgradeBusiness, staffBonusNow, isNightNow, LOAN, LOAN_TIERS, borrowLoan, repayLoan } from "../game/economy";
+import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet, bizLevel, upgradeCost, upgradeBusiness, staffBonusNow, isNightNow, isClubWeekendNight, LOAN, LOAN_TIERS, borrowLoan, repayLoan } from "../game/economy";
 import { staffOnShiftNow } from "../game/staffworld";
 import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
@@ -176,6 +176,12 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
                       : "Not owned"}</small></span>
                     <b>{ownedBiz ? `+$${businessDailyNet(b)}/day` : `$${b.price.toLocaleString()}`}</b>
                   </div>
+                  {ownedBiz && b.id === "club" && (
+                    <div className="bank-row">
+                      <span>↳ Weekend door<small style={{ display: "block" }}>Fri/Sat nights add +25% on the house take — on those days the figure above already includes it (the club's doors run 20:00–04:00)</small></span>
+                      <b>{isClubWeekendNight(ECO.daySerial) ? "Live tonight" : "Fri · Sat"}</b>
+                    </div>
+                  )}
                   {ownedBiz && lvl < 3 && (
                     <div className="bank-row">
                       <span>↳ Upgrade to Level {lvl + 1}<small style={{ display: "block" }}>+35% takings — the number above is what the morning tick pays</small></span>
@@ -312,12 +318,12 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             </button>
             <div className="bank-row"><span>Courier status</span><b>{J.courierPhase === "idle" ? "No chain running" : `Drop ${J.courierLeg + 1}/3 — ${J.courierPoint?.name ?? ""} · ${Math.max(0, Math.ceil(J.courierLeft))}s (clock runs on foot / bicycle only)`}</b></div>
             <button type="button" className="phone-row" onClick={() => { J.wantCourier = true; onClose(); }}>
-              <span><b>Start courier chain</b><small>3 drops on foot or bicycle · $45 a drop + $60 full-chain bonus</small></span><span>›</span>
+              <span><b>{J.courierPhase === "run" ? "Restart courier chain" : "Start courier chain"}</b><small>3 drops on foot or bicycle · $45 a drop + $60 full-chain bonus{J.courierPhase === "run" ? " · restarting closes the current chain (landed drops stay paid)" : ""}</small></span><span>›</span>
             </button>
             <div className="bank-row"><span>Valet parks</span><b>{jobStats.valetJobs} · ${jobStats.valetEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Courier drops</span><b>{jobStats.courierDrops} · ${jobStats.courierEarned.toLocaleString()}</b></div>
             <h3 className="phone-subhead">Earnings</h3>
-            <div className="bank-row"><span>Taxi fares</span><b>{jobStats.taxiFares} · ${jobStats.taxiEarned.toLocaleString()} · best tip ${jobStats.taxiBestTip}</b></div>
+            <div className="bank-row"><span>Taxi fares</span><b>{jobStats.taxiFares} · ${jobStats.taxiEarned.toLocaleString()} · best tip ${jobStats.taxiBestTip} · tips ${jobStats.taxiTips.toLocaleString()} total</b></div>
             <div className="bank-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Races</span><b>{jobStats.racesRun} run · {jobStats.racesWon} won</b></div>
             <div className="bank-row"><span>🛞 Drifting</span><b>best chain {jobStats.bestDrift.toLocaleString()} pts · {jobStats.driftBanked.toLocaleString()} banked · ${jobStats.driftEarned.toLocaleString()}</b></div>

@@ -3,7 +3,7 @@ let ctx: AudioContext | null = null; let muted = false;
 let engineOsc: OscillatorNode | null = null; let engineGain: GainNode | null = null;
 let sirenOsc: OscillatorNode | null = null; let sirenGain: GainNode | null = null; let sirenTimer = 0;
 export function isMuted() { return muted; }
-export function toggleMute() { muted = !muted; if (engineGain) engineGain.gain.value = 0; if (sirenGain) sirenGain.gain.value = 0; if (themeMaster) themeMaster.gain.value = muted ? 0 : 0.5; return muted; }
+export function toggleMute() { muted = !muted; if (engineGain) engineGain.gain.value = 0; if (sirenGain) sirenGain.gain.value = 0; if (themeMaster) themeMaster.gain.value = muted ? 0 : 0.5; if (clubMaster) clubMaster.gain.value = muted ? 0 : 0.4; return muted; }
 function ac(): AudioContext | null {
   if (typeof window === "undefined") return null;
   if (!ctx) { try { ctx = new AudioContext(); } catch { return null; } }
@@ -280,6 +280,59 @@ export function stopMenuTheme() {
   if (ambNodes) { ambNodes.stop(); ambNodes = null; }
   if (ctx && themeMaster) { const g = themeMaster; g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4); window.setTimeout(() => g.disconnect(), 500); }
   themeMaster = null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 23: CLUB SOLACE BASS — a small ORIGINAL two-bar bass loop that
+// runs only while the player is inside the club (Interiors.tsx starts
+// and stops it on the room transition). Same scheduler idiom as the
+// menu theme, a fraction of the size: a 116 BPM eighth-note grid, a
+// syncopated A-minor bass figure, a soft four-on-the-floor kick and a
+// whisper of hat. Not based on any other work; pure WebAudio.
+// ---------------------------------------------------------------------------
+let clubMaster: GainNode | null = null;
+let clubTimer: number | null = null;
+let clubStep = 0;
+let clubNextTime = 0;
+const CLUB_BPM = 116;
+const CLUB_STEP_DUR = 60 / CLUB_BPM / 2; // eighth notes
+const CLUB_BASS: Record<number, number> = { 0: 33, 3: 33, 6: 36, 7: 34, 8: 33, 11: 31, 12: 38, 14: 36 }; // MIDI, A1 figure
+function clubNoteAt(t: number, freq: number, dur: number, vol: number) {
+  const a = ctx; if (!a || !clubMaster) return;
+  const o = a.createOscillator(); const g = a.createGain(); const f = a.createBiquadFilter();
+  o.type = "sine"; o.frequency.value = freq; f.type = "lowpass"; f.frequency.value = 300;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(f); f.connect(g); g.connect(clubMaster);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function clubKickAt(t: number) {
+  const a = ctx; if (!a || !clubMaster) return;
+  const o = a.createOscillator(); const g = a.createGain();
+  o.type = "sine"; o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.11);
+  g.gain.setValueAtTime(0.32, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+  o.connect(g); g.connect(clubMaster); o.start(t); o.stop(t + 0.18);
+}
+function scheduleClubStep(step: number, t: number) {
+  const s = step % 16;
+  const bass = CLUB_BASS[s];
+  if (bass !== undefined) clubNoteAt(t, midi(bass + 12), CLUB_STEP_DUR * 1.6, 0.5);
+  if (s % 4 === 0) clubKickAt(t);
+}
+export function startClubBass() {
+  const a = ac(); if (!a || clubTimer !== null) return;
+  clubMaster = a.createGain(); clubMaster.gain.value = muted ? 0 : 0.4; clubMaster.connect(a.destination);
+  clubStep = 0; clubNextTime = a.currentTime + 0.06;
+  clubTimer = window.setInterval(() => {
+    if (!ctx || !clubMaster) return;
+    while (clubNextTime < ctx.currentTime + 0.15) { scheduleClubStep(clubStep, clubNextTime); clubStep += 1; clubNextTime += CLUB_STEP_DUR; }
+  }, 80);
+}
+export function stopClubBass() {
+  if (clubTimer !== null) { window.clearInterval(clubTimer); clubTimer = null; }
+  if (ctx && clubMaster) { const g = clubMaster; g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.25); window.setTimeout(() => g.disconnect(), 350); }
+  clubMaster = null;
 }
 
 /** Call every ~200ms from HUD loop: engine hum tied to speed + siren when wanted. */

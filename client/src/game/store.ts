@@ -160,6 +160,7 @@ export const G = {
   // High rep: witnesses report faster and locals start recognising you. ----
   zoneRep: {} as Record<string, number>,
   eatingUntil: 0, // hand-to-mouth pose window (vendor food)
+  drinkUntil: 0, // Phase 23: Club Solace drink — warm vignette window (G.timeS, cosmetic only)
   playerSprinting: false, // set by Player each frame (stamina drain input)
   bikePedalling: false, // set by Vehicle each frame (stamina drain input)
   inCover: false, // crouched against a wall/car (police sight + bust relief)

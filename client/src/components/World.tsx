@@ -1020,6 +1020,13 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
     buildHumanoid({ top: "#7a2440", bottom: "#e8e4da", skin: "#f1c27d", hair: "#2d1d12", topStyle: "crop", bottomStyle: "shorts", gender: "f", hairStyle: "ponytail", necklace: true }),
     buildHumanoid({ top: "#e8e4da", bottom: "#274268", skin: "#8d5524", hair: "#14100e", topStyle: "tank", gender: "m", hairStyle: "cap", tattooSleeve: true, sunglasses: true }),
   ], []);
+  // ---- Phase 23: the BOUNCER — a broad rig in black working the
+  // club door (the refusal itself lives in Interiors.tsx's door
+  // logic: locked outside 20:00–04:00, turned away at wanted 3★+).
+  // He stands beside the prompt point with his arms folded, all
+  // night and all day — doors or no doors, the door is his post.
+  const clubBouncer = useMemo<HumanoidRig>(() =>
+    buildHumanoid({ top: "#101216", bottom: "#101216", skin: "#6b4423", hair: "#0c0a08", topStyle: "jacket", gender: "m", hairStyle: "bald", build: "broad", sunglasses: true }), []);
 
   useFrame(({ clock, scene }) => {
     const t = clock.elapsedTime;
@@ -1085,6 +1092,12 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
     }
     // club queue idle sway
     clubQueue.forEach((rig, i) => animateHumanoid(rig, 0, 0, t + i * 2.4));
+    // Phase 23: the bouncer idles slower and heavier, arms folded —
+    // forearms pinned across the chest after the idle pass each frame
+    animateHumanoid(clubBouncer, 0, 0, t * 0.6);
+    clubBouncer.lArm.rotation.x = -0.35; clubBouncer.rArm.rotation.x = -0.35;
+    clubBouncer.lFore.rotation.x = -2.15; clubBouncer.rFore.rotation.x = -2.15;
+    clubBouncer.lFore.rotation.z = 0.55; clubBouncer.rFore.rotation.z = -0.55;
     // rain gloss: wet asphalt gets darker + shinier as rain builds up;
     // at night in rain it goes near-mirror (target: wet neon streets)
     const wet = 1 - G.rainAmt * (0.5 + night * 0.38);
@@ -1746,6 +1759,11 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
           <primitive object={rig.group} />
         </group>
       ))}
+      {/* Phase 23: the bouncer at his post beside the door point,
+          facing the street (and anyone thinking of trying it) */}
+      <group position={[47.4, 0, 110.6]} rotation={[0, Math.PI, 0]}>
+        <primitive object={clubBouncer.group} />
+      </group>
 
       {/* ======== FUEL STATIONS (Phase 2): canopy + pumps + sign ======== */}
       {FUEL_STATIONS.map((st, i) => (

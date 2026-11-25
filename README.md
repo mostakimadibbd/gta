@@ -311,6 +311,25 @@ corrupt harbour boss's debt ledger.
   with an audit of Phase 21 (staff shifts, driving feel, balance
   numbers — all verified clean, no fixes needed). Ledger
   unchanged: **86 ✅ · 7 🟡 · 0 ⬜**.
+- **Phase 23 — "Night & Fares"** — **Club Solace is a working
+  nightclub now** (its room has existed since Phase 3 — this round
+  makes it a venue, it doesn't add a thirteenth interior): doors
+  **20:00–04:00**, a **bouncer** on the door who turns you away at
+  wanted 3★+, a **working bar** (the Harbour Sunset, $12 — a little
+  stamina and a brief warm glow at the screen edges; cosmetic only,
+  no drunkenness physics), a **colour-cycling dance-floor grid**
+  (teal↔amber, always), **7 dancers**, and an original **bass loop**
+  that plays only inside. Owning the club share now pays a
+  **weekend door bonus**: +25% on Fri/Sat nights, inside the same
+  daily-net maths the Bank app shows. **Taxi fares have
+  personalities**: **Calm** (the classic fare), **Hurried** (+40%
+  tip for landing with time to spare), **Nervous** (any knock to
+  the cab kills the tip — they'll tell you the moment it happens),
+  **Chatty** (standard pay, three stories minimum). The completion
+  toast breaks out fare + tip, and your lifetime tips are tracked.
+  The round opens with an audit of Phase 22 (one fix: the courier
+  board's restart now actually restarts a running chain, as
+  documented). Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜**.
 - **Phase 10 — realism + physics pass** (no new features): the
   post chain gains **radial chromatic aberration** and a stricter
   bloom threshold; **fog colour follows the day cycle**; **stars**

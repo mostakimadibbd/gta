@@ -20,6 +20,8 @@ import {
   VALET_FRONTAGES, VALET_BASE_PAY, VALET_DAMAGE_PER_POINT, VALET_PAY_FLOOR, VALET_CLEAN_BONUS,
   spawnValetCar, collectValetCar, endValetJob,
   COURIER_PAY_PER_DROP, COURIER_CHAIN_BONUS, COURIER_DROPS, courierLegSeconds,
+  rollTaxiType, TAXI_TYPE_HINT, TAXI_TYPE_LABEL, TAXI_BOARD_LINES, CHATTY_LINES,
+  NERVOUS_DAMAGE_LINE, NERVOUS_DROPPED_LINE, settleFare,
 } from "../game/jobs";
 import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, setHomePref, persistEco } from "../game/economy";
 import { RENT, RENTAL_DOCK, RENTAL_FEE, rentBoat, endRental, rentalCar } from "../game/rentals";
@@ -193,47 +195,70 @@ export default function Phase7Systems() {
       if (hailScratch.length > 0 && Math.random() < dt * 0.25) {
         J.fare = pick(hailScratch);
         J.taxiPhase = "pickup";
+        // Phase 23: every fare rolls a personality (game/jobs.ts) —
+        // the marker label and this toast both name it up front, so
+        // the deal is known before the passenger ever gets in.
+        J.taxiType = rollTaxiType(); J.taxiBarks = 0; J.taxiBarkAt = 0; J.taxiDmgBarked = false;
         bark("Sable Cabs", "Fare waiting — follow the amber marker and stop beside them.");
-        toast("🚕 Sable Cabs: a fare is hailing — amber marker on your map.");
+        toast(`🚕 Sable Cabs: a fare is hailing — amber marker. They ${TAXI_TYPE_HINT[J.taxiType]} (${TAXI_TYPE_LABEL[J.taxiType]}).`);
       }
     } else if (J.taxiPhase === "pickup" && J.fare) {
-      if (drivingKind() !== "taxi") { J.taxiPhase = "idle"; J.fare = null; J.taxiCooldownUntil = t + 6; }
+      if (drivingKind() !== "taxi") { J.taxiPhase = "idle"; J.fare = null; J.taxiType = ""; J.taxiCooldownUntil = t + 6; }
       else if (car && (car.state.x - J.fare.x) ** 2 + (car.state.z - J.fare.z) ** 2 < 6 ** 2 && speed < 1) {
         const dest = pick(DEST_POINTS.filter((d) => d !== J.fare));
         J.fareDest = dest;
         J.fareDist = Math.hypot(dest.x - J.fare.x, dest.z - J.fare.z);
         J.boardAt = t; J.boardDamage = car.damage;
         J.taxiPhase = "dropoff";
-        bark("Passenger", pick(["Thanks! Just get me there in one piece.", "Airport road manners, please — I'm fragile cargo.", "Step on it a little? The ferry won't wait."]));
+        // Phase 23: the boarding bark IS the personality — it states
+        // the deal (the hurried +40%, the nervous no-knock rule) in
+        // the passenger's own words before the wheels turn.
+        if (J.taxiType === "chatty") J.taxiBarkAt = t + 8; // first story beat lands a few seconds in
+        bark("Passenger", J.taxiType ? TAXI_BOARD_LINES[J.taxiType] : pick(["Thanks! Just get me there in one piece.", "Airport road manners, please — I'm fragile cargo.", "Step on it a little? The ferry won't wait."]));
         sfx.door();
       }
     } else if (J.taxiPhase === "dropoff" && J.fareDest) {
       if (drivingKind() !== "taxi") {
         if (exitT.current < 0) exitT.current = t;
         if (t - exitT.current > 4) {
-          J.taxiPhase = "idle"; J.fareDest = null; J.fare = null; J.taxiCooldownUntil = t + 8; exitT.current = -1;
+          J.taxiPhase = "idle"; J.fareDest = null; J.fare = null; J.taxiType = ""; J.taxiCooldownUntil = t + 8; exitT.current = -1;
           bark("Passenger", "Left me standing?! One star. ONE.");
         }
       } else {
         exitT.current = -1;
+        // Phase 23: mid-ride personality beats — the Chatty fare
+        // tells their stories (2–3 barks, then they're done), and
+        // the Nervous fare complains the FIRST time the cab takes a
+        // knock, so the player learns the tip died when it died.
+        if (car && J.taxiType === "chatty" && J.taxiBarks < CHATTY_LINES.length && t >= J.taxiBarkAt) {
+          bark("Passenger", CHATTY_LINES[J.taxiBarks]);
+          J.taxiBarks += 1;
+          J.taxiBarkAt = t + 11 + Math.random() * 6;
+        }
+        if (car && J.taxiType === "nervous" && !J.taxiDmgBarked && car.damage - J.boardDamage > 0) {
+          J.taxiDmgBarked = true;
+          bark("Passenger", NERVOUS_DAMAGE_LINE);
+        }
         if (car && (car.state.x - J.fareDest.x) ** 2 + (car.state.z - J.fareDest.z) ** 2 < 6 ** 2 && speed < 1.5) {
           const elapsed = t - J.boardAt;
           const par = J.fareDist / 9;
           const dmg = car.damage - J.boardDamage;
-          let fare = 16 + J.fareDist * 0.3;
-          let tip = 0;
-          if (elapsed <= par * 1.25) tip += fare * 0.25;
-          if (dmg <= 2) tip += 8; else if (dmg > 15) tip = 0;
+          const fare = 16 + J.fareDist * 0.3;
+          // Phase 23: ALL tip maths lives in settleFare (game/jobs.ts)
+          const { tip, note } = settleFare(J.taxiType, fare, elapsed, par, dmg);
           const total = Math.round(fare + tip);
-          const stars = Math.max(1, Math.min(5, Math.round(3 + (elapsed <= par * 1.25 ? 1 : 0) + (dmg <= 2 ? 1 : 0) - (dmg > 15 ? 2 : 0))));
+          let stars = Math.max(1, Math.min(5, Math.round(3 + (elapsed <= par * 1.25 ? 1 : 0) + (dmg <= 2 ? 1 : 0) - (dmg > 15 ? 2 : 0))));
+          if (J.taxiType === "nervous" && dmg > 0) stars = Math.min(stars, 2); // a frightened passenger doesn't round up
           G.cash += total; G.lifetimeEarned += total;
           jobStats.taxiFares += 1; jobStats.taxiEarned += total;
           jobStats.taxiBestTip = Math.max(jobStats.taxiBestTip, Math.round(tip));
+          jobStats.taxiTips += Math.round(tip);
           persistJobStats();
-          pushPhoneMsg("Sable Cabs", `🚕 Fare complete: $${total} (tip $${Math.round(tip)}). Passenger rating: ${"★".repeat(stars)}${"☆".repeat(5 - stars)}`);
-          toast(`🚕 Fare paid $${total} — ${stars}★ ride`);
+          pushPhoneMsg("Sable Cabs", `🚕 Fare complete: $${Math.round(fare)} fare + $${Math.round(tip)} tip = $${total}. ${note}. Passenger rating: ${"★".repeat(stars)}${"☆".repeat(5 - stars)}`);
+          toast(`🚕 Fare $${Math.round(fare)} + tip $${Math.round(tip)} = $${total} — ${stars}★ ride`);
+          if (J.taxiType === "nervous" && dmg > 0) bark("Passenger", NERVOUS_DROPPED_LINE);
           sfx.cash();
-          J.taxiPhase = "idle"; J.fareDest = null; J.fare = null; J.taxiCooldownUntil = t + 12;
+          J.taxiPhase = "idle"; J.fareDest = null; J.fare = null; J.taxiType = ""; J.taxiCooldownUntil = t + 12;
         }
       }
     }
@@ -402,7 +427,20 @@ export default function Phase7Systems() {
     // marker label says so) — and each drop pays on arrival.
     if (J.wantCourier) {
       J.wantCourier = false;
-      if (J.courierPhase === "idle" && !jobBusy()) {
+      // Phase 23 audit fix: game/jobs.ts documents that starting a
+      // new chain REPLACES the running one (the chain owns no world
+      // objects, so abandonment is total) — but this gate used to
+      // refuse the start outright while a chain ran (jobBusy counts
+      // the courier itself), so the documented restart could never
+      // happen. A running chain now restarts cleanly; landed drops
+      // stay paid, the unfinished chain's bonus simply walks.
+      if (J.courierPhase === "run") {
+        J.courierLeg = 0;
+        J.courierPoint = pick(DEST_POINTS);
+        J.courierLeft = courierLegSeconds(Math.hypot(J.courierPoint.x - px, J.courierPoint.z - pz));
+        toast("🚴 Courier chain restarted — fresh drops, fresh clock. Feet and pedals only: the clock pauses while you drive.");
+        pushPhoneMsg("Sable Courier Co-op", "Chain re-rolled — the old one is closed, no hard feelings. Three new drops on the board.");
+      } else if (J.courierPhase === "idle" && !jobBusy()) {
         J.courierPhase = "run"; J.courierLeg = 0;
         J.courierPoint = pick(DEST_POINTS);
         J.courierLeft = courierLegSeconds(Math.hypot(J.courierPoint.x - px, J.courierPoint.z - pz));

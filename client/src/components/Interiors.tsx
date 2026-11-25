@@ -14,7 +14,9 @@ import { sfx } from "../game/audio";
 import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, GYM_EXT_DOOR, LOFT_EXT_DOOR, CLOTHING_EXT_DOOR, FARMHOUSE_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
 import { ECO, LOFT, persistEco, setHomePref, sleepToMorning } from "../game/economy";
 import { CLOTH, CLOTHING_ITEMS, persistClothing, type ClothingItem } from "../game/phase8";
-import { shopsClosed } from "./Interactions";
+import { shopsClosed, gameHour } from "./Interactions";
+import { isClubOpen, CLUB_DRINK_NAME, CLUB_DRINK_PRICE, CLUB_DRINK_STAMINA, CLUB_DRINK_WARM_S } from "../game/club";
+import { startClubBass, stopClubBass } from "../game/audio";
 import { dealerPrice, consumeVoucher } from "../game/cup";
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
@@ -77,6 +79,13 @@ const WALL_TT = new THREE.MeshStandardMaterial({ color: "#ddd2ba", roughness: 0.
 const FLOOR_TT = new THREE.MeshStandardMaterial({ color: "#9a7a54", roughness: 0.75 });
 const WALL_LF = new THREE.MeshStandardMaterial({ color: "#3a3f45", roughness: 0.85 });
 const FLOOR_LF = new THREE.MeshStandardMaterial({ color: "#7a5a3d", roughness: 0.7 });
+// Phase 23: Club Solace floor-cycle scratch colours — module-level
+// so the per-frame emissive lerp never allocates.
+const CLUB_TEAL = new THREE.Color("#2ee6c8");
+const CLUB_AMBER = new THREE.Color("#ffb340");
+const CLUB_SCRATCH = new THREE.Color();
+/** Phase 23: the 7 clubbers' spots on the floor grid (room-relative). */
+const DANCER_SPOTS: ReadonlyArray<readonly [number, number]> = [[-1, -2], [1.6, -2.1], [-2.4, 0.4], [0.4, 0.2], [3, -0.9], [-0.9, 2.1], [2.3, 2.2]];
 
 /** Wanted-poster wall art (canvas): three harbour faces, drawn not copied. */
 function posterTexture(): THREE.CanvasTexture {
@@ -169,7 +178,20 @@ export default function Interiors() {
     buildHumanoid({ top: "#274268", bottom: "#1d2126", skin: "#8d5524", hair: "#20242a", topStyle: "tee", gender: "m", hairStyle: "flat" }),
     buildHumanoid({ top: "#e8e4da", bottom: "#40342a", skin: "#c68863", hair: "#4a2f1a", topStyle: "tank", gender: "f", hairStyle: "bun", necklace: true }),
     buildHumanoid({ top: "#1f7a72", bottom: "#2b3440", skin: "#6b4423", hair: "#14100e", topStyle: "hoodie", gender: "m", hairStyle: "cap", cap: "#101216" }),
+    // Phase 23: the floor fills out — 7 clubbers on the grid
+    buildHumanoid({ top: "#d99a3d", bottom: "#232c38", skin: "#f1c27d", hair: "#4a2f1a", topStyle: "tank", gender: "m", hairStyle: "quiff" }),
+    buildHumanoid({ top: "#31556e", bottom: "#1d2126", skin: "#8d5524", hair: "#14100e", topStyle: "crop", bottomStyle: "shorts", gender: "f", hairStyle: "long", sunglasses: true }),
+    buildHumanoid({ top: "#40342a", bottom: "#2b3440", skin: "#c68863", hair: "#20242a", topStyle: "tee", gender: "m", hairStyle: "fade", tattooSleeve: true }),
   ], []);
+  // Phase 23: the dance floor is a 6×4 TILE GRID whose emissive
+  // cycles slowly between the house teal and amber (never pink /
+  // purple). One material per tile, created once here; useFrame
+  // only lerps their emissive colours through two scratch colours —
+  // no per-frame allocation.
+  const floorTiles = useMemo<THREE.MeshStandardMaterial[]>(() =>
+    Array.from({ length: 24 }, () => new THREE.MeshStandardMaterial({ color: "#141e26", roughness: 0.25, metalness: 0.4, emissive: "#2ee6c8", emissiveIntensity: 0.3 })), []);
+  const clubBassOn = useRef(false);
+  useEffect(() => () => { stopClubBass(); }, []);
 
   // Phase 6 screen flow: door teleports are DELAYED ~130 ms behind a
   // fade-to-black (App watches G.fadeAt) so entering a room reads as a
@@ -197,6 +219,20 @@ export default function Interiors() {
       rig.rArm.rotation.x = -2.6 + Math.cos(t * 2.2 + i * 1.7) * 0.35;
       rig.group.position.y = Math.abs(Math.sin(t * 2.2 + i * 1.7)) * 0.05;
     });
+    // Phase 23: the floor grid breathes teal → amber → teal on a
+    // slow wave across the tiles (checkerboard phase offsets), and
+    // the bass loop (game/audio.ts) runs only while you're inside.
+    floorTiles.forEach((m, i) => {
+      const ph = (i % 6) * 0.55 + Math.floor(i / 6) * 0.95;
+      const k = 0.5 + 0.5 * Math.sin(t * 0.85 + ph);
+      m.emissive.copy(CLUB_SCRATCH.copy(CLUB_TEAL).lerp(CLUB_AMBER, k));
+      m.emissiveIntensity = 0.3 + k * 0.45;
+    });
+    const inClub = G.interior === "club";
+    if (inClub !== clubBassOn.current) {
+      clubBassOn.current = inClub;
+      if (inClub) startClubBass(); else stopClubBass();
+    }
 
     // ---------- proximity interactions ----------
     let prompt = ""; let warn = false; let act: (() => void) | null = null;
@@ -212,8 +248,30 @@ export default function Interiors() {
         const [x, z] = INTERIORS.garage.exitDoor;
         if (near(x, z, 2.2)) { prompt = "Press E — leave the garage"; act = go(GARAGE_EXT_DOOR.x, GARAGE_EXT_DOOR.z - 1.2, ""); }
       } else if (G.interior === "club") {
+        // ---- Phase 23: CLUB SOLACE, WORKING — exit + the bar. The
+        // counter stands on the west wall (the rotated bar group);
+        // its front line is ≈7.3 west of centre. One drink on the
+        // menu (game/club.ts): a little stamina and a brief warm
+        // vignette — COSMETIC warmth only, no drunkenness physics,
+        // no driving effect, stated in the toast so nobody guesses.
         const [x, z] = INTERIORS.club.exitDoor;
+        const C = INTERIORS.club;
         if (near(x, z, 2.2)) { prompt = "Press E — leave Club Solace"; act = go(CLUB_EXT_DOOR.x, CLUB_EXT_DOOR.z - 1.2, ""); }
+        else if (near(C.cx - 7.3, C.cz + 0.5, 2.8)) {
+          if (G.cash >= CLUB_DRINK_PRICE) {
+            prompt = `Press E — a ${CLUB_DRINK_NAME} at the bar ($${CLUB_DRINK_PRICE} — a little stamina, a warm glow)`;
+            act = () => {
+              G.cash -= CLUB_DRINK_PRICE;
+              G.stamina = Math.min(100, G.stamina + CLUB_DRINK_STAMINA);
+              G.drinkUntil = G.timeS + CLUB_DRINK_WARM_S;
+              G.eatingUntil = G.timeS + 1.6;
+              sfx.eat();
+              bark("Bartender", "One Sunset. House rule: the glow's just a glow — your driving's still your own problem.");
+              toast(`🍹 ${CLUB_DRINK_NAME} — $${CLUB_DRINK_PRICE}. Stamina +${CLUB_DRINK_STAMINA} and a warm edge to the lights for a bit. (Cosmetic only — no effect on driving.)`);
+            };
+          } else { prompt = `The bartender polishes a glass. A ${CLUB_DRINK_NAME} is $${CLUB_DRINK_PRICE} — you're short.`; warn = true; }
+        }
+        else prompt = "Club Solace — the floor's live, the bar's on the west wall.";
       } else if (G.interior === "police") {
         // ---- Phase 7: Harbour Patrol HQ lobby — exit + the desk
         // surrender point (same outcome as hold-B on the street) ----
@@ -390,8 +448,25 @@ export default function Interiors() {
         prompt = "Press E — enter Lina's Garage";
         act = go(INTERIORS.garage.spawnIn[0], INTERIORS.garage.spawnIn[1], "garage");
       } else if (near(CLUB_EXT_DOOR.x, CLUB_EXT_DOOR.z, 2.8)) {
-        prompt = "Press E — enter Club Solace";
-        act = go(INTERIORS.club.spawnIn[0], INTERIORS.club.spawnIn[1], "club");
+        // ---- Phase 23: the club keeps CLUB HOURS (20:00–04:00,
+        // game/club.ts) and a BOUNCER (the broad rig by the door in
+        // World.tsx): outside hours the door is simply locked; at
+        // wanted 3★+ he turns you away — the house doesn't harbour
+        // anyone the patrol is actively hunting. Inside, wanted
+        // follows the standing interior rule (no bust in the pocket;
+        // heat bleeds while unseen, exactly as in every other room).
+        if (!isClubOpen(gameHour())) { prompt = "Club Solace — doors 20:00–04:00. Right now the bouncer's just a man enjoying the quiet."; warn = true; }
+        else if (G.wanted >= 3) {
+          prompt = "Press E — try the club door";
+          act = () => {
+            bark("Bouncer", G.wanted >= 5 ? "Half the harbour's looking for you and the other half's me. Not tonight." : "Three stars or better, the door stays shut. House rules — cool off and come back.");
+            toast("The bouncer folds his arms. Club Solace won't take you at 3★+.");
+            sfx.dryFire();
+          };
+        } else {
+          prompt = "Press E — enter Club Solace";
+          act = go(INTERIORS.club.spawnIn[0], INTERIORS.club.spawnIn[1], "club");
+        }
       } else if (near(POLICE_EXT_DOOR.x, POLICE_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Harbour Patrol HQ";
         act = go(INTERIORS.police.spawnIn[0], INTERIORS.police.spawnIn[1], "police");
@@ -545,10 +620,17 @@ export default function Interiors() {
             <mesh key={i} position={[x, 1.32, 0.1]}><cylinderGeometry args={[0.05, 0.06, 0.3, 6]} /><meshStandardMaterial color={["#39b56a", "#d99a3d", "#3f7fae", "#c22e2e"][i]} roughness={0.2} metalness={0.2} /></mesh>
           ))}
         </group>
-        {/* dance floor inlay + dancers */}
+        {/* dance floor: dark base + the Phase 23 colour-cycling
+            tile grid (6×4, teal/amber wave driven in useFrame) */}
         <mesh position={[0.5, 0.05, -0.5]} receiveShadow><boxGeometry args={[8.5, 0.03, 6]} /><meshStandardMaterial color="#1b2a33" roughness={0.15} metalness={0.5} /></mesh>
+        {floorTiles.map((m, i) => (
+          <mesh key={i} position={[0.5 - 3.55 + (i % 6) * 1.42, 0.075, -0.5 - 2.13 + Math.floor(i / 6) * 1.42]} receiveShadow>
+            <boxGeometry args={[1.34, 0.03, 1.34]} />
+            <primitive object={m} attach="material" />
+          </mesh>
+        ))}
         {dancers.map((rig, i) => (
-          <group key={i} position={[-1 + (i % 2) * 2.4, 0, -2 + Math.floor(i / 2) * 2.6]} rotation={[0, i * 1.9, 0]}>
+          <group key={i} position={[DANCER_SPOTS[i][0], 0, DANCER_SPOTS[i][1]]} rotation={[0, i * 1.9, 0]}>
             <primitive object={rig.group} />
           </group>
         ))}
