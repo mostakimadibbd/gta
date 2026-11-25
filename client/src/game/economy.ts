@@ -16,7 +16,11 @@ export const BUSINESSES: BusinessDef[] = [
   // Phase 19: the fourth business — the marina office on the pier
   // road. Owning it also unlocks the rental dock (game/rentals.ts):
   // a $75 day-pass skiff from the dock point by the Bay Circuit ring.
-  { id: "marina", name: "Sable Marina Rentals", price: 15000, income: 380, x: 14, z: 110, blurb: "Every boat in the bay, rented by the day — and the Bay Circuit starts at your dock." },
+  // Phase 21 balance: income 380 → 430 — at $15,000 it had the worst
+  // base payback in the portfolio (39 days vs 27–29 for the others);
+  // 430 brings it to ~35 days, still the slowest earner, priced for
+  // the rental-dock unlock it carries.
+  { id: "marina", name: "Sable Marina Rentals", price: 15000, income: 430, x: 14, z: 110, blurb: "Every boat in the bay, rented by the day — and the Bay Circuit starts at your dock." },
 ];
 export const APARTMENT = { name: "Coral Shores Apartment", price: 5000, x: 36, z: 213.2 };
 /** Phase 14: the second purchasable property — a Northgate loft with
@@ -111,12 +115,24 @@ export const STAFF_BONUS = 0.5;
 
 // ---- Phase 19: BUSINESS UPGRADES. Each owned business runs levels
 // 1→3; each level adds +35% TAKINGS (the gross the staff bonuses are
-// percentages of). L2 costs 60% of the buy price, L3 120%. ----
+// percentages of). L2 costs 60% of the buy price, L3 120%.
+// ---- Phase 21 BALANCE PASS (numbers only, see docs/BLUEPRINT.md):
+// the Phase 19 costs made the marginal payback on an upgrade the
+// worst sink in the game — L2 needed 46–68 days of its own +35% to
+// repay, L3 91–135 days, and L3 cost MORE than the business itself.
+// Costs are now L2 = 40% / L3 = 75% of the buy price: unstaffed
+// marginal payback ≈ 27–45 days (L2) / 48–84 days (L3), roughly half
+// that with a full crew (staff bonuses are percentages of the same
+// gross, so they scale with the level too). Upgrades remain the
+// slowest money in Port Sable — they are the endgame sink — but no
+// longer a trap. The +35%/level takings are unchanged, so no
+// existing owner's daily pay moves a cent; only future upgrade
+// prices drop. ----
 export const bizLevel = (id: string): number => Math.max(1, Math.min(3, Math.floor(ECO.levels[id] ?? 1) || 1));
 export const levelMult = (lvl: number): number => 1 + 0.35 * (lvl - 1);
 export const upgradeCost = (b: BusinessDef): number => {
   const lvl = bizLevel(b.id);
-  return lvl >= 3 ? 0 : Math.round(b.price * (lvl === 1 ? 0.6 : 1.2));
+  return lvl >= 3 ? 0 : Math.round(b.price * (lvl === 1 ? 0.4 : 0.75));
 };
 export function upgradeBusiness(id: string): boolean {
   const b = BUSINESSES.find((x) => x.id === id);

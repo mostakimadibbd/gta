@@ -1234,3 +1234,42 @@ rows). No new eager chunks.
   multipliers are scalar reads in the cop step, the bust fill
   and effectivePayout; the credits roll is CSS. No Phase 17–20
   system adds per-frame React state or a hot-loop allocation.
+
+## Phase 21 — Life & Feel addendum
+
+- **Staff in the world:** hired staff render with the Phase 9
+  townsfolk pattern verbatim — buildHumanoid rigs, a canvas label
+  sprite (name in warm off-white, business + trait in teal) shown
+  within 42u, ground-snapped pacing at walking intensity. The only
+  new visual language is the WORK COLOURS, one per person so a
+  staffer reads at a glance: Tom Beck teal #1f7a72, Marta Reyes
+  amber #c9922e, Dev Okafor harbour blue #3f7fae, Sana Iqbal rust
+  #b4622d (palette-safe: teal/amber family, no pink/purple). Sana
+  is a night presence — her rust top under streetlight at the
+  frontage is the trait made visible. Posts rebuild only when the
+  on-shift signature changes and step only within 110u of the
+  player; off-shift there is no mesh at all (clean despawn).
+- **Impact feel:** no new visuals — the existing camera-shake rig
+  (G.shakeAmp, already decay-shaped in the App camera) now takes a
+  damage-scaled impulse from the driven car's step, so a hard hit
+  reads harder than a scrape instead of the old flat 0.3 event
+  shake. Sound is the existing sfx.thud() (low-passed noise burst)
+  — deliberately duller than sfx.crash(), which stays the wall
+  branch's voice.
+- **Speed FOV:** the chase camera already widened with speed; the
+  change is restraint — +8° cap (was +14°), gentler slope, and an
+  off switch. At the cap the widening is a sensation, not a fisheye.
+- **Landing:** the fall is a mesh trick, honestly labelled: the sim
+  ground-snaps (unchanged), and the visual hang + gravity drop is
+  layered on the driven car's mesh only, so for ~0.4 s the car
+  falls the way the eye expects off a deck edge. The touchdown dip
+  is the C++ vehicle_body spring absorbing a velocity kick — the
+  same heave/pitch the wheels already animate — and the dust burst
+  reuses the tyre-smoke sprite pool with a surface-tinted colour
+  (dirt brown / sand pale). No new particle system, no new textures.
+- **Perf sanity:** initial-load JS 814.4 kB gzip (index 439.2 +
+  three 178.2 + react-three 185.8 + css 10.6 + html 0.7) vs Phase
+  20's 812.7 — +0.2%, the phase's own code (staffworld.ts,
+  StaffWorld.tsx, the Vehicle feel blocks). No new chunks. The
+  staff signature check is one short string build per frame; the
+  feel systems are scalar math on values the step already computes.

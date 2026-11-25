@@ -186,6 +186,12 @@ export const G = {
   robbedUntil: {} as Record<string, number>, // register id → G.timeS when it can be robbed again
   settings: {
     shake: true, fov: 58, postFx: true, shadows: true,
+    // ---- Phase 21: speed sensation — the chase camera's FOV widens
+    // with speed (App camera rig). The widening predates this flag
+    // (it ran to +14° with no off switch); Phase 21 caps it at +8°
+    // and puts it behind this toggle. Default ON. Old saves pick the
+    // field up from these defaults via the settings merge. ----
+    speedFov: true,
     // ---- Phase 11: player override for the High-tier dynamic reflection
     // stack (SSR + planar water). Off = Standard reflections at any tier.
     // ---- Phase 14: default is now OFF (opt-in via Settings) — see the

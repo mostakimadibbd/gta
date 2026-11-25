@@ -14,6 +14,7 @@ import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
 import { J, jobStats, fmtTime, RACES, BAY_CIRCUIT, SPARROW_RUN } from "../game/jobs";
 import { cup, CUP_POINTS, CUP_CHAMPION_POINTS, cupPointsTotal, cupRoundsDone, resetCup } from "../game/cup";
 import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet, bizLevel, upgradeCost, upgradeBusiness, staffBonusNow, isNightNow, LOAN, LOAN_TIERS, borrowLoan, repayLoan } from "../game/economy";
+import { staffOnShiftNow } from "../game/staffworld";
 import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
 import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
@@ -187,9 +188,10 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
                   {ownedBiz && crew.map((name) => {
                     const s = staffDef(name)!;
                     const now = staffBonusNow(s);
+                    const onShift = staffOnShiftNow(name); // Phase 21: they're physically at the frontage while on shift
                     return (
                       <div key={name} className="bank-row">
-                        <span>↳ {name}<small style={{ display: "block" }}>{s.trait} · +{Math.round(now * 100)}% takings{now > s.bonus ? " (night rate ×2 — live now)" : s.name === "Sana Iqbal" ? " (×2 after dark)" : ""} · ${s.wage}/day wage</small></span>
+                        <span>↳ {name}<small style={{ display: "block" }}>{s.trait} · +{Math.round(now * 100)}% takings{now > s.bonus ? " (night rate ×2 — live now)" : s.name === "Sana Iqbal" ? " (×2 after dark)" : ""} · ${s.wage}/day wage{onShift ? " · 🟢 on shift now — at the frontage" : ""}</small></span>
                         <button type="button" className="phone-toggle" onClick={() => {
                           ECO.staffBy[b.id] = crew.filter((n) => n !== name);
                           persistEco(); setTick((v) => v + 1);

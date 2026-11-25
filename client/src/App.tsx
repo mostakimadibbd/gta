@@ -24,6 +24,7 @@ import Phase8Systems from "./components/Phase8";
 import Phase9Systems from "./components/Phase9";
 import Phase17Systems from "./components/Phase17";
 import BusRide from "./components/BusRide";
+import StaffWorld from "./components/StaffWorld";
 import { BUS, BUS_STOPS_RIDE } from "./game/bus";
 import Phase9Ui from "./components/Phase9Ui";
 import { jobTarget } from "./game/jobs";
@@ -256,7 +257,10 @@ function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THR
     controls.current.autoRotateSpeed = 0.65;
     controls.current.maxDistance = orbit ? 8 : G.interior ? 6.5 : camFar.current ? 26 : 15;
     controls.current.minDistance = orbit ? 5 : 4;
-    const targetFov = G.settings.fov + Math.min(14, G.speedKph / 9);
+    // Phase 21: speed sensation, tuned — the widening is capped at
+    // +8° (it ran to +14°) on a gentler slope, and the Speed FOV
+    // setting turns it off entirely (FOV then sits at the slider).
+    const targetFov = G.settings.fov + (G.settings.speedFov ? Math.min(8, G.speedKph / 14) : 0);
     if (Math.abs(cam.fov - targetFov) > 0.4) { cam.fov += (targetFov - cam.fov) * 0.08; cam.updateProjectionMatrix(); }
     controls.current.update();
     // Phase 5 camera guard (user report: camera pressed inside a dockside
@@ -1258,6 +1262,9 @@ export default function App() {
           <Phase7Systems />
           <Phase8Systems />
           <Phase9Systems />
+          {/* Phase 21: hired staff on shift at their businesses —
+              display + greeting only, claims no prompts */}
+          <StaffWorld />
           {/* Phase 17: world events + the rideable Cityliner — mounted
               before the tram; both claim prompts politely (only when
               the line is free), so the tram keeps its last-writer win */}
@@ -1749,6 +1756,7 @@ export default function App() {
             <h3 className="settings-head">Settings</h3>
             <div className="settings-list">
               <label><span>Camera shake</span><input type="checkbox" checked={G.settings.shake} onChange={(e) => { G.settings.shake = e.target.checked; persistSettings(); showPopup(`Camera shake ${e.target.checked ? "on" : "off"}`); }} /></label>
+              <label><span>Speed FOV (widens at speed)</span><input type="checkbox" defaultChecked={G.settings.speedFov} onChange={(e) => { G.settings.speedFov = e.target.checked; persistSettings(); showPopup(`Speed FOV ${e.target.checked ? "on" : "off"}`); }} /></label>
               <label><span>Post FX (bloom / grade)</span><input type="checkbox" checked={postFx} onChange={(e) => { G.settings.postFx = e.target.checked; persistSettings(); setPostFx(e.target.checked); }} /></label>
               <label><span>Shadows</span><input type="checkbox" checked={G.settings.shadows} onChange={(e) => { G.settings.shadows = e.target.checked; persistSettings(); showPopup(`Shadows ${e.target.checked ? "on" : "off"}`); }} /></label>
               <label><span>Field of view · {G.settings.fov}°</span><input type="range" min={50} max={75} step={1} defaultValue={G.settings.fov} onChange={(e) => { G.settings.fov = Number(e.target.value); persistSettings(); }} /></label>

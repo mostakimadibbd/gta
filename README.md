@@ -266,6 +266,29 @@ corrupt harbour boss's debt ledger.
   Final ledger: **86 ✅ · 7 🟡 · 0 ⬜** of 93 topics — the blueprint
   is complete, and every remaining 🟡 carries its honest
   engine/scope reason in `docs/BLUEPRINT.md`.
+- **Phase 21 — "Life & Feel"** — **Staff in the world**: the people
+  you hire now actually show up — each staffer works a fixed shift
+  at their business's frontage (Sana Iqbal works the night, 20:00–
+  06:00, the same hours her bonus doubles; Dev Okafor is part-time
+  10:00–18:00), pacing the frontage in a work colour with a
+  floating name + trait label and a greeting when you walk up; the
+  Bank app notes who is **on shift now**. **Driving feel**:
+  collisions now land with a camera impulse and a dull thud scaled
+  by the impact; the speed FOV is capped at +8° and can be turned
+  off (**Speed FOV** in Pause settings); and dropping off a ledge
+  or deck edge gives a proper landing — a beat of air, a suspension
+  dip and a burst of dust. All feel work is presentation-only — the
+  physics step is untouched. **Balance pass** (numbers only):
+  business upgrade costs drop (L2 60%→40%, L3 120%→75% of the buy
+  price — the payback was the worst sink in the game) and Sable
+  Marina Rentals pays $430/day (was $380 — it had the portfolio's
+  worst payback at the highest price); the rest of the money loop
+  audited sane and left alone. The round opens with an audit of
+  Phases 17–20 (one fix: New Game+ now stands down in-progress
+  jobs — taxi, delivery, tow, farm — before resetting, as its
+  confirm promises). Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜**
+  (the employees 🟡 grew — staff are in the world now; what remains
+  is rota simulation and management play, a scope call).
 - **Phase 10 — realism + physics pass** (no new features): the
   post chain gains **radial chromatic aberration** and a stricter
   bloom threshold; **fog colour follows the day cycle**; **stars**

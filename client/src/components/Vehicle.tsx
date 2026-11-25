@@ -13,6 +13,7 @@ import { SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
 import { completeBreakIn, carAlarms } from "../game/theft";
 import { J } from "../game/jobs";
 import { tickDrift, resetDrift } from "../game/drift";
+import { tier } from "../game/quality";
 import { padKeys, padAxes } from "../game/gamepad";
 import { touchSteer } from "../game/touch";
 
@@ -65,6 +66,10 @@ export default function Vehicle(p: Props) {
   const nearRef = useRef(false);
   const wasBlocked = useRef(false);
   const wasDriving = useRef(false); // Phase 18: drift-chain exit reset
+  // Phase 21: visual fall state for the driven car (landing feel) —
+  // y = height the mesh still hangs above the (snapped) ground,
+  // vy = fall speed, t = airborne time, prevY = last step's ground
+  const fall = useRef({ y: 0, vy: 0, t: 0, prevY: 0, carId: -1 });
   const driveAcc = useRef(0); // Phase 12: fixed-step accumulator for the driving step
   const refuelTimer = useRef(0);
   const warnedRef = useRef({ wrecked: false, empty: false });
@@ -426,6 +431,7 @@ export default function Vehicle(p: Props) {
           next.x = THREE.MathUtils.clamp(next.x, BRIDGE.x - BRIDGE.halfW + 0.6, BRIDGE.x + BRIDGE.halfW - 0.6);
         }
         const hitsWater = isWaterAt(next.x, next.z) && groundYAt(next.x, next.z) <= 0.05;
+        let wallCrashStep = false; // Phase 21: the wall branch owns this step's crash sound
         if (hitsWater || isBlocked(next.x, next.z, 1.3)) {
           if (!wasBlocked.current && Math.abs(car.state.speed) > 6) {
             G.eventQueue.push("shake", "hitwall"); G.health = Math.max(0, G.health - 4);
@@ -436,6 +442,7 @@ export default function Vehicle(p: Props) {
             const di = car.state.speed >= 0 ? 0 : 1;
             car.dent[di] = Math.min(1, car.dent[di] + Math.min(0.45, Math.abs(car.state.speed) * 0.028));
             sfx.crash();
+            wallCrashStep = true;
           }
           wasBlocked.current = true;
           next.x = car.state.x; next.z = car.state.z; next.speed = -car.state.speed * 0.25;
@@ -453,6 +460,16 @@ export default function Vehicle(p: Props) {
           driftTyres: car.driftTyres ?? false,
           collision: car.damage > dmgBefore,
         });
+        // ---- Phase 21: IMPACT FEEDBACK — the same damage delta the
+        // drift feed reads also drives feel: a camera impulse scaled
+        // by the hit (capped at 0.5, gated by the shake setting, and
+        // skipped at Low quality) plus a dull thud for the step's own
+        // knocks (the wall branch above already played its crash). ----
+        const impactDmg = car.damage - dmgBefore;
+        if (impactDmg >= 2) {
+          if (G.settings.shake && tier() !== "low") G.shakeAmp = Math.min(0.5, Math.max(G.shakeAmp, 0.1 + impactDmg * 0.022));
+          if (impactDmg >= 3 && !wallCrashStep) sfx.thud();
+        }
       }
       if (!isBike) G.bikePedalling = false;
       car.state = next;
@@ -478,6 +495,22 @@ export default function Vehicle(p: Props) {
       } else refuelTimer.current = 0;
       vehicleStateRef.current = next;
       const gy = groundYAt(next.x, next.z);
+      // ---- Phase 21: LANDING — track ledge drops for the driven
+      // car (presentation only: the sim still ground-snaps and
+      // step_vehicle_v3 is untouched). A single-step ground drop
+      // bigger than any ramp or kerb in the city (> 0.6u — a deck
+      // edge, a quayside lip) at speed starts a visual fall: the
+      // mesh hangs at the old height (fall.y in the mesh sync) and
+      // the frame loop drops it with gravity; the touchdown effects
+      // live there. Boats, bikes and the plane are excluded (the
+      // plane has its own hard-landing rule). ----
+      if (!isBike && !isBoat && !isPlane) {
+        const f = fall.current;
+        if (f.carId !== car.id) { f.carId = car.id; f.y = 0; f.vy = 0; f.t = 0; f.prevY = gy; }
+        const drop = f.prevY - gy;
+        if (f.y <= 0 && drop > 0.6 && Math.abs(next.speed) > 4) { f.y = drop; f.vy = 0; f.t = 0; }
+        f.prevY = gy;
+      }
       // Phase 9: the camera + follow point ride the plane's altitude
       const altY = isPlane ? planeState(car.id).alt : 0;
       vehiclePositionRef.current.set(next.x, gy + altY, next.z);
@@ -568,6 +601,42 @@ export default function Vehicle(p: Props) {
       sp.scale.set(sc, sc * 0.5, 1);
       (sp.material as THREE.SpriteMaterial).opacity = Math.max(0, w.life) * 0.3;
     });
+    // ---- Phase 21: the visual fall (see stepDrive) — integrate the
+    // hang with gravity; on touchdown after > 0.35 s airborne, kick
+    // the C++ body springs (suspension dip ~0.4 s), throw a dust
+    // burst from the tyre-smoke pool and land a soft thud + a small
+    // shake. Numbers are deliberately conservative. ----
+    {
+      const f = fall.current;
+      if (!G.driving || G.activeCarId < 0) { f.y = 0; f.carId = -1; }
+      else if (f.y > 0) {
+        f.vy += 26 * dt; f.y -= f.vy * dt; f.t += dt;
+        if (f.y <= 0) {
+          f.y = 0;
+          if (f.t > 0.35) {
+            const car = G.cars[G.activeCarId];
+            if (car) {
+              car.bodyHeaveVel = (car.bodyHeaveVel ?? 0) - 2.4;
+              car.pitchVel = (car.pitchVel ?? 0) + 0.7;
+              const kind = surfaceKindAt(car.state.x, car.state.z);
+              const dustColor = kind === "sand" ? "#d9c08a" : "#b08b5a";
+              for (let n = 0; n < 6; n++) {
+                const puff = puffs.current[puffIdx.current % puffs.current.length];
+                const sp = puffRefs.current[puffIdx.current % puffs.current.length];
+                puffIdx.current += 1;
+                if (sp) (sp.material as THREE.SpriteMaterial).color.set(dustColor);
+                puff.life = 1;
+                puff.x = car.state.x + (Math.random() - 0.5) * 2.4;
+                puff.z = car.state.z + (Math.random() - 0.5) * 2.4;
+                puff.y = 0.35;
+              }
+              sfx.thud();
+              if (G.settings.shake && tier() !== "low") G.shakeAmp = Math.min(0.5, Math.max(G.shakeAmp, 0.16));
+            }
+          }
+        }
+      }
+    }
     // ---- engine smoke for damaged cars (damage > 60) ----
     const tt = clock.elapsedTime;
     G.cars.forEach((c, i) => {
@@ -610,7 +679,7 @@ export default function Vehicle(p: Props) {
         g.rotation.set(c.pitch, c.state.heading, c.roll);
         return;
       }
-      g.position.set(c.state.x, groundYAt(c.state.x, c.state.z) + (c.bodyHeave ?? 0), c.state.z);
+      g.position.set(c.state.x, groundYAt(c.state.x, c.state.z) + (c.bodyHeave ?? 0) + (G.driving && G.activeCarId === i ? fall.current.y : 0), c.state.z); // Phase 21: + the visual fall hang for the driven car
       if (c.kind === "motorcycle") {
         // bank into turns ∝ steering × speed; wheelie-lite pitch on launch
         const active = G.driving && G.activeCarId === i && !paused;
