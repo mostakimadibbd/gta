@@ -37,7 +37,7 @@ const CHALLENGE_SPOTS: { x: number; z: number; heading: number }[] = [
   { x: 76, z: 264, heading: -Math.PI / 2 },    // Coral Shores shore road
 ];
 const CHALLENGE_DESTS: [number, number][] = [[-100, -60], [20, 100], [100, 100], [-60, -100], [60, -140]];
-const CARGO_SPOTS: [number, number][] = [[20, 20], [-40, -40], [60, 64], [4, -100], [-100, 20]];
+const CARGO_SPOTS: [number, number][] = [[20, 20], [-20, -40], [60, 64], [4, -100], [-100, 20]]; // Phase 25: spot 2 was the (−40,−40) BLOCK CENTRE — crates spawned inside buildings; it moves onto the x=−20 road like the other four
 const CRATE_OFFS: [number, number][] = [[0, 0], [2.6, 1.4], [-2.2, 2.4], [1.2, -2.6], [-3.1, -1.2]];
 const LOOT: { type: string; name: string; value: number }[] = [
   { type: "contraband", name: "Unmarked electronics", value: 60 },

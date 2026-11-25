@@ -1382,3 +1382,33 @@ rows). No new eager chunks.
   23's 819.4 — +0.2%, the phase's own code (derby.ts, the boat
   branch in Phase8's existing loop, the derby branch in
   Phase17's scheduler). No new chunks; cc0Data stays lazy.
+
+## Phase 25 — collision sanity, smoothness, Eastmere
+
+- **Nothing lives inside a wall anymore:** the placement audit
+  (tools/audit-placements.mjs) found 214 intersections in the
+  shipped world — parked cars in shopfronts, towers inside filler
+  buildings, lanes through shop rows, props in roads — and every
+  one is fixed by moving the placement. The screenshot's teal
+  sedan now sits on the Docks road, parallel to the café it was
+  half-buried in. A runtime depenetration guard keeps it that
+  way for restored saves.
+- **Smoother by bounds, not by promises:** the adaptive-DPR
+  governor no longer pumps the resolution on single busy seconds
+  (3 s under 45 FPS to step down, 10 s over 58 to step back up),
+  and Low tier re-renders the sun shadow map every 3rd frame
+  (a moved sun/player still forces an instant update). No
+  physics or visual changes beyond the DPR doing its documented
+  job; the HUD FPS counter remains the verdict.
+- **Eastmere reads as a place, not a pop-in:** a welcome sign at
+  the causeway's east end, the amber EASTMERE DINER sign, the
+  teal-banded Eastmere Light glowing at night, kerbs, lamps and
+  parked cars in the district palette (teal/amber, no pink or
+  purple), and the Gull Rock Lookout pad at the south-east
+  corner. It appears on the minimap + big map only once its
+  chunk has loaded — the map never promises a district that
+  isn't in the world.
+- **Perf sanity:** initial-load JS 823.4 kB gzip (index 448.1 +
+  three 178.2 + react-three 185.8 + CSS 10.7 + HTML 0.7) vs
+  Phase 24's 821.1 — +0.3%, this phase's eager code only. The
+  Eastmere chunk (9.4 kB, 2.7 kB gzip) is separate and lazy.

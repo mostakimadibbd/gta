@@ -2,7 +2,8 @@
 // frame by the 3D systems; the HUD polls it at 8 Hz and copies to React state.
 import * as THREE from "three";
 import { sfx } from "./audio";
-import { CAR_SPAWNS, CAR_MODELS, PIER_SPAWN, MANSION, districtAt } from "../world";
+import { CAR_SPAWNS, CAR_MODELS, PIER_SPAWN, MANSION, districtAt, streamedGateFor } from "../world";
+import { depenetrateCar } from "./depenetrate"; // Phase 25: spawn/restore guard
 import type { CarSpawn } from "../world";
 import type { VehicleState } from "../physics/GamePhysics";
 
@@ -275,6 +276,9 @@ try {
   G.ownsMansion = localStorage.getItem("harborfall-mansion") === "1";
   const saved = loadSavedCar();
   if (saved) {
+    // Phase 25: same streamed-district gate guard as applyCarSave
+    const gate = streamedGateFor(saved.x, saved.z);
+    if (gate) { saved.x = gate.x; saved.z = gate.z; saved.heading = gate.heading; }
     G.cars.push({
       id: G.cars.length, x: saved.x, z: saved.z, heading: saved.heading, color: saved.color,
       model: "Garage-kept", kind: saved.kind as typeof G.cars[number]["kind"], owned: true,
@@ -282,6 +286,7 @@ try {
       brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
     });
     G.savedCarId = G.cars.length - 1;
+    depenetrateCar(G.cars[G.cars.length - 1]); // Phase 25 guard
   }
 } catch { /* storage unavailable */ }
 
@@ -375,6 +380,11 @@ export function clearLastCar() {
  * un-store a matching put-away instance or are re-created. Returns
  * the G.cars index, or -1. */
 function applyCarSave(s: LastCarSave): number {
+  // Phase 25: a snapshot saved inside a streamed district whose chunk
+  // is not loaded this session (Eastmere) restores at the district's
+  // causeway gate on the main map instead — its streets aren't here.
+  const gate = streamedGateFor(s.x, s.z);
+  if (gate) s = { ...s, x: gate.x, z: gate.z, heading: gate.heading };
   const apply = (c: PlayerCar) => {
     c.state = { x: s.x, z: s.z, heading: s.heading, speed: 0 };
     c.x = s.x; c.z = s.z; c.heading = s.heading;
@@ -383,6 +393,7 @@ function applyCarSave(s: LastCarSave): number {
     c.driftTyres = s.driftTyres ?? false;
     clampMods(c);
     c.storedAway = false;
+    depenetrateCar(c); // Phase 25: never restore a car inside a wall
   };
   if (s.spawnId >= 0) {
     const idx = G.cars.findIndex((c) => c.id === s.spawnId);

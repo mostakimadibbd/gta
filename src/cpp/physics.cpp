@@ -608,4 +608,36 @@ void ragdoll_step(double* pos, double* prev, double ground_y, double delta_time)
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 25 additions — spawn/restore depenetration core. Kept
+// API-stable: everything above is untouched.
+// ---------------------------------------------------------------------------
+
+// Penetration depth of a circle (car centre + body radius) into an
+// AABB: 0 when clear, else the SMALLEST axis penetration — exactly
+// the distance resolve_overlap will push. Mirrors collide_aabb's test.
+double building_overlap(double x, double z, double radius, double box_x,
+                        double box_z, double half_w, double half_d) {
+  const double pen_x = half_w + radius - std::abs(x - box_x);
+  const double pen_z = half_d + radius - std::abs(z - box_z);
+  if (pen_x <= 0.0 || pen_z <= 0.0) return 0.0;
+  return pen_x < pen_z ? pen_x : pen_z;
+}
+
+// Push a circle out of an AABB along the smallest penetration axis
+// (resolve_aabb's rule) and report the push distance in out[2] — 0
+// when there was nothing to resolve. game/depenetrate.ts iterates
+// this over the blockersNear() boxes at spawn/restore time.
+void resolve_overlap(double x, double z, double radius, double box_x, double box_z,
+                     double half_w, double half_d, double* output) {
+  const double depth = building_overlap(x, z, radius, box_x, box_z, half_w, half_d);
+  if (depth > 0.0) {
+    double resolved[2];
+    resolve_aabb(x, z, radius, box_x, box_z, half_w, half_d, resolved);
+    output[0] = resolved[0]; output[1] = resolved[1]; output[2] = depth;
+  } else {
+    output[0] = x; output[1] = z; output[2] = 0.0;
+  }
+}
+
 }  // extern "C"

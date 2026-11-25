@@ -21,6 +21,11 @@ void suspension_response(double accel, double steer, double speed,
                          double dt, double* out);
 double swept_aabb(double x0, double z0, double x1, double z1, double radius,
                   double box_x, double box_z, double half_w, double half_d);
+// Phase 25 depenetration core
+double building_overlap(double x, double z, double radius, double box_x,
+                        double box_z, double half_w, double half_d);
+void resolve_overlap(double x, double z, double radius, double box_x, double box_z,
+                     double half_w, double half_d, double* output);
 void separation_force(double x, double z,
                       double ax, double az, double bx, double bz,
                       double cx, double cz, double radius, double* output);
@@ -352,6 +357,34 @@ int main() {
       for (int i = 0; i < 39; ++i) if (!is_finite(pos[i]) || std::fabs(pos[i]) > 60.0) stable = false;
     }
     check("ragdoll_step scrambled pose stays stable for 10 s", stable);
+  }
+
+  // ---- Phase 25: building_overlap / resolve_overlap -----------------
+  {
+    // clear of the box: no overlap, no move
+    check("building_overlap is 0 when clear",
+          building_overlap(20, 0, 1.0, 0, 0, 5, 3) == 0.0);
+    double out[3];
+    resolve_overlap(20, 0, 1.0, 0, 0, 5, 3, out);
+    check("resolve_overlap leaves a clear point untouched",
+          out[0] == 20.0 && out[1] == 0.0 && out[2] == 0.0);
+    // shallow x graze: depth is the x penetration, push goes +x
+    check("building_overlap reports the smallest axis penetration",
+          std::fabs(building_overlap(5.5, 0, 1.0, 0, 0, 5, 3) - 0.5) < 1e-9);
+    resolve_overlap(5.5, 0, 1.0, 0, 0, 5, 3, out);
+    check("resolve_overlap pushes out along x by the depth",
+          std::fabs(out[0] - 6.0) < 1e-9 && out[1] == 0.0 && std::fabs(out[2] - 0.5) < 1e-9);
+    // deep z overlap: push goes -z to the face
+    resolve_overlap(0, -3.4, 1.0, 0, 0, 5, 3, out);
+    check("resolve_overlap pushes out along z to the nearest face",
+          out[0] == 0.0 && std::fabs(out[1] + 4.0) < 1e-9 && std::fabs(out[2] - 0.6) < 1e-9);
+    // the screenshot case: a car centre inside the wall resolves clear
+    resolve_overlap(3, 106, 1.0, 8, 109.1, 5, 4.1, out);
+    check("resolve_overlap clears the Docks cafe wall case",
+          building_overlap(out[0], out[1], 1.0, 8, 109.1, 5, 4.1) == 0.0 && out[2] > 0.0);
+    // edge: exactly touching is not an overlap
+    check("building_overlap is 0 when exactly touching",
+          building_overlap(6, 0, 1.0, 0, 0, 5, 3) == 0.0);
   }
 
   if (failures == 0) {

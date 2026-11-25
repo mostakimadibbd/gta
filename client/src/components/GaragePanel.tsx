@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { G, persistStoredCars, clearLastCar, clampMods, LASTCAR, type StoredCar } from "../game/store";
 import { GARAGE_ZONES, CAR_MODELS } from "../world";
+import { depenetrateCar } from "../game/depenetrate"; // Phase 25: spawn guard
 import { sfx } from "../game/audio";
 
 function Bar({ label, value, tone }: { label: string; value: number; tone?: string }) {
@@ -101,6 +102,7 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
     // (older saves, hand-edited storage) reached the physics branches
     // raw. Both branches above converge here, so clamp once, here.
     clampMods(car);
+    depenetrateCar(car); // Phase 25: never take a car out into a wall
     sfx.door();
     onClose();
   };

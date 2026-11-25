@@ -12,7 +12,7 @@ import { J } from "./jobs";
 export interface FishSpot { name: string; x: number; z: number; castX: number; castZ: number; island?: boolean; offshore?: boolean; }
 /** Stand points (on land) + the water point the line lands in. */
 export const FISHING_SPOTS: FishSpot[] = [
-  { name: "the Pier", x: 2, z: 112.5, castX: 2, castZ: 122 },
+  { name: "the Pier", x: 2, z: 112.5, castX: 2, castZ: 134 }, // Phase 25: the cast landed on the beach sand (water starts z=128)
   { name: "Sable Island dock", x: -64, z: 154.5, castX: -64, castZ: 146, island: true },
 ];
 export interface FishDef { name: string; minCm: number; maxCm: number; base: number; when: "any" | "day" | "night"; rare?: boolean; offshore?: boolean; }

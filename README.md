@@ -557,6 +557,10 @@ moved into the C++ core; services live in Python; tooling lives in C#.
 
 ```sh
 # Web client
+
+# Placement audit (headless): every car spawn, lane, door, register
+# and scatter prop tested against the building colliders
+node tools/audit-placements.mjs   # from the repo root; exit 1 on findings
 cd client && npm ci && npm run dev        # http://localhost:5173
 npm run build                             # production build -> client/dist
 

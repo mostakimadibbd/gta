@@ -318,14 +318,14 @@ function ShopFronts({ night }: { night: number }) {
         </group>
       ))}
       {/* Coral Shores Goods building (register shop) */}
-      <group position={[48, 0, 218]}>
+      <group position={[48, 0, 216.5]}>
         <mesh position={[0, 2.1, 0]} castShadow receiveShadow><boxGeometry args={[10, 4.2, 6.8]} /><meshStandardMaterial color="#77644c" roughness={0.9} /></mesh>
         <mesh position={[0, 4.35, 0]}><boxGeometry args={[10.4, 0.3, 7.2]} /><meshStandardMaterial color="#14524f" roughness={0.85} /></mesh>
         <mesh position={[0, 3.1, -3.46]}><planeGeometry args={[7.6, 1.1]} /><meshStandardMaterial map={shopTex} emissive="#ffffff" emissiveMap={shopTex} emissiveIntensity={0.2 + night * 0.7} /></mesh>
         <mesh position={[0, 1.15, -3.44]}><boxGeometry args={[8.6, 2.3, 0.06]} /><meshStandardMaterial color="#22303a" roughness={0.2} metalness={0.4} emissive="#ffca7a" emissiveIntensity={night * 0.25} /></mesh>
       </group>
       {/* Coral Pawn building + counter */}
-      <group position={[88, 0, 218]}>
+      <group position={[88, 0, 216.5]}>
         <mesh position={[0, 2.3, 0]} castShadow receiveShadow><boxGeometry args={[10, 4.6, 6.8]} /><meshStandardMaterial color="#5d5142" roughness={0.9} /></mesh>
         <mesh position={[0, 4.75, 0]}><boxGeometry args={[10.4, 0.3, 7.2]} /><meshStandardMaterial color="#3a2c10" roughness={0.85} /></mesh>
         <mesh position={[0, 3.3, -3.46]}><planeGeometry args={[8.2, 1.1]} /><meshStandardMaterial map={pawnTex} emissive="#ffffff" emissiveMap={pawnTex} emissiveIntensity={0.25 + night * 0.9} /></mesh>
@@ -409,7 +409,7 @@ function NorthgateGroup({ night }: { night: number }) {
         </group>
       ))}
       {/* gun store frontage */}
-      <group position={[27, 0, -222]}>
+      <group position={[27, 0, -226]}> {/* Phase 25: store moved north out of the z=−216 lane */}
         <mesh position={[0, 2.4, 0]} castShadow receiveShadow><boxGeometry args={[6.4, 4.8, 10.4]} /><meshStandardMaterial color="#4a4238" roughness={0.9} /></mesh>
         <mesh position={[-3.26, 3.6, 0]} rotation={[0, -Math.PI / 2, 0]}><planeGeometry args={[7.4, 1.3]} /><meshStandardMaterial map={armsTex} emissive="#ffffff" emissiveMap={armsTex} emissiveIntensity={0.25 + night * 0.8} /></mesh>
         <mesh position={[-3.24, 1.3, 0]} rotation={[0, -Math.PI / 2, 0]}><boxGeometry args={[6.4, 2.4, 0.06]} /><meshStandardMaterial color="#22303a" roughness={0.2} metalness={0.4} emissive="#ffca7a" emissiveIntensity={night * 0.22} /></mesh>
@@ -470,8 +470,8 @@ function Phase7Frontages({ night }: { night: number }) {
   const winMat = <meshStandardMaterial color="#ffe9a8" emissive="#ffca7a" emissiveIntensity={0.15 + night * 1.1} />;
   return (
     <group>
-      {/* Harbour Patrol HQ (-64, 106.5) — front faces the z=100 road */}
-      <group position={[-64, 0, 106.5]}>
+      {/* Harbour Patrol HQ (-64, 109.1) — front faces the z=100 road */}
+      <group position={[-64, 0, 109.1]}>
         <mesh position={[0, 3.5, 0]} castShadow receiveShadow><boxGeometry args={[12.2, 7, 8.2]} /><meshStandardMaterial color="#46586c" roughness={0.85} /></mesh>
         <mesh position={[0, 7.15, 0]} castShadow><boxGeometry args={[12.6, 0.3, 8.6]} /><meshStandardMaterial color="#2c3644" roughness={0.8} /></mesh>
         <mesh position={[0, 5.6, -4.16]} rotation={[0, Math.PI, 0]}><planeGeometry args={[8.4, 1.5]} /><meshStandardMaterial map={policeTex} emissive="#ffffff" emissiveMap={policeTex} emissiveIntensity={0.25 + night * 0.7} /></mesh>
@@ -479,8 +479,8 @@ function Phase7Frontages({ night }: { night: number }) {
         <mesh position={[0, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#10161e" roughness={0.4} /></mesh>
         <mesh position={[0, 7.6, 0]}><sphereGeometry args={[0.32, 10, 8]} /><meshStandardMaterial color="#3f7fae" emissive="#3f7fae" emissiveIntensity={0.4 + night * 1.6} /></mesh>
       </group>
-      {/* Sable Clinic (88, 106.5) */}
-      <group position={[88, 0, 106.5]}>
+      {/* Sable Clinic (88, 109.1) */}
+      <group position={[88, 0, 109.1]}>
         <mesh position={[0, 3, 0]} castShadow receiveShadow><boxGeometry args={[12.2, 6, 8.2]} /><meshStandardMaterial color="#dfe5e2" roughness={0.7} /></mesh>
         <mesh position={[0, 6.15, 0]} castShadow><boxGeometry args={[12.6, 0.3, 8.6]} /><meshStandardMaterial color="#9fb3ae" roughness={0.8} /></mesh>
         <mesh position={[0, 4.9, -4.16]} rotation={[0, Math.PI, 0]}><planeGeometry args={[7.6, 1.35]} /><meshStandardMaterial map={clinicTex} emissive="#ffffff" emissiveMap={clinicTex} emissiveIntensity={0.2 + night * 0.5} /></mesh>
@@ -489,9 +489,9 @@ function Phase7Frontages({ night }: { night: number }) {
         {[-4.2, -1.4, 1.4].map((x) => <mesh key={x} position={[x, 3.1, -4.13]}><boxGeometry args={[1.7, 1.5, 0.06]} />{winMat}</mesh>)}
         <mesh position={[0, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#5c6a66" roughness={0.4} /></mesh>
       </group>
-      {/* Café Coral (8, 106.5) — Phase 13: the Docks strip's coffee
+      {/* Café Coral (8, 109.1) — Phase 13: the Docks strip's coffee
           house; warm windows, an amber awning, steam over the door */}
-      <group position={[8, 0, 106.5]}>
+      <group position={[8, 0, 109.1]}>
         <mesh position={[0, 2.75, 0]} castShadow receiveShadow><boxGeometry args={[10, 5.5, 8.2]} /><meshStandardMaterial color="#e3d3b8" roughness={0.85} /></mesh>
         <mesh position={[0, 5.65, 0]} castShadow><boxGeometry args={[10.4, 0.3, 8.6]} /><meshStandardMaterial color="#7a4a2b" roughness={0.85} /></mesh>
         <mesh position={[0, 4.6, -4.16]} rotation={[0, Math.PI, 0]}><planeGeometry args={[6.8, 1.2]} /><meshStandardMaterial map={cafeTex} emissive="#ffffff" emissiveMap={cafeTex} emissiveIntensity={0.3 + night * 0.85} /></mesh>
@@ -506,7 +506,7 @@ function Phase7Frontages({ night }: { night: number }) {
         ))}
       </group>
       {/* Marina Table restaurant (64, 218) — Coral waterfront */}
-      <group position={[64, 0, 218]}>
+      <group position={[64, 0, 216.5]}>
         <mesh position={[0, 2.25, 0]} castShadow receiveShadow><boxGeometry args={[10, 4.5, 6.8]} /><meshStandardMaterial color="#7a5a3d" roughness={0.85} /></mesh>
         <mesh position={[0, 4.7, 0]} rotation={[0, Math.PI / 4, 0]} castShadow><coneGeometry args={[6.4, 1.7, 4]} /><meshStandardMaterial color="#8a3b2a" flatShading /></mesh>
         <mesh position={[0, 3.4, -3.46]} rotation={[0, Math.PI, 0]}><planeGeometry args={[7, 1.25]} /><meshStandardMaterial map={restTex} emissive="#ffffff" emissiveMap={restTex} emissiveIntensity={0.3 + night * 0.8} /></mesh>
@@ -514,7 +514,7 @@ function Phase7Frontages({ night }: { night: number }) {
         <mesh position={[0, 1.05, -3.43]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#2b1c10" roughness={0.5} /></mesh>
       </group>
       {/* Coral Shores Apartments (36, 218) — the buyable second home */}
-      <group position={[36, 0, 218]}>
+      <group position={[36, 0, 216.5]}>
         <mesh position={[0, 5.5, 0]} castShadow receiveShadow><boxGeometry args={[8, 11, 6.8]} /><meshStandardMaterial color="#cbb59a" roughness={0.9} /></mesh>
         <mesh position={[0, 11.15, 0]} castShadow><boxGeometry args={[8.4, 0.3, 7.2]} /><meshStandardMaterial color="#8a6f52" roughness={0.85} /></mesh>
         <mesh position={[0, 9.9, -3.46]} rotation={[0, Math.PI, 0]}><planeGeometry args={[6.4, 1.1]} /><meshStandardMaterial map={aptTex} emissive="#ffffff" emissiveMap={aptTex} emissiveIntensity={0.2 + night * 0.6} /></mesh>
@@ -526,8 +526,8 @@ function Phase7Frontages({ night }: { night: number }) {
       </group>
       {/* Northgate Car Wash (-44, -218.5) + drive-through arch */}
       <group position={[-44, 0, -218.5]}>
-        <mesh position={[0, 2, 0]} castShadow receiveShadow><boxGeometry args={[9, 4, 5.2]} /><meshStandardMaterial color="#2e5a68" roughness={0.8} /></mesh>
-        <mesh position={[0, 3.2, 2.66]}><planeGeometry args={[7.4, 1.3]} /><meshStandardMaterial map={washTex} emissive="#ffffff" emissiveMap={washTex} emissiveIntensity={0.25 + night * 0.7} /></mesh>
+        <mesh position={[0.75, 2, -2.22]} castShadow receiveShadow><boxGeometry args={[8.5, 4, 1.4]} /><meshStandardMaterial color="#2e5a68" roughness={0.8} /></mesh> {/* Phase 25: hall front slimmed into the gap north of the z=−216 lane; the arch below stays on the kerb */}
+        <mesh position={[0.75, 3.2, -1.46]}><planeGeometry args={[7.4, 1.3]} /><meshStandardMaterial map={washTex} emissive="#ffffff" emissiveMap={washTex} emissiveIntensity={0.25 + night * 0.7} /></mesh>
         {[-3.4, 3.4].map((x) => (
           <group key={x} position={[x, 0, 8.5]}>
             <mesh position={[0, 2.1, 0]} castShadow><boxGeometry args={[0.4, 4.2, 0.4]} /><meshStandardMaterial color="#7fd8e8" metalness={0.4} roughness={0.4} /></mesh>
@@ -552,8 +552,8 @@ function Phase14Frontages({ night }: { night: number }) {
   const winMat = <meshStandardMaterial color="#ffe9a8" emissive="#ffca7a" emissiveIntensity={0.15 + night * 1.1} />;
   return (
     <group>
-      {/* Sable Fitness (64, -70) — glass front faces the park lawn (+z) */}
-      <group position={[64, 0, -70]}>
+      {/* Sable Fitness (70, -70) — glass front faces the park lawn (+z) */}
+      <group position={[70, 0, -70]}> {/* Phase 25: pavilion moved east out of the x=60 road */}
         <mesh position={[0, 2.5, 0]} castShadow receiveShadow><boxGeometry args={[11, 5, 6]} /><meshStandardMaterial color="#274b4a" roughness={0.8} /></mesh>
         <mesh position={[0, 5.15, 0]} castShadow><boxGeometry args={[11.4, 0.3, 6.4]} /><meshStandardMaterial color="#17303a" roughness={0.8} /></mesh>
         <mesh position={[0, 4.1, 3.06]}><planeGeometry args={[7.6, 1.25]} /><meshStandardMaterial map={gymTex} emissive="#ffffff" emissiveMap={gymTex} emissiveIntensity={0.25 + night * 0.7} /></mesh>
@@ -1644,8 +1644,9 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
           <planeGeometry args={[FARM.field.w, FARM.field.d]} /><meshStandardMaterial color="#54402a" roughness={1} />
         </mesh>
         <primitive object={cropSet} />
-        {/* hay bales by the barn door */}
-        {[[-101, -99], [-112, -98.5]].map(([x, z], i) => (
+        {/* hay bales by the barn door (Phase 25: they stood ON the
+            z=−100 road; now beside the moved barn, clear of the lanes) */}
+        {[[-104, -102.8], [-116, -102.8]].map(([x, z], i) => (
           <mesh key={i} position={[x, 0.8, z]} rotation={[Math.PI / 2, 0, i * 0.7]} castShadow>
             <cylinderGeometry args={[0.8, 0.8, 1.25, 10]} /><meshStandardMaterial color="#d9b45c" roughness={1} flatShading />
           </mesh>
@@ -1724,11 +1725,11 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
         <mesh position={[0, 4.35, 0]}><boxGeometry args={[11.7, 0.32, 7.7]} /><meshStandardMaterial color="#2e3438" /></mesh>
         <mesh position={[0, 2, 3.56]}><boxGeometry args={[8.2, 3.1, 0.1]} /><meshStandardMaterial color="#31424c" roughness={0.1} metalness={0.35} emissive="#ffd98a" emissiveIntensity={0.1 + night * 1.2} /></mesh>
         <mesh position={[-8.2, 1.5, 0]} castShadow><boxGeometry args={[5, 3, 6]} /><meshStandardMaterial color="#e2dccb" roughness={0.85} /></mesh>
-        <mesh position={[4.4, 0.07, 4.4]} receiveShadow><boxGeometry args={[7, 0.07, 3.6]} /><primitive object={mats.concreteV} attach="material" /></mesh>
+        <mesh position={[4.4, 0.07, 5.2]} receiveShadow><boxGeometry args={[7, 0.07, 3.6]} /><primitive object={mats.concreteV} attach="material" /></mesh>
         <mesh position={[0, 0.55, 5.6]}><boxGeometry args={[13, 1.05, 0.55]} /><meshStandardMaterial color="#2e6b34" flatShading /></mesh>
         <mesh position={[-6.8, 0.55, 0]}><boxGeometry args={[0.55, 1.05, 11]} /><meshStandardMaterial color="#2e6b34" flatShading /></mesh>
         <mesh position={[6.8, 0.55, 0]}><boxGeometry args={[0.55, 1.05, 11]} /><meshStandardMaterial color="#2e6b34" flatShading /></mesh>
-        <group position={[4.2, 0, 4.4]} rotation={[0, Math.PI / 2, 0]}>
+        <group position={[4.2, 0, 5.2]} rotation={[0, Math.PI / 2, 0]}>
           {/* Phase 8: the mansion showpiece is now the gold Kestrel One hypercar */}
           <CarBody kind="hyper" color="#d4af37" />
         </group>
@@ -1882,7 +1883,7 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
       ))}
 
       {/* ======== Phase 3: Lina's Garage — exterior (enterable, see Interiors) ======== */}
-      <group position={[-25, 0, 106.5]}>
+      <group position={[-25, 0, 109.1]}>
         <mesh position={[0, 2.6, 0]} castShadow receiveShadow>
           <boxGeometry args={[12, 5.2, 8]} /><meshStandardMaterial color="#b57e4e" roughness={0.9} />
         </mesh>

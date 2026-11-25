@@ -3,6 +3,7 @@
 // (they never touch M.active / story progress) but share the objective
 // marker idiom: Phase7.tsx renders the pillar at jobTarget() and the big
 // map draws the GPS route to it. Stats persist in localStorage.
+import { depenetrateCar } from "./depenetrate"; // Phase 25: spawn guard
 import { G, LASTCAR, clearLastCar } from "./store";
 
 export interface Poi { name: string; x: number; z: number; }
@@ -11,7 +12,7 @@ export interface Poi { name: string; x: number; z: number; }
 export const HAIL_POINTS: Poi[] = [
   { name: "Market Row bus stop", x: 27.7, z: -30 },
   { name: "Ferry Quarter bus stop", x: -67.7, z: 14 },
-  { name: "Docks bus stop", x: 34, z: 67.7 },
+  { name: "Docks bus stop", x: 34, z: 63.5 }, // Phase 25: was inside the (31,71) building
   { name: "the Pier", x: 2, z: 108 },
   { name: "Club Solace", x: 44, z: 108 },
   { name: "Coral Pawn", x: 88, z: 210 },
@@ -39,7 +40,7 @@ export const PICKUP_POINTS: Poi[] = [
   { name: "the crane office", x: 60, z: 100 },
   { name: "East Yards depot", x: 100, z: 24 },
   { name: "Ferry Quarter depot", x: -100, z: 60 },
-  { name: "Market Row", x: 13.5, z: 30 },
+  { name: "Market Row", x: 15.5, z: 30 }, // Phase 25: was inside the (9,31) building's wall
 ];
 
 export interface JobStats {
@@ -258,13 +259,20 @@ export interface ValetFrontage { name: string; x: number; z: number; bayX: numbe
 export const VALET_FRONTAGES: ValetFrontage[] = [
   // Club Solace — door on the pier road (CLUB_EXT_DOOR 44,110.2);
   // the bay is down the harbour road, a short clean run west.
-  { name: "Club Solace", x: 44, z: 106, bayX: 14, bayZ: 103.5, heading: Math.PI / 2 },
-  // Hotel Northgate — the hail kerb on the hotel block; the bay
-  // sits on the Northgate east–west road (z −216) west of it.
-  { name: "Hotel Northgate", x: 9, z: -226, bayX: -16, bayZ: -219.5, heading: Math.PI / 2 },
-  // Coral Shores resort strip — Goods frontage on the shore road;
-  // the bay is at the Coral crossroads (x 72 / z 224).
-  { name: "Coral Shores Resort", x: 48, z: 212, bayX: 75.5, bayZ: 224, heading: 0 },
+  // Phase 25: the bay stood inside Café Coral's wall (x 11.7..13 of
+  // the bay car's span overlapped the café blocker) — it moves one
+  // car-length west, clear of the café and of Rayan's sedan (id 0).
+  { name: "Club Solace", x: 44, z: 106, bayX: 17, bayZ: 103.5, heading: Math.PI / 2 },
+  // Hotel Northgate — Phase 25: the pickup stood BETWEEN the hotel
+  // and its annex, inside the annex's footprint; it moves to the
+  // hotel's east forecourt. The bay moves off the z=−216 traffic
+  // lanes to the showroom apron's west end.
+  { name: "Hotel Northgate", x: 24, z: -236, bayX: -16, bayZ: -224.5, heading: Math.PI / 2 },
+  // Coral Shores resort strip — Phase 25: the pickup stood inside
+  // the waterfront row's west house; it moves to the row's west end
+  // by the x=40 road. The bay moves off the z=224 crossroads (it
+  // straddled both traffic lanes) to the x=104 road's east verge.
+  { name: "Coral Shores Resort", x: 34, z: 210, bayX: 109.5, bayZ: 232, heading: Math.PI / 2 }, // Phase 25: pickup on the promenade west end (was inside the apartment block's new span)
 ];
 export const VALET_BASE_PAY = 90;
 export const VALET_DAMAGE_PER_POINT = 6;
@@ -288,6 +296,7 @@ export function spawnValetCar(frontIdx: number): number {
     brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
     flatTyre: false, tuneLvl: 0, brakeLvl: 0, driftTyres: false, pitchVel: 0, rollVel: 0,
   });
+  depenetrateCar(G.cars[G.cars.length - 1]); // Phase 25 guard
   return G.cars.length - 1;
 }
 

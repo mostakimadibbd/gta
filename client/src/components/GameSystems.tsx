@@ -10,6 +10,7 @@ import { pushPhoneMsg } from "../game/phone";
 import { pushNews } from "../game/feed";
 import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, NORTH_ROAD_X, NORTH_ROAD_Z, BUS_STOPS, REGISTERS, PAWN_SHOP, DEALERSHIP, VENDOR, districtAt, isBlocked, inNorth, onIsland, MANSION_DRIVE, groundYAt, CAR_MODELS, buildings, props as WORLD_PROPS } from "../world";
 import { lightAllows } from "../game/lights";
+import { depenetrateCar, depenetrateNpc } from "../game/depenetrate"; // Phase 25: spawn guard + settled sweep
 import { ECO } from "../game/economy";
 import { seasonSun, tickSeasonVisuals, seasonWatcher, seasonTint, type SunWarp } from "../game/season";
 import { nudgeStock } from "../game/invest";
@@ -83,7 +84,7 @@ const WAYPOINTS: Record<"main" | "coral" | "north", Waypoint[]> = {
     { x: 80, z: -80 }, { x: 0, z: 114 }, { x: 44, z: 108 }, { x: -25, z: 97 }, { x: 8, z: 117 },
   ],
   coral: [
-    { x: PAWN_SHOP.x, z: PAWN_SHOP.z + 3 }, { x: 48, z: 216 }, { x: 70, z: 206 },
+    { x: PAWN_SHOP.x, z: PAWN_SHOP.z }, { x: 48, z: 211.7 }, { x: 70, z: 206 }, // Phase 25: both waypoints stood inside the Coral shop row; now on the promenade
     { x: 56, z: 244 }, { x: 88, z: 284 }, { x: 100, z: 214 },
   ],
   north: [
@@ -202,6 +203,10 @@ function initWorld() {
     let brontoU: (typeof pool)[number] | null = null; let brontoD = Infinity;
     for (const c of pool) { const d = (c.x + 79.5) ** 2 + (c.z + 49) ** 2; if (d < brontoD) { brontoD = d; brontoU = c; } }
     if (brontoU) { brontoU.kind = "bronto"; brontoU.color = "#5c6650"; }
+    // Phase 25: spawn guard — no traffic unit starts life inside a
+    // building collider (the lanes are audited clear; this is the
+    // belt-and-braces pass for any future placement slip)
+    for (const t of G.traffic) depenetrateNpc(t);
   }
   if (G.peds.length === 0) {
     for (let i = 0; i < 14; i++) {
@@ -230,7 +235,7 @@ function initWorld() {
       });
     }
     // ---- Phase 6: Northgate pedestrians (5) ----
-    const northSpawns: [number, number][] = [[-100, -232], [-70, -262], [-36, -250], [-8, -226], [16, -262]];
+    const northSpawns: [number, number][] = [[-97, -232], [-70, -262], [-36, -250], [-8, -226], [16, -262]]; // Phase 25: first spawn stood inside the mansion-row footprint at (-104,-236)
     for (let i = 0; i < 5; i++) {
       const [px0, pz0] = northSpawns[i];
       const d0 = pickDest("north");
@@ -400,6 +405,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   // settings / map-size key) + refresh parity counter
   const shadowKey = useRef({ cx: Infinity, cz: Infinity, bucket: Infinity, on: false, sizeKey: "" });
   const shadowTick = useRef(0);
+  const depenAcc = useRef(0); // Phase 25: settled-car sweep accumulator
   // Phase 12: the dog's owner never changes after world init
   const dogOwnerIdx = useMemo(() => G.peds.findIndex((p) => p.hasDog), []);
 
@@ -407,6 +413,26 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     const dt = Math.min(delta, 0.05);
     const t = clock.elapsedTime;
     G.timeS = t;
+    // Phase 25: 1 Hz settled-car depenetration sweep — a car at rest
+    // that somehow ended up intersecting a building collider (a
+    // physics shove, a restored snapshot, a placement slip) is eased
+    // out along the smallest penetration axis. Spawn/restore paths
+    // run the same guard eagerly (game/depenetrate.ts); this slow
+    // cadence is the backstop, never a per-frame cost. The driven
+    // car is exempt — its own collision step owns it.
+    depenAcc.current += dt;
+    if (depenAcc.current >= 1) {
+      depenAcc.current = 0;
+      for (let i = 0; i < G.cars.length; i++) {
+        const c = G.cars[i];
+        if (c.storedAway || c.state.speed !== 0) continue;
+        if (G.driving && i === G.activeCarId) continue;
+        depenetrateCar(c);
+      }
+      for (const tc of G.traffic) {
+        if (tc.speed === 0 && (tc.parked || tc.rushOnly)) depenetrateNpc(tc);
+      }
+    }
     // ---- day cycle (5-minute full cycle; L pauses/resumes it from App) ----
     if (!paused && !G.dayPaused) G.dayTime = (G.dayTime + dt / 300) % 1;
     const sunAng = G.dayTime * Math.PI * 2 - Math.PI / 2;
@@ -451,7 +477,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         sun.current.target.updateMatrixWorld();
         sk.cx = cellX; sk.cz = cellZ; sk.bucket = bucket; sk.on = G.settings.shadows; sk.sizeKey = sizeKey;
       }
-      if (G.settings.shadows && (moved || shadowTick.current % 2 === 0)) gl.shadowMap.needsUpdate = true;
+      if (G.settings.shadows && (moved || shadowTick.current % (quality === "low" ? 3 : 2) === 0)) gl.shadowMap.needsUpdate = true; // Phase 25: Low re-renders shadows every 3rd frame (was 2nd); a moved sun/player still forces an update instantly via `moved`
     }
     if (amb.current) amb.current.intensity = theme.ambient * (1 - night * 0.45) + G.lightning * 1.7;
     if (hemi.current) hemi.current.intensity = 1.05 * (1 - night * 0.5);

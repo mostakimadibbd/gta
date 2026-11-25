@@ -53,8 +53,8 @@ export const HAIR_COLORS: Array<{ hex: string; label: string }> = [
   { hex: "#2e5f8a", label: "Sable teal" },
   { hex: "#a33b32", label: "Ember red" },
 ];
-export const BARBER_POS = { x: 26.5, z: 33.5 }; // Market Row, next to Thread & Tide
-export const TATTOO_POS = { x: 30.5, z: 33.5 };
+export const BARBER_POS = { x: 25, z: 34.5 }; // Market Row, next to Thread & Tide (Phase 25: stood on the (31,31) building's west wall line)
+export const TATTOO_POS = { x: 25, z: 29.5 }; // Phase 25: was inside the (31,31) building
 export const BARBER_PRICE = 25;
 export const TATTOO_PRICE = 60;
 
@@ -156,9 +156,9 @@ export const TOWNSFOLK: Townsfolk[] = [
     stops: [
       { from: 6, x: 4, z: 104, place: "the pier" },
       { from: 11, x: 26, z: 14, place: "Harbour Wraps" },
-      { from: 15, x: 6, z: 112, sit: true, place: "the pier bench" },
-      { from: 19, x: -94, z: -52, place: "home in the Ferry Quarter" },
-      { from: 0, x: -94, z: -52, place: "home in the Ferry Quarter" },
+      { from: 15, x: -2, z: 114, sit: true, place: "the pier bench" }, // Phase 25: the Docks strip move put the café over this bench; it now sits west of the café on the pier
+      { from: 19, x: -108, z: -52, place: "home in the Ferry Quarter" }, // Phase 25: the stop stood inside a generated building + the suburb house; now at the west-row house's door
+      { from: 0, x: -108, z: -52, place: "home in the Ferry Quarter" },
     ],
     greet: "Mornin'. The harbour gives back what you put in — mostly fish, sometimes trouble.",
     greetKnown: "There's the face the docks whisper about. Keep it down, eh?",
@@ -171,8 +171,8 @@ export const TOWNSFOLK: Townsfolk[] = [
     id: "priya", name: "Priya Nair", role: "Market trader",
     skin: "#7a4a2e", hair: "#1c1a18", hairStyle: "bun", top: "#b4622d", bottom: "#4a4f57", build: "average", female: true,
     stops: [
-      { from: 7, x: 14, z: 26, place: "her Market Row stall" },
-      { from: 13, x: 34, z: 34, place: "the east stalls" },
+      { from: 7, x: 15, z: 26, place: "her Market Row stall" }, // Phase 25: follows the stall row move
+      { from: 13, x: 37.5, z: 34, place: "the east stalls" }, // Phase 25: follows the stall move
       { from: 18, x: 24, z: 16, place: "the Sable Mart front" },
       { from: 22, x: 30, z: 8, place: "home above the market" },
       { from: 0, x: 30, z: 8, place: "home above the market" },
@@ -190,10 +190,10 @@ export const TOWNSFOLK: Townsfolk[] = [
     skin: "#caa07a", hair: "#6b4a2a", hairStyle: "ponytail", top: "#e8e4da", bottom: "#2c3e50", build: "broad", female: true,
     stops: [
       { from: 6, x: -52, z: 96, place: "the docks office" },
-      { from: 12, x: 0, z: 120, place: "the marina walk" },
+      { from: 12, x: 3, z: 120, place: "the marina walk" }, // Phase 25: the stop shared a point with a beach tree trunk
       { from: 17, x: 46, z: 104, place: "Club Solace's door" },
-      { from: 23, x: -40, z: 88, place: "the harbour cottages" },
-      { from: 0, x: -40, z: 88, place: "the harbour cottages" },
+      { from: 23, x: -49, z: 88, place: "the harbour cottages" }, // Phase 25: the stop stood inside the (−40,90) building; now at its west face
+      { from: 0, x: -49, z: 88, place: "the harbour cottages" },
     ],
     greet: "Harbourmaster Bea. Berths, manifests — and no funny business on my water.",
     greetKnown: "I know that silhouette from the patrol reports. Berth fees are double for celebrities.",
@@ -206,7 +206,7 @@ export const TOWNSFOLK: Townsfolk[] = [
     id: "kip", name: "Kip Andersen", role: "Skater",
     skin: "#5d4028", hair: "#14161c", hairStyle: "crop", top: "#c8b13a", bottom: "#31435c", build: "slim",
     stops: [
-      { from: 8, x: 84, z: -72, place: "Lantern Park" },
+      { from: 8, x: 81, z: -69, place: "Lantern Park" }, // Phase 25: the stop shared a point with a park tree trunk
       { from: 14, x: 66, z: -58, place: "the gym corner" },
       { from: 18, x: 78, z: -80, sit: true, place: "the park bench" },
       { from: 21, x: -104, z: -96, place: "home in the suburbs" },

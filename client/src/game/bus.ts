@@ -23,7 +23,7 @@ export interface BusStop {
   blurb: string;
 }
 export const BUS_STOPS_RIDE: BusStop[] = [
-  { name: "Docks", routeX: 34, routeZ: 60, streetX: 34, streetZ: 67.7, blurb: "Harbour Patrol HQ · the pier · Sable Clinic" },
+  { name: "Docks", routeX: 34, routeZ: 60, streetX: 34, streetZ: 63.5, blurb: "Harbour Patrol HQ · the pier · Sable Clinic" }, // Phase 25: streetZ was 67.7 — inside the (31,71) building; 63.5 is the z=60 kerb
   { name: "Ferry Quarter", routeX: -60, routeZ: 14, streetX: -67.7, streetZ: 14, blurb: "The safehouse · ferry homes · west shops" },
   { name: "East Yards", routeX: 60, routeZ: -20, streetX: 67.7, streetZ: -20, blurb: "Trucking yards · the counting house" },
   { name: "South Market", routeX: 20, routeZ: -60, streetX: 20, streetZ: -67.7, blurb: "Lantern Park · the south market stalls" },

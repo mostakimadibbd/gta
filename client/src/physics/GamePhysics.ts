@@ -18,6 +18,9 @@ export interface PhysicsEngine {
   distanceSquared(ax: number, az: number, bx: number, bz: number): number;
   collideAabb(x: number, z: number, radius: number, boxX: number, boxZ: number, halfW: number, halfD: number): boolean;
   resolveAabb(x: number, z: number, radius: number, boxX: number, boxZ: number, halfW: number, halfD: number): { x: number; z: number };
+  // Phase 25 — spawn/restore depenetration core (see game/depenetrate.ts)
+  buildingOverlap(x: number, z: number, radius: number, boxX: number, boxZ: number, halfW: number, halfD: number): number;
+  resolveOverlap(x: number, z: number, radius: number, boxX: number, boxZ: number, halfW: number, halfD: number): { x: number; z: number; depth: number };
   stepPedestrian(state: PedState, targetX: number, targetZ: number, threatX: number, threatZ: number, flee: boolean, walkSpeed: number, deltaTime: number): PedState;
   // Phase 8 — Harborfall Core decision logic
   trafficDecision(speed: number, cruise: number, distStop: number, lightState: number, queueGap: number): { target: number; braking: boolean };
@@ -68,6 +71,21 @@ export const fallbackPhysics: PhysicsEngine = {
       else z = boxZ + (dz >= 0 ? halfD + radius : -(halfD + radius));
     }
     return { x, z };
+  },
+  // Phase 25: exact TS mirrors of building_overlap / resolve_overlap
+  buildingOverlap(x, z, radius, boxX, boxZ, halfW, halfD) {
+    const penX = halfW + radius - Math.abs(x - boxX);
+    const penZ = halfD + radius - Math.abs(z - boxZ);
+    if (penX <= 0 || penZ <= 0) return 0;
+    return penX < penZ ? penX : penZ;
+  },
+  resolveOverlap(x, z, radius, boxX, boxZ, halfW, halfD) {
+    const depth = this.buildingOverlap(x, z, radius, boxX, boxZ, halfW, halfD);
+    if (depth > 0) {
+      const r = this.resolveAabb(x, z, radius, boxX, boxZ, halfW, halfD);
+      return { x: r.x, z: r.z, depth };
+    }
+    return { x, z, depth: 0 };
   },
   // --- Phase 4: exact TS mirrors of the new C++ exports -------------------
   stepVehicleV2(state, throttle, steering, handbrake, deltaTime) {
@@ -569,9 +587,29 @@ export async function loadPhysicsEngine(): Promise<PhysicsEngine> {
         },
       };
     } catch { p14 = null; }
+    // Phase 25 depenetration exports: own try/catch (the deployed
+    // .wasm predates them → the exact TS mirrors take over).
+    let p25: Pick<PhysicsEngine, "buildingOverlap" | "resolveOverlap"> | null = null;
+    try {
+      const bOverlap = module.cwrap("building_overlap", "number", Array(7).fill("number"));
+      const rOverlap = module.cwrap("resolve_overlap", null, Array(8).fill("number"));
+      const h = module.HEAPF64;
+      const out3c = module._malloc(3 * Float64Array.BYTES_PER_ELEMENT);
+      if (!out3c) throw new Error("Could not allocate WASM physics buffers.");
+      p25 = {
+        buildingOverlap(x, z, r, bx, bz, hw, hd) { return bOverlap(x, z, r, bx, bz, hw, hd) as number; },
+        resolveOverlap(x, z, r, bx, bz, hw, hd) {
+          rOverlap(x, z, r, bx, bz, hw, hd, out3c);
+          const i = out3c / Float64Array.BYTES_PER_ELEMENT;
+          return { x: h[i], z: h[i + 1], depth: h[i + 2] };
+        },
+      };
+    } catch { p25 = null; }
     const fb = fallbackPhysics;
     return {
       source: "wasm",
+      buildingOverlap: p25?.buildingOverlap ?? fb.buildingOverlap,
+      resolveOverlap: p25?.resolveOverlap ?? fb.resolveOverlap,
       ragdollStep: p14?.ragdollStep ?? fb.ragdollStep,
       stepVehicleV3: p10?.stepVehicleV3 ?? fb.stepVehicleV3,
       vehicleBody: p10?.vehicleBody ?? fb.vehicleBody,

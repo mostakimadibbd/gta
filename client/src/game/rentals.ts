@@ -9,6 +9,7 @@
 // it's collected the moment you step out). Rental state is
 // session-only on purpose — a pass is a day thing, and the boat is
 // a dynamic car entry, never an owned/fleet/stored car.
+import { depenetrateCar } from "./depenetrate"; // Phase 25: spawn guard
 import { G, toast, clearLastCar, LASTCAR } from "./store";
 import { pushPhoneMsg } from "./phone";
 import { sfx } from "./audio";
@@ -40,6 +41,7 @@ export function rentBoat(): boolean {
     brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
     flatTyre: false, tuneLvl: 0, brakeLvl: 0, driftTyres: false, pitchVel: 0, rollVel: 0,
   });
+  depenetrateCar(G.cars[G.cars.length - 1]); // Phase 25 guard (skiffs are exempt — hulls stay in the water)
   RENT.carIndex = G.cars.length - 1;
   RENT.active = true; RENT.expired = false;
   pushPhoneMsg("Sable Marina Rentals", `⛵ Day-pass -$${RENTAL_FEE} — your skiff's in the water by the pier, white hull. Bring her back to the dock by morning, or the pass expires and we collect her.`);

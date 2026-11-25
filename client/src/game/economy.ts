@@ -20,9 +20,9 @@ export const BUSINESSES: BusinessDef[] = [
   // base payback in the portfolio (39 days vs 27–29 for the others);
   // 430 brings it to ~35 days, still the slowest earner, priced for
   // the rental-dock unlock it carries.
-  { id: "marina", name: "Sable Marina Rentals", price: 15000, income: 430, x: 14, z: 110, blurb: "Every boat in the bay, rented by the day — and the Bay Circuit starts at your dock." },
+  { id: "marina", name: "Sable Marina Rentals", price: 15000, income: 430, x: 17, z: 108, blurb: "Every boat in the bay, rented by the day — and the Bay Circuit starts at your dock." }, // Phase 25: buy point moved off a tree trunk at (13.5,110)
 ];
-export const APARTMENT = { name: "Coral Shores Apartment", price: 5000, x: 36, z: 213.2 };
+export const APARTMENT = { name: "Coral Shores Apartment", price: 5000, x: 36, z: 211.7 }; // Phase 25: promenade gap (was inside the shop row)
 /** Phase 14: the second purchasable property — a Northgate loft with
  * a harbour-view interior. Owning it changes nothing about business
  * income; it adds a sleep/respawn home in the north of the city. */

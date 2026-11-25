@@ -37,7 +37,8 @@ import { isBind, BIND_ACTIONS, binds, setBind, resetBinds, codeLabel, type BindA
 import { activeSlot, switchSlot, slotSummary, SLOT_COUNT } from "./game/saveslots";
 import { applyCarReflTier } from "./components/CarBody";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
-import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints, FARM_ROADS } from "./world";
+import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints, FARM_ROADS, STREAMED_DISTRICTS } from "./world";
+import { eastmereState, eastmereNeeded, loadEastmere } from "./game/eastmere"; // Phase 25: streamed district loader stub
 import { skyEnvTexture, setNormalsEnabled } from "./textures";
 import { gates, initQuality, runFpsSampleOnce, type QualityTier } from "./game/quality";
 import Weather from "./components/Weather";
@@ -300,7 +301,7 @@ function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THR
  * gl.setPixelRatio without remounting the canvas. */
 function PerfGovernor({ active }: { active: boolean }) {
   const gl = useThree((s) => s.gl);
-  const acc = useRef({ frames: 0, winT: 0, lastStep: 0, highSince: 0, lowFpsSince: 0, idx: -1 });
+  const acc = useRef({ frames: 0, winT: 0, lastStep: 0, highSince: 0, lowFpsSince: 0, idx: -1, lowWin: 0 }); // lowWin: Phase 25 sustained-low window count
   useFrame((_, delta) => {
     const a = acc.current;
     if (!active) { a.frames = 0; a.winT = 0; a.lowFpsSince = 0; return; }
@@ -316,12 +317,21 @@ function PerfGovernor({ active }: { active: boolean }) {
     const capIdx = DPR_LADDER.reduce((best, v, i) => (v <= cap + 0.001 ? i : best), 0);
     if (a.idx < 0 || a.idx > capIdx) a.idx = capIdx;
     const canStep = now - a.lastStep > 2.5;
-    if (fps < 47 && a.idx > 0 && canStep) {
-      a.idx -= 1; a.lastStep = now; a.highSince = 0;
-    } else if (fps > 57 && a.idx < capIdx) {
+    // Phase 25 retune: the old rule stepped down on a SINGLE 1 s
+    // window under 47 FPS, so one busy second (a chunk streaming in)
+    // dropped the resolution and it crept back over ~5 s — visible
+    // pumping. Now a step down needs the rolling rate under 45 FPS
+    // sustained for 3 s, and a step back up needs over 58 FPS
+    // sustained for 10 s. Tier caps and the ladder are unchanged;
+    // the floor is still 1.0 and nothing new shows in the UI.
+    if (fps < 45) {
+      a.lowWin += 1; a.highSince = 0;
+      if (a.lowWin >= 3 && a.idx > 0 && canStep) { a.idx -= 1; a.lastStep = now; a.lowWin = 0; }
+    } else if (fps > 58 && a.idx < capIdx) {
+      a.lowWin = 0;
       a.highSince += 1;
-      if (a.highSince >= 5 && canStep) { a.idx += 1; a.lastStep = now; a.highSince = 0; }
-    } else a.highSince = 0;
+      if (a.highSince >= 10 && canStep) { a.idx += 1; a.lastStep = now; a.highSince = 0; }
+    } else { a.highSince = 0; a.lowWin = 0; }
     const dpr = DPR_LADDER[a.idx];
     if (Math.abs(dpr - perf.dpr) > 0.001) { perf.dpr = dpr; gl.setPixelRatio(dpr); }
     // adaptive tier: sustained < 40 FPS for 8 s → one notch down
@@ -517,6 +527,7 @@ export default function App() {
   const [physicsSource, setPhysicsSource] = useState<"typescript" | "wasm">("typescript");
   const [theme, setTheme] = useState<GameTheme>(loadTheme);
   const [started, setStarted] = useState(false);
+  const [eastmereReady, setEastmereReady] = useState(false); // Phase 25: Eastmere chunk mounted
   const [introIdx, setIntroIdx] = useState(-1);
   const [dialogue, setDialogue] = useState<{ lines: DialogueLine[]; idx: number; after: () => void } | null>(null);
   const [hud, setHud] = useState<HudSnap>(initialHud);
@@ -833,6 +844,22 @@ export default function App() {
     return () => window.clearInterval(id);
   }, []);
 
+  // Phase 25: Eastmere lazy-load trigger — poll the player's
+  // position twice a second while in game; approaching the causeway
+  // gate fetches the district chunk (once), mounts it, and shows the
+  // entering card on the mission banner. Once loaded it stays.
+  useEffect(() => {
+    if (!started || flow !== "game" || eastmereReady) return;
+    const id = window.setInterval(() => {
+      if (!eastmereNeeded(G.followPos.x, G.followPos.z)) return;
+      window.clearInterval(id);
+      void loadEastmere().then((ok) => {
+        if (ok) { setEastmereReady(true); showBanner("Entering Eastmere — Gull Rock Lookout", true); }
+      });
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [started, flow, eastmereReady, showBanner]);
+
   // HUD poll ~8Hz + minimap + audio tick
   useEffect(() => {
     const drawMap = (cv: HTMLCanvasElement | null, size: number) => {
@@ -864,6 +891,25 @@ export default function App() {
       g.strokeStyle = "#d9d4c5"; g.lineWidth = Math.max(1.5, 4 * S);
       g.beginPath(); g.moveTo(mx(60), mz(112)); g.lineTo(mx(60), mz(214)); g.stroke();
       g.beginPath(); g.moveTo(mx(-20), mz(-196)); g.lineTo(mx(-20), mz(-110)); g.stroke();
+      // Phase 25: streamed districts (Eastmere) — drawn from the
+      // registry ONLY once the chunk has loaded this session, using
+      // the road lines the chunk itself registered, so the map can
+      // never show a district that isn't in the world. The eager
+      // bundle holds just the bounds + gate (see world.ts).
+      for (const d of STREAMED_DISTRICTS) {
+        if (!d.loaded) continue;
+        g.fillStyle = mm.bg;
+        g.fillRect(mx(d.x0), mz(d.z0), (d.x1 - d.x0) * S, (d.z1 - d.z0) * S);
+        g.strokeStyle = "#d9d4c5"; g.lineWidth = Math.max(1.5, 4 * S);
+        g.beginPath(); g.moveTo(mx(d.gate.x - 4), mz(d.gate.z)); g.lineTo(mx(d.x0), mz(d.gate.z)); g.stroke();
+        g.strokeStyle = mm.road; g.lineWidth = Math.max(1.5, 5 * S);
+        for (const c of d.roadX) { g.beginPath(); g.moveTo(mx(c), mz(d.z0 + 4)); g.lineTo(mx(c), mz(d.z1 - 4)); g.stroke(); }
+        for (const c of d.roadZ) { g.beginPath(); g.moveTo(mx(d.x0 + 2), mz(c)); g.lineTo(mx(d.x1 - 2), mz(c)); g.stroke(); }
+        if (size > 300) {
+          g.fillStyle = "#ffb340"; g.font = `bold ${Math.max(10, 13 * S)}px sans-serif`; g.textAlign = "center";
+          g.fillText("EASTMERE", mx((d.x0 + d.x1) / 2), mz(-262));
+        }
+      }
       // Phase 13: the Sable Line loop (teal) + its stations; the big
       // map also gets the LIVE tram dot and your last car's ring
       g.strokeStyle = "#2ee6c8"; g.lineWidth = Math.max(1.2, 2.4 * S);
@@ -1250,6 +1296,8 @@ export default function App() {
         <Suspense fallback={null}>
           <EnvSetup theme={theme} quality={quality} />
           <World theme={theme} night={nightBucket} quality={quality} stage={worldStage} reflFx={reflFx} />
+          {/* Phase 25: Eastmere — mounted only after its lazy chunk loads (see the loader effect below) */}
+          {eastmereReady && eastmereState.World ? <eastmereState.World night={nightBucket} /> : null}
           <Collectibles targetRef={followRef} paused={effectivePaused}
             onCollect={() => { tokenCountRef.current += 1; G.tokens = tokenCountRef.current; sfx.pickup(); showPopup("Harbour token +$25"); G.cash += 25; }} />
           <Vehicle playerPositionRef={playerPositionRef} vehiclePositionRef={vehiclePositionRef} vehicleStateRef={vehicleStateRef}
