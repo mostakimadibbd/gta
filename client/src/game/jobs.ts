@@ -61,6 +61,9 @@ export interface JobStats {
   // ---- Phase 22: odd jobs board (valet + courier sprint) ----
   valetJobs: number; valetEarned: number;
   courierDrops: number; courierEarned: number;
+  // ---- Phase 24: fishing derby records (game/derby.ts) ----
+  derbyBest: number;   // best single-derby score ($ of catch value)
+  derbyWins: number;   // derbies won against the house score
 }
 export const jobStats: JobStats = {
   taxiFares: 0, taxiEarned: 0, taxiBestTip: 0, taxiTips: 0, deliveries: 0, deliveryEarned: 0,
@@ -69,6 +72,7 @@ export const jobStats: JobStats = {
   farmLoads: 0, farmEarned: 0,
   bestDrift: 0, driftBanked: 0, driftEarned: 0,
   valetJobs: 0, valetEarned: 0, courierDrops: 0, courierEarned: 0,
+  derbyBest: 0, derbyWins: 0,
 };
 try {
   const raw = localStorage.getItem("harborfall-jobstats");
@@ -390,6 +394,10 @@ export function settleFare(type: TaxiType | "", fare: number, elapsed: number, p
   if (dmg <= 2) tip += 8;
   if (dmg > 15) { tip = 0; note = "Too rough a ride — the tip's gone"; }
   if (type === "nervous" && dmg > 0) { tip = 0; note = "Nervous fare — a knock on the way killed the tip"; }
+  // Phase 24 audit: a SLOW Hurried fare fell through to the generic
+  // "clean harbour fare" note below — the completion message claimed
+  // a calm ride for a passenger who'd spent it watching the clock.
+  if (!note && type === "hurried") note = "Hurried fare — too slow for the speed bonus";
   if (!note) note = type === "chatty" ? "Talked the whole way — and tipped for the company" : "A clean harbour fare";
   return { tip, note };
 }

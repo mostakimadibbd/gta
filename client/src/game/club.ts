@@ -31,6 +31,17 @@ export const CLUB_OPEN_HOUR = 20;
 export const CLUB_CLOSE_HOUR = 4;
 export const isClubOpen = (hour: number) => hour >= CLUB_OPEN_HOUR || hour < CLUB_CLOSE_HOUR;
 
+// Phase 24 audit — CLOSING TIME, DEFINED. The Phase 23 build gated
+// ENTRY by the hours but never said what happens to someone already
+// inside at 04:00. The rule now (mirroring how Thread & Tide treats
+// its own hours from inside): the doors lock at 04:00 — nobody new
+// gets in — and the BAR stops serving ("last orders were at four"),
+// but nobody is thrown out: the floor, the bass and the exit door
+// keep working until you choose to leave, and re-entry is gated as
+// usual. The bartender calls it once when the hour turns (see
+// Interiors.tsx). No ejection teleport, ever — a pocket interior
+// has no safe "outside at 4am mid-dance" state worth forcing.
+
 /** The one drink on the menu. */
 export const CLUB_DRINK_NAME = "Harbour Sunset";
 export const CLUB_DRINK_PRICE = 12;

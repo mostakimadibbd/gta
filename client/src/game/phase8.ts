@@ -5,21 +5,28 @@
 // so the phone (Stats) and Player (rig) can read it without cycles.
 import type { HumanoidOptions } from "../humanoid";
 import { DRIFT } from "./drift";
+import { G } from "./store";
+import { J } from "./jobs";
 
 // ================================================================ FISHING
-export interface FishSpot { name: string; x: number; z: number; castX: number; castZ: number; island?: boolean; }
+export interface FishSpot { name: string; x: number; z: number; castX: number; castZ: number; island?: boolean; offshore?: boolean; }
 /** Stand points (on land) + the water point the line lands in. */
 export const FISHING_SPOTS: FishSpot[] = [
   { name: "the Pier", x: 2, z: 112.5, castX: 2, castZ: 122 },
   { name: "Sable Island dock", x: -64, z: 154.5, castX: -64, castZ: 146, island: true },
 ];
-export interface FishDef { name: string; minCm: number; maxCm: number; base: number; when: "any" | "day" | "night"; rare?: boolean; }
+export interface FishDef { name: string; minCm: number; maxCm: number; base: number; when: "any" | "day" | "night"; rare?: boolean; offshore?: boolean; }
 export const FISH_TABLE: FishDef[] = [
   { name: "Harbour Sprat", minCm: 9, maxCm: 22, base: 6, when: "any" },
   { name: "Sable Mackerel", minCm: 24, maxCm: 48, base: 16, when: "any" },
   { name: "Coral Trout", minCm: 30, maxCm: 65, base: 34, when: "day" },
   { name: "Night Eel", minCm: 45, maxCm: 95, base: 30, when: "night" },
   { name: "Golden Koi of Port Sable", minCm: 40, maxCm: 70, base: 160, when: "any", rare: true },
+  // Phase 24: the OFFSHORE-only fish — it never enters a shore
+  // pool (rollCatch filters offshore defs out unless the spot is
+  // offshore), and it runs day or night: the deep water doesn't
+  // keep harbour hours.
+  { name: "Sable Tuna", minCm: 95, maxCm: 185, base: 130, when: "any", offshore: true },
 ];
 export interface CaughtFish { name: string; cm: number; value: number; }
 
@@ -31,17 +38,56 @@ export const F = {
   marker: 0.3, progress: 0,
   castX: 0, castZ: 0, splashAt: -9,
   creel: [] as CaughtFish[], // unsold catch — sell at Harbour Wraps
+  // Phase 24: the G.cars index of the boat being fished from, or
+  // -1 for a shore spot. A boat session is anchored to the HULL,
+  // not to a stand point (see boatFishClaimsE + Phase8.tsx).
+  boatCar: -1,
 };
 export const creelValue = () => F.creel.reduce((a, c) => a + c.value, 0);
 
-/** Roll a catch for a spot: night/day gates + the rare koi at ~3%. */
+/** Roll a catch for a spot: night/day gates + the rare koi at ~3%.
+ * Phase 24: offshore defs (the Sable Tuna) only enter the pool at
+ * an offshore spot; offshore water weights rich like island water. */
 export function rollCatch(spot: FishSpot, hour: number): CaughtFish {
   const night = hour >= 19 || hour < 6;
   if (Math.random() < 0.03) return makeFish(FISH_TABLE[4]);
-  const pool = FISH_TABLE.filter((f) => !f.rare && (f.when === "any" || (f.when === "night") === night));
+  const pool = FISH_TABLE.filter((f) => !f.rare && (spot.offshore || !f.offshore) && (f.when === "any" || (f.when === "night") === night));
   // island water runs richer: weight the table toward the pricey end
-  const idx = Math.min(pool.length - 1, Math.floor(Math.pow(Math.random(), spot.island ? 0.6 : 1) * pool.length));
+  const idx = Math.min(pool.length - 1, Math.floor(Math.pow(Math.random(), spot.island || spot.offshore ? 0.6 : 1) * pool.length));
   return makeFish(pool[idx]);
+}
+
+// ================================================================
+// Phase 24: FISH FROM BOATS — the spot model, stated honestly.
+// A boat is a MOBILE fishing spot: when you cast from a still boat,
+// Phase8.tsx builds a one-off FishSpot whose stand point is the
+// hull's position at cast time and whose cast point is the water
+// 7u ahead of the bow (position + facing offset). The session is
+// anchored to the hull (F.boatCar): it lives exactly while you're
+// seated in that same boat at ~0 speed, and ends the moment the
+// engine moves you (>1.5 u/s), you step out, or a status screen
+// (bust/wasted) takes you — the same discipline as every other
+// mini-game state. Any boat counts: owned, borrowed, stolen or a
+// marina rental. The creel is the shore creel — one bucket, sold
+// at Harbour Wraps as before.
+// ================================================================
+export const BOAT_FISH_KINDS = ["boat", "skiff"] as const;
+/** The boat the player could fish from right now (seated, ~still,
+ * no race running, no status/dialogue over the game), else null. */
+export function boatFishCar() {
+  if (!G.driving || G.activeCarId < 0 || G.status || G.dialogueActive || J.race) return null;
+  const c = G.cars[G.activeCarId];
+  if (!c || !(BOAT_FISH_KINDS as readonly string[]).includes(c.kind)) return null;
+  return Math.abs(c.state.speed) < 0.5 ? c : null;
+}
+/** True while the interact key belongs to the rod, not to the
+ * vehicle exit: mid-cast from a boat, or sitting in a still boat
+ * with the cast prompt up. Vehicle.tsx yields E to this (the tram
+ * precedent); F still steps ashore, and stepping ashore — like
+ * starting the engine — ends the session cleanly. */
+export function boatFishClaimsE(): boolean {
+  if (F.phase !== "idle") return F.boatCar >= 0;
+  return boatFishCar() !== null;
 }
 function makeFish(def: FishDef): CaughtFish {
   const cm = Math.round(def.minCm + Math.random() * (def.maxCm - def.minCm));
@@ -128,8 +174,9 @@ export function clearClothingOverride() {
 export interface MiniUi { label: string; marker: number; zone: [number, number] | null; fill: number | null; }
 export function currentMiniUi(): MiniUi | null {
   // Phase 18: the drift meter rides this same ~8 Hz poll (no new
-  // per-frame React state). Drifting only happens at the wheel;
-  // fishing and the gym are on foot, so the meters never compete.
+  // per-frame React state). Drifting only happens at a car's wheel;
+  // fishing is on foot or in a boat (Phase 24) and the gym is on
+  // foot, so the meters never compete.
   if (DRIFT.open) return { label: `🛞 DRIFT ×${DRIFT.mult} — ${Math.floor(DRIFT.score).toLocaleString()} pts (release clean to bank)`, marker: Math.min(1, DRIFT.angle / 0.55), zone: [0.45, 1], fill: Math.min(1, DRIFT.score / 400) };
   if (F.phase === "charge") return { label: "CAST POWER — tap E to release", marker: F.power, zone: [0.55, 0.8], fill: null };
   if (F.phase === "reel") return { label: "REEL — hold E to wind, ease off before the red", marker: F.marker, zone: [0.35, 0.75], fill: F.progress };

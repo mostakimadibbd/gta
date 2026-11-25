@@ -18,9 +18,10 @@ import { sfx } from "../game/audio";
 import { groundYAt, GARAGE_ZONES } from "../world";
 import { gameHour, shopsClosed } from "./Interactions";
 import {
-  F, FISHING_SPOTS, rollCatch, GYM, GYM_STATIONS, persistGym,
+  F, FISHING_SPOTS, rollCatch, boatFishCar, GYM, GYM_STATIONS, persistGym,
   CLOTHING_ITEMS, CLOTHING_SHOP, CLOTHING_COUNTER, CLOTH, persistClothing,
 } from "../game/phase8";
+import { DERBY } from "../game/derby";
 
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -91,14 +92,44 @@ export default function Phase8Systems() {
     // ================= FISHING =================
     const spot = FISHING_SPOTS.find((s) => (px - s.x) ** 2 + (pz - s.z) ** 2 < 3.2 ** 2) ?? null;
     if (F.phase !== "idle") {
-      const home = F.spot;
-      if (!onFoot || !home || (px - home.x) ** 2 + (pz - home.z) ** 2 > 4.5 ** 2) {
-        F.phase = "idle"; F.spot = null; // walked off / got in a car: line's in
+      if (F.boatCar >= 0) {
+        // Phase 24: a boat session is anchored to the HULL, not a
+        // stand point — it ends when you step out of that boat, a
+        // status screen (bust/wasted) or dialogue takes you, or the
+        // engine moves you past a drift: the line was cast at a
+        // fixed point on the water and a moving boat has left it.
+        const bc = G.cars[F.boatCar];
+        if (!bc || !G.driving || G.activeCarId !== F.boatCar || G.status || G.dialogueActive) {
+          F.phase = "idle"; F.spot = null; F.boatCar = -1;
+        } else if (Math.abs(bc.state.speed) > 1.5) {
+          F.phase = "idle"; F.spot = null; F.boatCar = -1;
+          toast("Line's in — you started moving. Settle the boat to cast again.");
+        }
+      } else {
+        const home = F.spot;
+        if (!onFoot || !home || (px - home.x) ** 2 + (pz - home.z) ** 2 > 4.5 ** 2) {
+          F.phase = "idle"; F.spot = null; // walked off / got in a car: line's in
+        }
       }
     }
     if (F.phase === "idle" && onFoot && spot && !GYM.active) {
       prompt = `E — Cast a line at ${spot.name} (rod's on the house)`;
-      act = () => { F.phase = "charge"; F.spot = spot; F.power = 0; F.powerDir = 1; armAfter.current = performance.now() / 1000 + 0.15; sfx.click(); };
+      act = () => { F.phase = "charge"; F.spot = spot; F.boatCar = -1; F.power = 0; F.powerDir = 1; armAfter.current = performance.now() / 1000 + 0.15; sfx.click(); };
+    } else if (F.phase === "idle" && !GYM.active && boatFishCar()) {
+      // Phase 24: FISH FROM BOATS — seated in any still boat (owned,
+      // borrowed or a marina rental), the rod comes out. The spot
+      // is the hull: stand point = boat position, cast point = the
+      // water 7u ahead of the bow (game/phase8.ts has the model).
+      const bc = boatFishCar()!;
+      prompt = "E — Cast a line over the side (open water — the deep table)";
+      act = () => {
+        const hx = bc.state.x, hz = bc.state.z, hd = bc.state.heading;
+        F.spot = { name: "open water", x: hx, z: hz, castX: hx + Math.sin(hd) * 7, castZ: hz + Math.cos(hd) * 7, offshore: true };
+        F.boatCar = G.activeCarId;
+        F.phase = "charge"; F.power = 0; F.powerDir = 1;
+        armAfter.current = performance.now() / 1000 + 0.15;
+        sfx.click();
+      };
     } else if (F.phase === "charge" && F.spot) {
       F.power += F.powerDir * dt * 1.35;
       if (F.power >= 1) { F.power = 1; F.powerDir = -1; }
@@ -121,7 +152,7 @@ export default function Phase8Systems() {
     } else if (F.phase === "bite") {
       prompt = "!! A BITE — E, set the hook!";
       if (ePressed()) { F.phase = "reel"; F.marker = 0.3; F.progress = 0; sfx.click(); }
-      else if (t > F.biteEnd) { F.phase = "idle"; F.spot = null; toast("It slipped the hook — gone. Cast again."); sfx.fail(); }
+      else if (t > F.biteEnd) { F.phase = "idle"; F.spot = null; F.boatCar = -1; toast("It slipped the hook — gone. Cast again."); sfx.fail(); }
     } else if (F.phase === "reel" && F.spot) {
       // tension mini: holding E winds the marker up; the fish pulls in
       // pulses. Keep the marker in the green band to make progress;
@@ -131,7 +162,7 @@ export default function Phase8Systems() {
       F.marker = Math.max(0, F.marker);
       if (eHeld.current && t - reelClickAt.current > 0.13) { reelClickAt.current = t; sfx.reel(); }
       if (F.marker > 1) {
-        F.phase = "idle"; F.spot = null; sfx.snap(); toast("SNAP — the line's gone. Too much tension.");
+        F.phase = "idle"; F.spot = null; F.boatCar = -1; sfx.snap(); toast("SNAP — the line's gone. Too much tension.");
       } else {
         if (F.marker >= 0.35 && F.marker <= 0.75) F.progress += dt * 0.16;
         else F.progress = Math.max(0, F.progress - dt * 0.05);
@@ -141,14 +172,20 @@ export default function Phase8Systems() {
           const caught = rollCatch(F.spot, gameHour());
           F.creel.push(caught);
           jobStats.fishCaught += 1;
+          // Phase 24: an entered DERBY scores every catch inside
+          // its window at sale value — shore or boat alike
+          // (game/derby.ts). The running score rides the catch
+          // toast so the player always knows where they stand.
+          const derbyScored = DERBY.open && DERBY.entered;
+          if (derbyScored) DERBY.score += caught.value;
           if (!jobStats.bestFish || caught.cm > jobStats.bestFish.cm) {
             jobStats.bestFish = { name: caught.name, cm: caught.cm };
-            toast(`🎣 NEW BEST — ${caught.name}, ${caught.cm} cm! (Worth $${caught.value} at Harbour Wraps)`);
-          } else toast(`🎣 Caught a ${caught.name} — ${caught.cm} cm, worth $${caught.value}. Sell the creel at Harbour Wraps.`);
+            toast(`🎣 NEW BEST — ${caught.name}, ${caught.cm} cm! (Worth $${caught.value} at Harbour Wraps)${derbyScored ? ` · DERBY $${DERBY.score} vs house $${DERBY.house}` : ""}`);
+          } else toast(`🎣 Caught a ${caught.name} — ${caught.cm} cm, worth $${caught.value}.${derbyScored ? ` DERBY: $${DERBY.score} vs house $${DERBY.house}.` : " Sell the creel at Harbour Wraps."}`);
           persistJobStats();
           sfx.catchFish();
           bark("Old Elias", "Ha! The harbour provides — if you know where to stand.");
-          F.phase = "idle"; F.spot = null;
+          F.phase = "idle"; F.spot = null; F.boatCar = -1;
         }
       }
     }

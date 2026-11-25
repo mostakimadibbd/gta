@@ -36,6 +36,8 @@ import { standDownDispatch } from "./dispatch";
 import { RENT, endRental } from "./rentals";
 import { J, endValetJob, collectValetCar } from "./jobs";
 import { resetDrift } from "./drift";
+import { standDownDerby } from "./derby";
+import { F } from "./phase8";
 import { pushPhoneMsg } from "./phone";
 import { pushNews } from "./feed";
 import { sfx } from "./audio";
@@ -89,6 +91,14 @@ export function startNewGamePlus(): number {
     if (J.valetCollect) { collectValetCar(); J.valetCollect = false; }
   }
   resetDrift();
+  // Phase 24: an open FISHING DERBY closes WITHOUT settling — no
+  // prize, no best-score record (game/derby.ts). Phase17 sees
+  // DERBY.open false and frees the event slot on its next frame;
+  // G.eventNow is cleared below as for every other event.
+  standDownDerby();
+  // Phase 24, same reasoning: a cast in progress (shore or boat)
+  // is a live mini-game state — the line comes in before the reset.
+  F.phase = "idle"; F.spot = null; F.boatCar = -1;
   G.tramRide = -1; G.busRide = -1;
   G.eventNow = null;
   G.hold = null;

@@ -1349,3 +1349,36 @@ rows). No new eager chunks.
   chunks; cc0Data stays lazy. The floor cycle is 24 material lerps
   on scratch colours inside Interiors' existing useFrame; the
   drink vignette rides the 8 Hz poll as a boolean.
+
+## Phase 24 — Sea Life addendum
+
+- **Fishing from boats reuses the shore language, on the water:**
+  the same splash ring and bobber render at the cast point — now
+  7u ahead of the bow instead of off the pier — so a cast from a
+  skiff reads instantly as the same activity in a new place. No
+  new props: the rod was always implied by the prompt and the
+  bobber, and a boat session is anchored to the hull (the splash
+  stays where the line landed; if the boat moves off, the session
+  ends rather than dragging the bobber behind it).
+- **The Sable Tuna is a records fish, not a model:** catches are
+  text and numbers in this game (name, cm, value) — the tuna
+  arrives as the offshore table's headline entry (95–185 cm,
+  $130 base) and shows up in the catch toast, the best-fish
+  record and the creel exactly like the other five. No fake
+  geometry was built for it.
+- **The derby's presence is one ring + words:** an amber ring at
+  the pier fishing spot while the window is open (the same ring
+  language as the shore fishing spots and race rings), the
+  Harbourmaster's phone message announcing it, a prompt at the
+  ring carrying the live score and clock, and the score riding
+  every catch toast while you're entered — no new HUD surface,
+  no new per-frame React state.
+- **Club closing is a bark and a dark bar:** at 04:00 the
+  bartender calls last orders once; after that the bar frontage
+  shows its closed line while the floor keeps cycling — the room
+  reads "after hours" without an ejection teleport or a fade.
+- **Perf sanity:** initial-load JS 821.1 kB gzip (index 445.8 +
+  three 178.2 + react-three 185.8 + CSS 10.7 + HTML 0.7) vs Phase
+  23's 819.4 — +0.2%, the phase's own code (derby.ts, the boat
+  branch in Phase8's existing loop, the derby branch in
+  Phase17's scheduler). No new chunks; cc0Data stays lazy.

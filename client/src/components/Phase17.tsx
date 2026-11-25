@@ -24,6 +24,8 @@ import type * as THREE from "three";
 import { G, toast, bark, persistInventory } from "../game/store";
 import { M } from "../game/missionState";
 import { J, type RaceDef } from "../game/jobs";
+import { DERBY, openDerby, enterDerby, settleDerby, DERBY_PIER, DERBY_DURATION_S, DERBY_PRIZE } from "../game/derby";
+import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
 import { groundYAt } from "../world";
 import { buildHumanoid, animateHumanoid } from "../humanoid";
@@ -45,7 +47,10 @@ const LOOT: { type: string; name: string; value: number }[] = [
 
 type Ev =
   | { kind: "challenge"; spot: number; until: number; barked: boolean }
-  | { kind: "cargo"; spot: number; taken: boolean[]; until: number };
+  | { kind: "cargo"; spot: number; taken: boolean[]; until: number }
+  // Phase 24: the FISHING DERBY — the window/scoring state lives in
+  // game/derby.ts; this event only holds the slot + the clock.
+  | { kind: "derby"; until: number };
 
 export default function Phase17Systems() {
   const ev = useRef<Ev | null>(null);
@@ -53,6 +58,7 @@ export default function Phase17Systems() {
   const mine = useRef("");
   const carRef = useRef<THREE.Group>(null);
   const driverRef = useRef<THREE.Group>(null);
+  const derbyRingRef = useRef<THREE.Group>(null);
   const crateRefs = useRef<Array<THREE.Group | null>>([]);
   const driverRig = useMemo(() => buildHumanoid({ top: "#7a1f2b", bottom: "#23272e", skin: "#8d5524", hair: "#14100e", topStyle: "jacket", gender: "m", hairStyle: "flat", sunglasses: true }), []);
   const driverPhase = useRef(0);
@@ -70,7 +76,7 @@ export default function Phase17Systems() {
       mine.current = "";
     };
     const endEvent = (gap: number) => {
-      if (G.eventNow && (G.eventNow.kind === "challenge" || G.eventNow.kind === "cargo")) G.eventNow = null;
+      if (G.eventNow && (G.eventNow.kind === "challenge" || G.eventNow.kind === "cargo" || G.eventNow.kind === "derby")) G.eventNow = null;
       ev.current = null;
       nextAt.current = t + gap;
       release();
@@ -80,29 +86,62 @@ export default function Phase17Systems() {
     if (!ev.current) {
       if (carRef.current) carRef.current.visible = false;
       if (driverRef.current) driverRef.current.visible = false;
+      if (derbyRingRef.current) derbyRingRef.current.visible = false;
       crateRefs.current.forEach((g) => { if (g) g.visible = false; });
       // Phase 18 audit: also stand off for a live dispatch incident —
       // a crate spill or a pot race on top of an ambulance call at the
       // same junction read as chaos, not life
       if (t > nextAt.current && !M.active && !J.race && !G.status && !G.eventNow && !G.dialogueActive && !G.incident) {
-        if (Math.random() < 0.5) {
+        const roll = Math.random();
+        if (roll < 0.4) {
           const spot = Math.floor(Math.random() * CHALLENGE_SPOTS.length);
           ev.current = { kind: "challenge", spot, until: t + 75, barked: false };
           const s = CHALLENGE_SPOTS[spot];
           G.eventNow = { kind: "challenge", x: s.x, z: s.z };
-        } else {
+        } else if (roll < 0.72) {
           const spot = Math.floor(Math.random() * CARGO_SPOTS.length);
           ev.current = { kind: "cargo", spot, taken: [false, false, false, false, false], until: t + 60 };
           const [x, z] = CARGO_SPOTS[spot];
           G.eventNow = { kind: "cargo", x, z };
           if (Math.hypot(G.playerPos.x - x, G.playerPos.z - z) < 60) bark("Trucker (CB)", "— lost half my load back there, crates all over the road —");
+        } else {
+          // Phase 24: the FISHING DERBY joins the rotation on the
+          // same courtesy — it holds G.eventNow for its 3 minutes
+          // and the scoring state lives in game/derby.ts.
+          openDerby();
+          ev.current = { kind: "derby", until: t + DERBY_DURATION_S };
+          G.eventNow = { kind: "derby", x: DERBY_PIER.x, z: DERBY_PIER.z };
+          pushPhoneMsg("Harbourmaster", `🎣 FISHING DERBY at the Pier — 3 minutes on the clock. Enter at the pier ring (free), then every catch scores its value, shore or boat. Beat the house $${DERBY.house} and the $${DERBY_PRIZE} purse is yours.`);
         }
       }
       return;
     }
 
     const e = ev.current;
-    if (t > e.until) { endEvent(70 + Math.random() * 50); return; }
+    if (t > e.until) {
+      if (e.kind === "derby") settleDerby(); // the whistle — settles exactly once (game/derby.ts)
+      endEvent(70 + Math.random() * 50); return;
+    }
+
+    // ---------------- FISHING DERBY (Phase 24) ----------------
+    if (e.kind === "derby") {
+      // stood down externally (New Game+): free the slot WITHOUT
+      // settling — standDownDerby already closed the books.
+      if (!DERBY.open) { endEvent(45); return; }
+      if (derbyRingRef.current) {
+        derbyRingRef.current.visible = true;
+        derbyRingRef.current.position.set(DERBY_PIER.x, groundYAt(DERBY_PIER.x, DERBY_PIER.z) + 0.05, DERBY_PIER.z);
+      }
+      const d = Math.hypot(G.playerPos.x - DERBY_PIER.x, G.playerPos.z - DERBY_PIER.z);
+      const left = Math.max(0, Math.ceil(e.until - t));
+      const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+      if (!DERBY.entered && !G.driving && !G.status && d < 3.4) {
+        claim(`E — Enter the Fishing Derby (free — ${clock} left; every catch scores its value vs the house $${DERBY.house})`, () => enterDerby());
+      } else if (DERBY.entered && d < 6) {
+        claim(`🎣 Derby — you $${DERBY.score} · house $${DERBY.house} · ${clock} left (fish anywhere — pier or boat)`, null, true);
+      } else release();
+      return;
+    }
 
     // ---------------- STREET CHALLENGE ----------------
     if (e.kind === "challenge") {
@@ -183,6 +222,13 @@ export default function Phase17Systems() {
       </group>
       <group ref={driverRef} visible={false}>
         <primitive object={driverRig.group} />
+      </group>
+      {/* Phase 24: the derby entry ring at the pier fishing spot */}
+      <group ref={derbyRingRef} visible={false}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[2.5, 3.1, 28]} />
+          <meshBasicMaterial color="#ffb340" transparent opacity={0.7} />
+        </mesh>
       </group>
       {/* spilled crates (timber boxes with a dark strap — the same
           destruct/debris material language as the world's crates) */}

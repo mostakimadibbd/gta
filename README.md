@@ -330,6 +330,24 @@ corrupt harbour boss's debt ledger.
   The round opens with an audit of Phase 22 (one fix: the courier
   board's restart now actually restarts a running chain, as
   documented). Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜**.
+- **Phase 24 — "Sea Life"** — **You can fish from boats now**: sit
+  in any still boat (your speedboat, a borrowed skiff, even the
+  marina rental) and cast over the side. The boat is the spot —
+  the line lands ahead of the bow — and open water fishes the
+  **offshore table**: richer weighting and a sixth fish, the
+  **Sable Tuna**, that never shows at the shore spots. Start the
+  engine, step out or get busted and the session ends cleanly;
+  the creel is the same bucket you sell at Harbour Wraps. New
+  world event: the **Fishing Derby** — when the Harbourmaster
+  calls it, enter free at the pier ring and every catch for the
+  next 3 minutes scores its value, shore or boat. Beat the house
+  score (it scales gently with your lifetime catches) for **$300
+  and a Harbour Wire headline**; your best derby score is kept in
+  Stats. The round opens with an audit of Phase 23 (two fixes:
+  club closing time is now defined — doors lock at 04:00, last
+  orders at the bar, nobody thrown out; and a slow Hurried fare's
+  receipt no longer calls the ride "clean"). Ledger unchanged:
+  **86 ✅ · 7 🟡 · 0 ⬜**.
 - **Phase 10 — realism + physics pass** (no new features): the
   post chain gains **radial chromatic aberration** and a stricter
   bloom threshold; **fog colour follows the day cycle**; **stars**

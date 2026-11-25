@@ -15,7 +15,7 @@ import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTA
 import { ECO, LOFT, persistEco, setHomePref, sleepToMorning } from "../game/economy";
 import { CLOTH, CLOTHING_ITEMS, persistClothing, type ClothingItem } from "../game/phase8";
 import { shopsClosed, gameHour } from "./Interactions";
-import { isClubOpen, CLUB_DRINK_NAME, CLUB_DRINK_PRICE, CLUB_DRINK_STAMINA, CLUB_DRINK_WARM_S } from "../game/club";
+import { isClubOpen, CLUB_CLOSE_HOUR, CLUB_DRINK_NAME, CLUB_DRINK_PRICE, CLUB_DRINK_STAMINA, CLUB_DRINK_WARM_S } from "../game/club";
 import { startClubBass, stopClubBass } from "../game/audio";
 import { dealerPrice, consumeVoucher } from "../game/cup";
 import CarBody from "./CarBody";
@@ -191,6 +191,7 @@ export default function Interiors() {
   const floorTiles = useMemo<THREE.MeshStandardMaterial[]>(() =>
     Array.from({ length: 24 }, () => new THREE.MeshStandardMaterial({ color: "#141e26", roughness: 0.25, metalness: 0.4, emissive: "#2ee6c8", emissiveIntensity: 0.3 })), []);
   const clubBassOn = useRef(false);
+  const clubPrevHour = useRef(-1); // Phase 24: closing-time bark watcher
   useEffect(() => () => { stopClubBass(); }, []);
 
   // Phase 6 screen flow: door teleports are DELAYED ~130 ms behind a
@@ -233,6 +234,16 @@ export default function Interiors() {
       clubBassOn.current = inClub;
       if (inClub) startClubBass(); else stopClubBass();
     }
+    // Phase 24 audit: CLOSING TIME, CALLED ONCE — when the clock
+    // turns 04:00 with the player inside, the bartender calls it:
+    // the doors lock behind you and the bar stops serving (the bar
+    // branch below), but nobody is ejected — you leave when you're
+    // ready, through the same exit as always (game/club.ts).
+    const hrNow = gameHour();
+    if (inClub && clubPrevHour.current !== CLUB_CLOSE_HOUR && hrNow === CLUB_CLOSE_HOUR) {
+      bark("Bartender", "That's the last song, friends — doors are locked behind you and the bar's done for the night. Head out whenever you're ready.");
+    }
+    clubPrevHour.current = hrNow;
 
     // ---------- proximity interactions ----------
     let prompt = ""; let warn = false; let act: (() => void) | null = null;
@@ -258,7 +269,12 @@ export default function Interiors() {
         const C = INTERIORS.club;
         if (near(x, z, 2.2)) { prompt = "Press E — leave Club Solace"; act = go(CLUB_EXT_DOOR.x, CLUB_EXT_DOOR.z - 1.2, ""); }
         else if (near(C.cx - 7.3, C.cz + 0.5, 2.8)) {
-          if (G.cash >= CLUB_DRINK_PRICE) {
+          if (!isClubOpen(gameHour())) {
+            // Phase 24 audit: after 04:00 the bar stops serving —
+            // last orders were at four (game/club.ts closing rule).
+            prompt = "The bar's dark — last orders were at 04:00. The floor's yours until you head out.";
+            warn = true;
+          } else if (G.cash >= CLUB_DRINK_PRICE) {
             prompt = `Press E — a ${CLUB_DRINK_NAME} at the bar ($${CLUB_DRINK_PRICE} — a little stamina, a warm glow)`;
             act = () => {
               G.cash -= CLUB_DRINK_PRICE;

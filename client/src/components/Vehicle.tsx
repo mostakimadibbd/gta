@@ -14,6 +14,7 @@ import { completeBreakIn, carAlarms } from "../game/theft";
 import { J } from "../game/jobs";
 import { tickDrift, resetDrift } from "../game/drift";
 import { honkHorn } from "../game/horn";
+import { boatFishClaimsE } from "../game/phase8";
 import { tier } from "../game/quality";
 import { padKeys, padAxes } from "../game/gamepad";
 import { touchSteer } from "../game/touch";
@@ -150,6 +151,11 @@ export default function Vehicle(p: Props) {
         // Phase 13: while riding the tram, E belongs to the tram
         // (App fires G.interact) — never enter a car off the guideway
         if (G.tramRide >= 0) { e.preventDefault(); return; }
+        // Phase 24: while boat fishing owns the interact key (a cast
+        // in progress, or a still boat with the cast prompt up), E
+        // belongs to the rod — never step ashore mid-cast. F is not
+        // yielded: it still steps out, which ends the session.
+        if (key !== "f" && isBind(e, "interact") && boatFishClaimsE()) { e.preventDefault(); return; }
         if (G.driving) {
           const car = G.cars[G.activeCarId];
           // Phase 9: no bailing out of a flying plane — land first

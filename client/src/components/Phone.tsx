@@ -509,7 +509,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="phone-row"><span>Farm work</span><b>{jobStats.farmLoads} loads · ${jobStats.farmEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Valet</span><b>{jobStats.valetJobs} parks · ${jobStats.valetEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Courier</span><b>{jobStats.courierDrops} drops · ${jobStats.courierEarned.toLocaleString()}</b></div>
-            <div className="phone-row"><span>Fishing</span><b>{jobStats.fishCaught} caught · ${jobStats.fishEarned.toLocaleString()}{jobStats.bestFish ? ` · best ${jobStats.bestFish.name} ${jobStats.bestFish.cm}cm` : ""}</b></div>
+            <div className="phone-row"><span>Fishing</span><b>{jobStats.fishCaught} caught · ${jobStats.fishEarned.toLocaleString()}{jobStats.bestFish ? ` · best ${jobStats.bestFish.name} ${jobStats.bestFish.cm}cm` : ""}{jobStats.derbyBest > 0 ? ` · derby best $${jobStats.derbyBest} (${jobStats.derbyWins} won)` : ""}</b></div>
             <div className="phone-row"><span>Portfolio</span><b>${portfolioValue().toFixed(0)} ({portfolioPL() >= 0 ? "+" : "−"}${Math.abs(portfolioPL()).toFixed(0)})</b></div>
             <div className="phone-row"><span>Business income</span><b>${dailyIncomeTotal().toLocaleString()}/day</b></div>
             <h3 className="phone-subhead">Mission record</h3>
