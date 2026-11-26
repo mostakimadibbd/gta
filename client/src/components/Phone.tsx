@@ -1,27 +1,35 @@
 // Harborfall smartphone — DOM overlay styled as a realistic handset:
 // near-black body, thin bezel, notch, status bar with the game clock.
-// Apps: Contacts, Messages, SableBank, Music, Maps, Garage (view-only),
+// Apps: Contacts, Messages, SableBank, Sable Tunes (Phase 35 music
+// player, game/tunes.ts), Maps, Garage (view-only),
 // Stash (stolen goods), Camera (photo mode), Settings (themes + game
 // settings: shake, FOV, post FX, shadows, character).
 import { useEffect, useState } from "react";
 import { CONTACTS, phoneMsgs, onPhoneMsgs } from "../game/phone";
 import { G, persistSettings, stashTotal, windLabel } from "../game/store";
+import { hudDomPalette } from "../game/hudpalette"; // Phase 44: colourblind-safe HUD accents (Bank figures + event badges)
 import { currentSeason, seasonMeta } from "../game/season";
 import { CAR_MODELS, DEALER_CARS } from "../world";
-import { M, NGP } from "../game/missionState";
+import { M, NGP, crownBuyoutLive } from "../game/missionState";
 import { startNewGamePlus } from "../game/ngplus";
 import { STORY_MISSIONS, SIDE_MISSIONS } from "../game/missions";
 import { J, jobStats, fmtTime, RACES, BAY_CIRCUIT, SPARROW_RUN, VALET_FRONTAGES } from "../game/jobs";
 import { cup, CUP_POINTS, CUP_CHAMPION_POINTS, cupPointsTotal, cupRoundsDone, resetCup } from "../game/cup";
-import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet, bizLevel, upgradeCost, upgradeBusiness, staffBonusNow, isNightNow, isClubWeekendNight, LOAN, LOAN_TIERS, borrowLoan, repayLoan } from "../game/economy";
+import { slide, SLIDE_ROUNDS, SLIDE_PRIZE, slideUnlocked, slidePassedCount, resetSlide } from "../game/slide"; // Phase 34: the Slide Series card + Records
+import { BUSINESSES, ECO, APARTMENT, dailyIncomeTotal, persistEco, STAFF_ROSTER, MAX_STAFF_PER_BIZ, staffDef, businessDailyNet, bizLevel, upgradeCost, upgradeBusiness, staffBonusNow, isNightNow, isClubWeekendNight, LOAN, LOAN_TIERS, borrowLoan, repayLoan, RENTAL_PROPERTIES, RENTALS, rentFor, rentDailyNet, rentalSellPrice, sellRentalProperty, bizEventToday } from "../game/economy";
 import { staffOnShiftNow } from "../game/staffworld";
 import { newsFeed, socialFeed, onFeed } from "../game/feed";
 import { THEMES, type GameTheme } from "../themes";
-import { isMenuThemePlaying, startMenuTheme, stopMenuTheme, sfx } from "../game/audio";
+import { sfx } from "../game/audio";
+import { TUNES, TUNES_STATE, tuneDef, playTune, pauseTunes, stepTune, tunesElapsed, tunesSuspended } from "../game/tunes"; // Phase 35: Sable Tunes
 import { STOCKS, INV, buyLot, sellLot, portfolioValue, portfolioPL, LOT } from "../game/invest";
 import { manualTier, showFps, setShowFps, reflectionMode, REFLECTION_LABEL } from "../game/perf";
 import { fetchBoard, type BoardEntry } from "../game/leaderboard";
-import { galleryList, galleryDelete } from "../game/phase9";
+import { galleryList, galleryDelete, GALLERY_LIMIT, type GalleryPhoto } from "../game/phase9";
+import { POSTCARD_DEFS, POSTCARDS, postcardsDoneCount, postcardSetComplete } from "../game/postcards"; // Phase 43: the Sable Postcards live in the Gallery app
+import { HEAT, evidenceFloor, bribeCost } from "../game/heat"; // Phase 29: Stats shows the evidence file
+import { REGATTA_TARGET_S } from "../game/dayevents"; // Phase 47: the Records board's regatta row
+import { FORECAST, WEATHER_META } from "../game/weather"; // Phase 36: the weather page's forecast row reads the machine's committed next state
 
 /** Phase 8: harbour leaderboards from the Python service — renders
  * nothing until the fetch settles; an offline game shows the hint. */
@@ -67,7 +75,7 @@ const APPS: { id: AppId | "map" | "camera"; icon: string; label: string }[] = [
   { id: "story", icon: "✦", label: "Story" },
   { id: "news", icon: "≡", label: "News" },
   { id: "social", icon: "◍", label: "Social" },
-  { id: "music", icon: "♪", label: "Music" },
+  { id: "music", icon: "♪", label: "Sable Tunes" },
   { id: "map", icon: "⌖", label: "Maps" },
   { id: "garage", icon: "▣", label: "Garage" },
   { id: "stash", icon: "⚿", label: "Stash" },
@@ -88,25 +96,31 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
   const [app, setApp] = useState<AppId>("home");
   const [webPage, setWebPage] = useState("home"); // Phase 9 SableWeb tab
   const [ngConfirm, setNgConfirm] = useState(false); // Phase 20: NG+ two-step confirm
+  const [rentSellArm, setRentSellArm] = useState(""); // Phase 30: rental sell-back two-step confirm (property id armed, "" = none)
   const [, setTick] = useState(0);
-  const [playing, setPlaying] = useState(isMenuThemePlaying());
+  const [viewPhoto, setViewPhoto] = useState<GalleryPhoto | null>(null); // Phase 35: Gallery full-screen viewer
   useEffect(() => onPhoneMsgs(() => setTick((v) => v + 1)), []);
   useEffect(() => onFeed(() => setTick((v) => v + 1)), []);
   useEffect(() => {
     if (!open) return;
-    setApp("home"); setPlaying(isMenuThemePlaying());
+    setApp("home"); setViewPhoto(null);
     const iv = setInterval(() => setTick((v) => v + 1), 1000); // live clock/bank
     return () => clearInterval(iv);
   }, [open ]);
   if (!open) return null;
   const go = (id: AppId | "map" | "camera") => {
     sfx.click();
+    setViewPhoto(null);
     if (id === "map") { onOpenMap(); return; }
     if (id === "camera") { onPhotoMode(); return; }
     if (id === "web") setWebPage("home");
     setApp(id);
   };
   const setSetting = (patch: Partial<typeof G.settings>) => { Object.assign(G.settings, patch); persistSettings(); setTick((v) => v + 1); };
+  // Phase 44: Bank money figures + business-event badges read the
+  // DOM HUD palette — every field null with the colourblind-safe
+  // HUD off, so the default Bank keeps its shipped look exactly.
+  const domPal = hudDomPalette();
   const current = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
   return (
     <div className="phone-wrap" role="dialog" aria-label="Smartphone">
@@ -117,7 +131,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
           <span className="phone-carrier">SableTel</span>
           <span className="phone-glyphs">▂▄▆ ▰▰▰▱</span>
         </div>
-        {app !== "home" && <button type="button" className="phone-back" onClick={() => setApp("home")}>‹ Apps</button>}
+        {app !== "home" && <button type="button" className="phone-back" onClick={() => { if (viewPhoto) setViewPhoto(null); else setApp("home"); }}>‹ {viewPhoto ? "Gallery" : "Apps"}</button>}
         {app === "home" && (
           <div className="phone-home">
             <div className="phone-clock">{gameClock()}</div>
@@ -174,8 +188,52 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
                     <span>{b.name}{ownedBiz ? ` · Lv${lvl}` : ""}<small style={{ display: "block" }}>{ownedBiz
                       ? crew.length ? `Crew: ${crew.join(" · ")}` : "No staff — hire from the roster below (up to 2)"
                       : "Not owned"}</small></span>
-                    <b>{ownedBiz ? `+$${businessDailyNet(b)}/day` : `$${b.price.toLocaleString()}`}</b>
+                    <b style={ownedBiz && domPal.gain ? { color: domPal.gain } : undefined}>{ownedBiz ? `+$${businessDailyNet(b)}/day` : `$${b.price.toLocaleString()}`}</b>
                   </div>
+                  {ownedBiz && (() => {
+                    // Phase 41: today's business-event badge — read
+                    // from the same state businessDailyNet reads, so
+                    // the badge and the figure above can never part.
+                    const ev = bizEventToday(b);
+                    if (!ev) return null;
+                    if (ev.kind === "rush") return (
+                      <div className="bank-row">
+                        <span>↳ 🔥 Rush day<small style={{ display: "block" }}>Takings +50% today — the figure above already includes it; it lands tomorrow morning</small></span>
+                        <b style={domPal.eventGood ? { color: domPal.eventGood } : undefined}>+50%</b>
+                      </div>
+                    );
+                    if (ev.kind === "quiet") return (
+                      <div className="bank-row">
+                        <span>↳ 🌙 Quiet day<small style={{ display: "block" }}>Takings −30% today — the figure above already includes it</small></span>
+                        <b style={domPal.eventBad ? { color: domPal.eventBad } : undefined}>−30%</b>
+                      </div>
+                    );
+                    if (ev.kind === "snag" && !ev.fixed) return (
+                      <div className="bank-row">
+                        <span>↳ 📦 Supply snag<small style={{ display: "block" }}>Takings halved today until the supply run lands — fetch stock from a depot, bring it back here. No pay: it's your own stock. Unfixed, it expires at day's end</small></span>
+                        <button type="button" className="phone-toggle" onClick={() => { J.wantSnag = b.id; onClose(); }}>Run the supply run</button>
+                      </div>
+                    );
+                    if (ev.kind === "snag" && ev.fixed) return (
+                      <div className="bank-row">
+                        <span>↳ 📦 Supply snag — fixed<small style={{ display: "block" }}>Your run landed — full takings restored for today; the figure above is whole again</small></span>
+                        <b style={domPal.eventGood ? { color: domPal.eventGood } : undefined}>Fixed</b>
+                      </div>
+                    );
+                    if (ev.kind === "inspection") return (
+                      <div className="bank-row">
+                        <span>↳ 🧾 City inspection today<small style={{ display: "block" }}>{ev.passed ? "Passed — records clean, no fine" : `Failed — $${ev.fine} fine assessed, $${ev.paid} collected from your account this morning`}</small></span>
+                        <b style={(ev.passed ? domPal.eventGood : domPal.eventBad) ? { color: ev.passed ? domPal.eventGood! : domPal.eventBad! } : undefined}>{ev.passed ? "Passed" : `−$${ev.paid}`}</b>
+                      </div>
+                    );
+                    if (ev.kind === "star") return (
+                      <div className="bank-row">
+                        <span>↳ ⭐ {ev.staff} — star day<small style={{ display: "block" }}>Their takings bonus counts double today — the figure above already includes it</small></span>
+                        <b style={domPal.eventGood ? { color: domPal.eventGood } : undefined}>×2 bonus</b>
+                      </div>
+                    );
+                    return null;
+                  })()}
                   {ownedBiz && b.id === "club" && (
                     <div className="bank-row">
                       <span>↳ Weekend door<small style={{ display: "block" }}>Fri/Sat nights add +25% on the house take — on those days the figure above already includes it (the club's doors run 20:00–04:00)</small></span>
@@ -222,11 +280,46 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
               );
             })}
             <div className="bank-row"><span>{APARTMENT.name}</span><b>{ECO.ownsApartment ? "Owned 🔑" : `$${APARTMENT.price.toLocaleString()}`}</b></div>
-            <div className="bank-row"><span><b>Daily income (paid each morning)</b></span><b>${dailyIncomeTotal().toLocaleString()}</b></div>
+            <div className="bank-row"><span><b>Daily income (paid each morning)</b></span><b style={domPal.gain ? { color: domPal.gain } : undefined}>${dailyIncomeTotal().toLocaleString()}</b></div>
+            {crownBuyoutLive() && <div className="bank-row"><span>👑 Meridian buy-out dividend<small style={{ display: "block" }}>The harbour stake pays +10% on every business's takings — already included in the daily income figure above (the number shown is the number paid).</small></span><b>+10%</b></div>}
+            <h3 className="phone-subhead">Rental properties — Sable Lets</h3>
+            {RENTAL_PROPERTIES.map((p) => {
+              const ownedProp = RENTALS.owned.includes(p.id);
+              const due = RENTALS.due[p.id] ?? 0;
+              const armed = rentSellArm === p.id;
+              return (
+                <div key={p.id}>
+                  <div className="bank-row">
+                    <span>{p.name}<small style={{ display: "block" }}>{ownedProp
+                      ? due > 0 ? `⏸ Rent paused — a $${due.toLocaleString()} repair bill is DUE. Pay it at the property's door and rent resumes the next morning.`
+                        : `Let by Ana Ruiz · ${p.district} — rent lands each morning with your business income`
+                      : `${p.blurb}${p.requiresBusiness ? " (Requires owning any business.)" : ""}`}</small></span>
+                    <b style={ownedProp && (due > 0 ? domPal.loss : domPal.gain) ? { color: due > 0 ? domPal.loss! : domPal.gain! } : undefined}>{ownedProp ? (due > 0 ? `−$${due.toLocaleString()} due` : `+$${rentFor(p).toLocaleString()}/day`) : `$${p.price.toLocaleString()}`}</b>
+                  </div>
+                  {ownedProp && !armed && (
+                    <div className="bank-row">
+                      <span>↳ Sell back<small style={{ display: "block" }}>80% of the $${p.price.toLocaleString()} purchase price{due > 0 ? `, less the $${due.toLocaleString()} due bill` : ""} — rent stops today</small></span>
+                      <button type="button" className="phone-toggle" onClick={() => setRentSellArm(p.id)}>Sell ${Math.max(0, rentalSellPrice(p) - due).toLocaleString()}</button>
+                    </div>
+                  )}
+                  {ownedProp && armed && (
+                    <div className="bank-row">
+                      <span>↳ Confirm sale<small style={{ display: "block" }}>This is final — the unit leaves your portfolio today</small></span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button type="button" className="phone-toggle" onClick={() => { setRentSellArm(""); if (sellRentalProperty(p.id)) setTick((v) => v + 1); }}>Confirm</button>
+                        <button type="button" className="phone-toggle" onClick={() => setRentSellArm("")}>Keep it</button>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div className="bank-row"><span><b>Daily rent (paid each morning)</b></span><b>${rentDailyNet().toLocaleString()}</b></div>
+            <p className="phone-tip">Rent is collected by Ana Ruiz (Sable Lets, in Contacts) on the same morning tick as your businesses. Tenants mostly pay quietly — late rent, a good tenant, or a repair bill arrive as her messages. No management chores: that's what she's for.</p>
             <h3 className="phone-subhead">SableBank Loans</h3>
             {LOAN.owed > 0 ? (
               <div>
-                <div className="bank-row"><span>Outstanding loan<small style={{ display: "block" }}>Principal ${LOAN.principal.toLocaleString()} · 8%/day interest (capped at 2× principal) · 10% auto-repays each morning from your cash</small></span><b>−${LOAN.owed.toLocaleString()}</b></div>
+                <div className="bank-row"><span>Outstanding loan<small style={{ display: "block" }}>Principal ${LOAN.principal.toLocaleString()} · 8%/day interest (capped at 2× principal) · 10% auto-repays each morning from your cash</small></span><b style={domPal.loss ? { color: domPal.loss } : undefined}>−${LOAN.owed.toLocaleString()}</b></div>
                 <div className="bank-row"><span>Repay now</span>
                   <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <button type="button" className="phone-toggle" disabled={G.cash <= 0} onClick={() => { if (repayLoan(100) > 0) setTick((v) => v + 1); }}>Repay $100</button>
@@ -299,6 +392,23 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>Series points</span><b>{cupPointsTotal()}/40 · {cupRoundsDone()}/4 rounds{cup.champion ? " · 🏆 CHAMPION" : cup.closed ? " · closed" : ""}</b></div>
             {cup.voucher && !cup.voucherUsed && <div className="bank-row"><span>🎟️ Gold voucher</span><b>Vantara S −20% at Sable Motors (one use)</b></div>}
             {cup.closed && <button type="button" className="phone-row" onClick={() => { resetCup(); setTick((v) => v + 1); }}><span><b>{cup.champion ? "Defend the crown — new series" : "Run a fresh series"}</b><small>Standings reset; an unspent voucher carries over</small></span><span>›</span></button>}
+            <h3 className="phone-subhead">🛞 The Sable Slide Series — drift championship</h3>
+            <p className="phone-tip">Three gated courses, run in order. Arm a round here, drive to its amber ring in a car, and press E: thread the gates before the clock dies AND bank the round's drift target on the way — only BANKED chains count (a collision loses the open chain, as always), and the points pay their usual cash too. Pass all three for ${SLIDE_PRIZE.toLocaleString()}, the champion's title in Stats → Records, and the Slide Gold respray at Lina's bench. A clock-out still records your banked score as the course best; walking away from the car records nothing.</p>
+            {SLIDE_ROUNDS.map((def, i) => {
+              const r = slide.rounds[i];
+              const unlocked = slideUnlocked(i);
+              return (
+                <div key={def.id} className="bank-row">
+                  <span>{def.name}<small style={{ display: "block" }}>{def.where} · {def.gates.length} gates · target {def.target.toLocaleString()} pts · {def.timeLimit}s</small></span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <b>{!unlocked ? "🔒 locked" : r.passed ? `✓ passed · best ${r.best.toLocaleString()}` : r.best > 0 ? `best ${r.best.toLocaleString()} · open` : "not run"}</b>
+                    {unlocked && <button type="button" className="phone-toggle" onClick={() => { J.slideArm = J.slideArm === def.id ? "" : def.id; setTick((v) => v + 1); }}>{J.slideArm === def.id ? "Armed ✓ — to the ring!" : "Enter round"}</button>}
+                  </span>
+                </div>
+              );
+            })}
+            <div className="bank-row"><span>Series progress</span><b>{slidePassedCount()}/3 rounds{slide.champion ? " · 🏆 CHAMPION" : ""}{slide.goldUnlocked ? " · Slide Gold unlocked at Lina's" : ""}</b></div>
+            {slide.champion && <button type="button" className="phone-row" onClick={() => { resetSlide(); setTick((v) => v + 1); }}><span><b>Defend the title — new series</b><small>Rounds reset; the Slide Gold stays unlocked — a career honour</small></span><span>›</span></button>}
             <h3 className="phone-subhead">Tow work — Lina's Wrecker</h3>
             <div className="bank-row"><span>Tow status</span><b>{J.towPhase === "idle" ? "Off shift" : J.towPhase === "pickup" ? (J.towHooked ? "Hooked — deliver to Lina's" : "Stranded car marked — reverse the hook in") : "Delivering"}</b></div>
             <button type="button" className="phone-row" onClick={() => { J.wantTow = true; onClose(); }}>
@@ -322,6 +432,8 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             </button>
             <div className="bank-row"><span>Valet parks</span><b>{jobStats.valetJobs} · ${jobStats.valetEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Courier drops</span><b>{jobStats.courierDrops} · ${jobStats.courierEarned.toLocaleString()}</b></div>
+            <div className="bank-row"><span>Paramedic</span><b>{jobStats.patientsDelivered} patients · {jobStats.medShifts} shifts · ${jobStats.serviceEarned.toLocaleString()} (service total)</b></div>
+            <div className="bank-row"><span>Firefighter</span><b>{jobStats.firesOut} fires out · {jobStats.fireShifts} shifts</b></div>
             <h3 className="phone-subhead">Earnings</h3>
             <div className="bank-row"><span>Taxi fares</span><b>{jobStats.taxiFares} · ${jobStats.taxiEarned.toLocaleString()} · best tip ${jobStats.taxiBestTip} · tips ${jobStats.taxiTips.toLocaleString()} total</b></div>
             <div className="bank-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
@@ -329,6 +441,8 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>🛞 Drifting</span><b>best chain {jobStats.bestDrift.toLocaleString()} pts · {jobStats.driftBanked.toLocaleString()} banked · ${jobStats.driftEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Valet</span><b>{jobStats.valetJobs} parks · ${jobStats.valetEarned.toLocaleString()}</b></div>
             <div className="bank-row"><span>Courier</span><b>{jobStats.courierDrops} drops · ${jobStats.courierEarned.toLocaleString()}</b></div>
+            <div className="bank-row"><span>Paramedic</span><b>{jobStats.patientsDelivered} patients · {jobStats.medShifts} shifts</b></div>
+            <div className="bank-row"><span>Firefighter</span><b>{jobStats.firesOut} fires out · {jobStats.fireShifts} shifts · service ${jobStats.serviceEarned.toLocaleString()}</b></div>
             <LeaderboardRows />
           </div>
         )}
@@ -355,6 +469,11 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>After the Fall progress</span><b>{M.side.after}/3</b></div>
             <div className="bank-row"><span>The Meridian Pair (one choice, post-Ch.3)</span><b>{M.pairChoice === "informant" ? "You stood with Voss's informant" : M.pairChoice === "dockcrew" ? "You warned Elias's crew" : M.storyIndex >= 3 ? "Call Voss OR Elias — the first call decides" : "After Chapter 3"}</b></div>
             <div className="bank-row"><span>The Harbour Wire (post-Ch.4)</span><b>{M.side.wire >= 3 ? "Printed 🏆 — the harbour knows" : M.storyIndex >= 4 || M.storyDone ? `Call Ines Marlo · ${M.side.wire}/3` : "After Chapter 4"}</b></div>
+            <div className="bank-row"><span>The Ledger Line (post-Ch.3)</span><b>{M.side.ledger >= 3 ? "Settled 🏆 — the book's fate is sealed" : M.storyIndex >= 3 || M.storyDone ? `Call Petra Vane · ${M.side.ledger}/3` : "After Chapter 3"}</b></div>
+            <div className="bank-row"><span>The Quiet Harbour (post-story)</span><b>{!M.storyDone ? "Finish the story first" : M.side.quiet >= 3 ? "Settled 🏆 — the bench keeps the words" : `Call ${M.side.quiet === 1 ? "Lina Park" : "Old Elias"} · ${M.side.quiet}/3`}</b></div>
+            {M.side.quiet >= 3 && <div className="bank-row"><span>Coral Shores bench plaque</span><b>“For the ones who stayed.”</b></div>}
+            <div className="bank-row"><span>The Harbour Crown (endgame)</span><b>{!M.storyDone ? "Finish the story first" : M.side.crown >= 4 ? "Done 👑 — the harbour is yours" : ECO.owned.length < 2 || RENTALS.owned.length < 1 ? `Needs an empire: ${ECO.owned.length}/2 businesses · ${RENTALS.owned.length}/1 rental — then call Ines Marlo` : `Call Ines Marlo · ${M.side.crown}/4`}</b></div>
+            {M.crownDone && <div className="bank-row"><span>The Auction — your call</span><b>{M.crownChoice === "crown-buyout" ? "Bought the harbour stake — +10% dividend on all business income, forever" : "Exposed Meridian — the Wire series ran three editions; the harbour's rep is yours"}</b></div>}
             {SIDE_MISSIONS.filter((mDef) => (M.stats[mDef.id]?.best ?? 0) > 0).map((mDef) => (
               <div key={mDef.id} className="bank-row"><span>{mDef.title}</span><b>best {fmtTime(M.stats[mDef.id].best)}</b></div>
             ))}
@@ -362,14 +481,14 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             {M.storyDone ? (
               !ngConfirm ? (
                 <>
-                  <p className="phone-note">Run the story again on this save: chapters, side arcs, the Wire and the Meridian Pair all reset — cash, cars, properties, businesses, skills, your look, Cup and drift records stay. The patrol drills harder each run (cruise +6%/level, capped +18%; busts +10%/level, capped +30%) and every mission pays +25% more per level.</p>
+                  <p className="phone-note">Run the story again on this save: chapters, side arcs, the Wire and the Meridian Pair all reset, and your patrol evidence file is wiped clean — cash, cars, properties, businesses, skills, your look, Cup, Slide Series and drift records stay. The patrol drills harder each run (cruise +6%/level, capped +18%; busts +10%/level, capped +30%) and every mission pays +25% more per level.</p>
                   <button type="button" className="phone-row" onClick={() => setNgConfirm(true)}>
                     <span><b>Start New Game+ {NGP.level + 1}</b><small>Story progress resets — everything you own stays</small></span><span>›</span>
                   </button>
                 </>
               ) : (
                 <>
-                  <p className="phone-note">⚠️ Last check: starting NG+ {NGP.level + 1} resets story and side progress on this save slot (replays and best times stay). Any live mission, race, rental, escort or dispatch call is stood down first. This can't be undone.</p>
+                  <p className="phone-note">⚠️ Last check: starting NG+ {NGP.level + 1} resets story and side progress on this save slot — the Ledger Line, the Quiet Harbour and the Harbour Crown included, plaque and all (replays and best times stay; the Sovereign, once earned, stays in your garage like every car you own). Any live mission, race, rental, escort or dispatch call is stood down first. This can't be undone.</p>
                   <button type="button" className="phone-row" onClick={() => { setNgConfirm(false); if (startNewGamePlus() > 0) onClose(); }}>
                     <span><b>Yes — start New Game+ {NGP.level + 1}</b><small>Back to the ferry, Rayan</small></span><span>›</span>
                   </button>
@@ -441,6 +560,8 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
                 <div className="bank-row"><span>Wind</span><b>{windLabel(G.wind)}</b></div>
                 <div className="phone-msg"><b>The season in Port Sable</b><p>{seasonMeta().blurb}</p></div>
                 <div className="bank-row"><span>Next change</span><b>~{Math.max(1, Math.round(G.weatherIn / 60))} min</b></div>
+                <div className="bank-row"><span>Turning to</span><b>{WEATHER_META[FORECAST.next].icon} {FORECAST.next === G.weather ? `Holding as ${WEATHER_META[FORECAST.next].label}` : WEATHER_META[FORECAST.next].label}</b></div>
+                <p className="phone-tip">The forecast is the harbour service's own reading of the sky — it is what will actually arrive when the timer runs out. Pressing Y to change the weather yourself re-rolls it.</p>
                 <div className="phone-msg"><b>Harbourmaster's note</b><p>{G.weather === "Storm" ? "Storm over the bay — small craft stay in, and the fishing's off. The Sparrow stays hangared too, if you value it." : G.weather === "Rain" ? "Rain on the water. Roads are slick, the fish don't care, and Tomas is still on the pier." : G.weather === "Fog" ? "Fog in the harbour. Drive slow, boat slower — the patrol boat is out there somewhere." : "Fair harbour weather. The regatta lights are calling and the Downs dirt loop is dry."}</p></div>
               </>
             )}
@@ -467,16 +588,51 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
         {app === "gallery" && (
           <div className="phone-page">
             <h3>Gallery — Photo Mode shots</h3>
-            {galleryList().length === 0 && <p className="phone-tip">No photos yet. Open the Camera app, frame something beautiful, and shoot — shots land here (and download too). Keeps the last 10.</p>}
-            {galleryList().map((p) => (
-              <div key={p.id} className="phone-msg">
-                <img src={p.src} alt={`Port Sable photo, ${p.at}`} style={{ width: "100%", borderRadius: 8, display: "block" }} />
+            {/* Phase 43: THE SABLE POSTCARDS — the set, its honest
+                terms, and the completion certificate. */}
+            <div className="phone-msg">
+              <b>📮 The Sable Postcards — {postcardsDoneCount()}/{POSTCARD_DEFS.length} sold to The Wire</b>
+              <p className="phone-tip">The Wire's picture desk buys ONE of each. Shoot in Photo Mode; a shot that fits an open postcard is bought on the spot and stamped below. Honest terms: the desk checks where you stood, which way the camera pointed, the hour, the weather and your wanted level — it cannot see the picture itself. There is no image recognition.</p>
+              {POSTCARD_DEFS.map((d) => (
+                <div key={d.id} style={{ marginTop: 6 }}>
+                  <div className="phone-row"><span>{POSTCARDS.done[d.id] ? "✅" : "📮"} {d.name}</span><b>{POSTCARDS.done[d.id] ? "SOLD" : `$${d.fee}`}</b></div>
+                  <p className="phone-tip">{d.hint}.<br />Checked: {d.check}</p>
+                </div>
+              ))}
+              {postcardSetComplete() && (
+                <div style={{ marginTop: 8 }}>
+                  <b>🏆 CERTIFICATE — THE SABLE POSTCARDS, FULL SET</b>
+                  <p>All eight prints sold to The Wire. The framed set hangs on the Postcard Wall at the Northgate Loft — bridge, pod, sign, club, heli, storm, dome and breakwater. Port Sable, complete.</p>
+                </div>
+              )}
+            </div>
+            {viewPhoto ? (
+              <div className="phone-msg">
+                <img src={viewPhoto.src} alt={`Port Sable photo, ${viewPhoto.at}`} style={{ width: "100%", borderRadius: 8, display: "block" }} />
+                <p><b>{viewPhoto.where ?? "Port Sable"}</b>{viewPhoto.where ? "" : " — shot before Gallery learned districts"}<br />{viewPhoto.at}</p>
+                {viewPhoto.challenge && <p>📮 <b>Sold to The Wire — “{viewPhoto.challenge}”</b> (a Sable Postcard; the framed print hangs at the Loft)</p>}
                 <p style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span>{p.at}</span>
-                  <button type="button" className="phone-toggle" onClick={() => { galleryDelete(p.id); setTick((v) => v + 1); }}>Delete</button>
+                  <button type="button" className="phone-toggle" onClick={() => setViewPhoto(null)}>‹ All photos</button>
+                  <button type="button" className="phone-toggle" onClick={() => { galleryDelete(viewPhoto.id); setViewPhoto(null); setTick((v) => v + 1); }}>Delete</button>
                 </p>
+                <p className="phone-tip">This is the phone's 320 px copy — the full-resolution PNG downloaded when you took the shot.</p>
               </div>
-            ))}
+            ) : (
+              <>
+                {galleryList().length === 0 && <p className="phone-tip">No photos yet. Open the Camera app, frame something beautiful, and shoot — shots land here (and download too). Keeps the last {GALLERY_LIMIT}; when it fills, the oldest shot is replaced.</p>}
+                {galleryList().map((p) => (
+                  <div key={p.id} className="phone-msg">
+                    <button type="button" onClick={() => setViewPhoto(p)} style={{ padding: 0, border: "none", background: "none", cursor: "pointer", display: "block", width: "100%" }}>
+                      <img src={p.src} alt={`Port Sable photo, ${p.at}`} style={{ width: "100%", borderRadius: 8, display: "block" }} />
+                    </button>
+                    <p style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span>{p.challenge ? `📮 ${p.challenge} · ` : ""}{p.where ? `${p.where} · ` : ""}{p.at}</span>
+                      <button type="button" className="phone-toggle" onClick={() => { galleryDelete(p.id); setTick((v) => v + 1); }}>Delete</button>
+                    </p>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
         {app === "stats" && (
@@ -496,11 +652,29 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             ))}
             <div className="phone-row"><span>🛞 Drifting</span><b>best chain {jobStats.bestDrift.toLocaleString()} pts · ${jobStats.driftEarned.toLocaleString()} earned</b></div>
             <div className="phone-row"><span>🏆 Sable Cup</span><b>{cup.champion ? "Champion 🏆" : `${cupPointsTotal()} pts · ${cupRoundsDone()}/4 rounds`}</b></div>
+            {M.side.crown >= 4 && <div className="phone-row"><span>👑 Harbour Crown</span><b>Harbour Crown — the harbour flies your flag</b></div>}
+            <h3 className="phone-subhead">🏅 Records — the harbour book</h3>
+            <div className="phone-row"><span>🛞 Best drift chain</span><b>{jobStats.bestDrift > 0 ? `${jobStats.bestDrift.toLocaleString()} pts` : "—"} · {jobStats.driftBanked.toLocaleString()} pts banked lifetime</b></div>
+            <div className="phone-row"><span>🛞 Slide Series</span><b>{slide.champion ? "🏆 Slide Series Champion" : `${slidePassedCount()}/3 rounds passed`}</b></div>
+            {SLIDE_ROUNDS.map((def, i) => (
+              <div key={def.id} className="phone-row"><span>· {def.name}</span><b>{slide.rounds[i].best > 0 ? `${slide.rounds[i].best.toLocaleString()} pts${slide.rounds[i].passed ? " ✓" : ""}` : "—"}</b></div>
+            ))}
+            {RACES.map((r) => (
+              <div key={r.id} className="phone-row"><span>🏁 {r.name}</span><b>{jobStats.bestTimes[r.id] ? fmtTime(jobStats.bestTimes[r.id]) : "—"}</b></div>
+            ))}
+            <div className="phone-row"><span>🚤 {BAY_CIRCUIT.name}</span><b>{jobStats.bestTimes[BAY_CIRCUIT.id] ? fmtTime(jobStats.bestTimes[BAY_CIRCUIT.id]) : "—"}</b></div>
+            <div className="phone-row"><span>⛵ Harbour Regatta</span><b>{jobStats.bestTimes["regatta"] ? `${fmtTime(jobStats.bestTimes["regatta"])} (regatta-day time trial · target ${fmtTime(REGATTA_TARGET_S)})` : "—"}</b></div>
+            <div className="phone-row"><span>🛩 {SPARROW_RUN.name}</span><b>{jobStats.bestTimes[SPARROW_RUN.id] ? `${fmtTime(jobStats.bestTimes[SPARROW_RUN.id])} (par ${fmtTime(SPARROW_RUN.par ?? 120)})` : "—"}</b></div>
+            <div className="phone-row"><span>🎣 Fishing derby</span><b>{jobStats.derbyBest > 0 ? `best $${jobStats.derbyBest.toLocaleString()} · ${jobStats.derbyWins} won` : "—"}</b></div>
+            <div className="phone-row"><span>🐟 Best catch</span><b>{jobStats.bestFish ? `${jobStats.bestFish.name} · ${jobStats.bestFish.cm}cm (${jobStats.fishCaught} caught)` : "—"}</b></div>
+            <p className="phone-note">Race bests sync to the harbour leaderboard when the multiplayer service is configured (Jobs app) — the same board the Python service keeps. Drift scores stay in this book: the service's board ranks race TIMES, and a points total isn't a time.</p>
             <div className="phone-row"><span>Stamina now</span><b>{Math.round(G.stamina)}%</b></div>
             <div className="phone-row"><span>Lifetime earned</span><b>${G.lifetimeEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Fines &amp; fees paid</span><b>${G.finesPaid.toLocaleString()}</b></div>
+            <div className="phone-row"><span>👁 Patrol evidence</span><b>{HEAT.evidence}/100{HEAT.evidence >= 25 ? ` · wanted floor ${evidenceFloor()}★` : ""}{HEAT.evidence > 0 || G.wanted > 0 ? ` · Fixer quotes $${bribeCost().toLocaleString()}` : ""}</b></div>
+            <p className="phone-note">Evidence is what the patrol can pin on you. Every crime they learn about adds to the file — running a ped down +20, gunfire or robbery +15, assault +10, car theft +8, theft +6, a witnessed crash +5, reckless driving +4. At 25 / 50 / 75 evidence the next reported crime starts you at a 1★ / 2★ / 3★ floor, and the patrol searches longer before each star falls (11 s + 0.08 s per point). Stay clean AND unseen for 30 s and the file thins at 1 pt per 4 s; a haircut at Sable Cuts or a change of clothes at a wardrobe or Thread &amp; Tide thins it 4× as fast for 2 minutes. Busted or wasted halves it; the $100 surrender doesn't — a fine isn't time served. Marek Doss, the Fixer in Contacts (after Ch.2), burns the whole file for the quote above — once a day, never while the patrol has eyes on you. One honest limit: a fresh look fools nobody's memory. Witnesses and patrol recognise the act, never the outfit — this game has no appearance-based recognition to reset, so changing your look only thins the file, exactly as written here.</p>
             <div className="phone-row"><span>Cars in garages</span><b>{G.storedCars.length}</b></div>
-            <div className="phone-row"><span>Weapons owned</span><b>{Object.values(G.weaponOwned).filter(Boolean).length}/5</b></div>
+            <div className="phone-row"><span>Weapons owned</span><b>{Object.values(G.weaponOwned).filter(Boolean).length}/6</b></div>
             <h3 className="phone-subhead">Honest work</h3>
             <div className="phone-row"><span>Taxi</span><b>{jobStats.taxiFares} fares · ${jobStats.taxiEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Deliveries</span><b>{jobStats.deliveries} legs · ${jobStats.deliveryEarned.toLocaleString()}</b></div>
@@ -509,6 +683,8 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="phone-row"><span>Farm work</span><b>{jobStats.farmLoads} loads · ${jobStats.farmEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Valet</span><b>{jobStats.valetJobs} parks · ${jobStats.valetEarned.toLocaleString()}</b></div>
             <div className="phone-row"><span>Courier</span><b>{jobStats.courierDrops} drops · ${jobStats.courierEarned.toLocaleString()}</b></div>
+            <div className="phone-row"><span>Paramedic</span><b>{jobStats.patientsDelivered} patients · {jobStats.medShifts} shifts</b></div>
+            <div className="phone-row"><span>Firefighter</span><b>{jobStats.firesOut} fires out · {jobStats.fireShifts} shifts</b></div>
             <div className="phone-row"><span>Fishing</span><b>{jobStats.fishCaught} caught · ${jobStats.fishEarned.toLocaleString()}{jobStats.bestFish ? ` · best ${jobStats.bestFish.name} ${jobStats.bestFish.cm}cm` : ""}{jobStats.derbyBest > 0 ? ` · derby best $${jobStats.derbyBest} (${jobStats.derbyWins} won)` : ""}</b></div>
             <div className="phone-row"><span>Portfolio</span><b>${portfolioValue().toFixed(0)} ({portfolioPL() >= 0 ? "+" : "−"}${Math.abs(portfolioPL()).toFixed(0)})</b></div>
             <div className="phone-row"><span>Business income</span><b>${dailyIncomeTotal().toLocaleString()}/day</b></div>
@@ -520,20 +696,45 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
           </div>
         )}
 
-        {app === "music" && (
-          <div className="phone-page">
-            <h3>SableSounds</h3>
-            <div className="music-card">
-              <div className="music-disc">{playing ? "◉" : "♪"}</div>
-              <b>Port Sable Sunset</b>
-              <small>The Harborfall opening theme — original recording</small>
-              <button type="button" className="phone-play" onClick={() => {
-                if (playing) { stopMenuTheme(); setPlaying(false); } else { startMenuTheme(); setPlaying(true); }
-              }}>{playing ? "Stop theme" : "Play theme"}</button>
+        {app === "music" && (() => {
+          // Phase 35: SABLE TUNES — the phone is the game's music
+          // source. State lives in game/tunes.ts; this block renders
+          // on the phone's 1 s tick, which is also the elapsed clock.
+          const def = tuneDef(TUNES_STATE.track);
+          const el = tunesElapsed();
+          const loopPos = def.loopSeconds > 0 ? (el % def.loopSeconds) / def.loopSeconds : 0;
+          const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+          return (
+            <div className="phone-page">
+              <h3>Sable Tunes</h3>
+              <div className="music-card">
+                <div className="music-disc">{TUNES_STATE.playing && !tunesSuspended() ? "◉" : "♪"}</div>
+                <b>{def.name}</b>
+                <small>{def.sub} · {def.bpm} BPM · loops every {def.loopSeconds.toFixed(1)}s</small>
+                <div className="phone-stat-bar" style={{ margin: "8px 0" }}><div style={{ width: `${Math.round(loopPos * 100)}%` }} /></div>
+                <small>{TUNES_STATE.playing ? `Elapsed ${mmss(el)} · loop ${mmss(el % def.loopSeconds)} of ${mmss(def.loopSeconds)}` : "Stopped — a loop has no total length, so the bar shows position inside the loop, not progress to an end."}</small>
+                {tunesSuspended() && <p className="phone-tip">⏸ Held by the room you're in — its own system has the speakers (Club Solace's rig, the diner's jukebox). This track resumes when you step out.</p>}
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8 }}>
+                  <button type="button" className="phone-toggle" onClick={() => { stepTune(-1); setTick((v) => v + 1); }}>⏮ Prev</button>
+                  <button type="button" className="phone-play" onClick={() => {
+                    if (TUNES_STATE.playing) pauseTunes(); else playTune(TUNES_STATE.track);
+                    setTick((v) => v + 1);
+                  }}>{TUNES_STATE.playing ? "⏸ Pause" : "▶ Play"}</button>
+                  <button type="button" className="phone-toggle" onClick={() => { stepTune(1); setTick((v) => v + 1); }}>Next ⏭</button>
+                </div>
+              </div>
+              {TUNES.map((t) => (
+                <div key={t.id} className="phone-row">
+                  <span>{t.id === TUNES_STATE.track ? "♪ " : ""}{t.name}<br /><small>{t.bpm} BPM · loop {t.loopSeconds.toFixed(1)}s</small></span>
+                  <button type="button" className="phone-toggle" onClick={() => { playTune(t.id); setTick((v) => v + 1); }}>
+                    {t.id === TUNES_STATE.track && TUNES_STATE.playing ? "Playing" : "Play"}
+                  </button>
+                </div>
+              ))}
+              <p className="phone-tip">Every track is an original WebAudio composition, synthesised live — no audio files. Port Sable Sunset also plays on the title screen, as always. N mutes everything (there is no separate volume setting; mute is the game's one audio switch, and Tunes rides it like the theme and the club do).</p>
             </div>
-            <p className="phone-tip">The theme also plays on the title screen. N mutes everything.</p>
-          </div>
-        )}
+          );
+        })()}
         {app === "garage" && (
           <div className="phone-page">
             <h3>Garage</h3>
@@ -588,6 +789,7 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
             <div className="bank-row"><span>Ray-traced reflections (High tier)</span>
               <button type="button" className="phone-toggle" onClick={() => setSetting({ reflFx: !G.settings.reflFx })}>{G.settings.reflFx ? "On" : "Off"}</button></div>
             <p className="phone-tip">On High, reflections are ray-traced-style: screen-space reflections on wet streets, glass and paint, plus a mirrored bay. A browser has no hardware ray tracing — this is the real-time stack web games use instead.</p>
+            <p className="phone-tip">Low is the weak-phone preset: no post-processing, no shadows (the city looks flatter — that's the trade), resolution capped at native 1.0, ambient traffic and crowds capped at half whatever the density levers below say, and harbour wildlife updating at half rate. The resolution governor never goes above your tier's cap.</p>
             <h3 className="phone-subhead">World — density & view</h3>
             <div className="bank-row"><span>Traffic density</span>
               <span className="phone-seg">
@@ -630,9 +832,36 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
               <button type="button" className="phone-toggle" onClick={() => setSetting({ subBarks: !G.settings.subBarks })}>{G.settings.subBarks ? "On" : "Off"}</button></div>
             <div className="bank-row"><span>Letterbox bars</span>
               <button type="button" className="phone-toggle" onClick={() => setSetting({ letterbox: !G.settings.letterbox })}>{G.settings.letterbox ? "On" : "Off"}</button></div>
+            <h3 className="phone-subhead">Music</h3>
+            <div className="bank-row"><span>Ambient score</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ ambientScore: !G.settings.ambientScore })}>{G.settings.ambientScore ? "On" : "Off"}</button></div>
+            <p className="phone-tip">A quiet procedural score under free-roam, synthesised live: a pad bed in the opening theme's chords, a pluck layer that fades in as night falls, and a low pulse that enters at 3★ and quickens at 5★. Your Sable Tunes tracks and the rooms (Club Solace's rig, the diner jukebox) always outrank it — it falls silent while they play and comes back when they finish. The N key mutes it with everything else. Off = the game sounds exactly as it did before.</p>
+            <h3 className="phone-subhead">Assists & accessibility</h3>
+            <div className="bank-row"><span>Drive assist</span>
+              <span className="phone-seg">
+                {(["off", "light", "full"] as const).map((a) => (
+                  <button key={a} type="button" className={`phone-seg-btn ${G.settings.driveAssist === a ? "active" : ""}`} onClick={() => setSetting({ driveAssist: a })}>{a}</button>
+                ))}
+              </span></div>
+            <div className="bank-row"><span>Aim assist</span>
+              <span className="phone-seg">
+                {(["off", "soft", "strong"] as const).map((a) => (
+                  <button key={a} type="button" className={`phone-seg-btn ${G.settings.aimAssist === a ? "active" : ""}`} onClick={() => setSetting({ aimAssist: a })}>{a}</button>
+                ))}
+              </span></div>
+            <div className="bank-row"><span>Colourblind-safe HUD</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ colorblindHud: !G.settings.colorblindHud })}>{G.settings.colorblindHud ? "On" : "Off"}</button></div>
+            <div className="bank-row"><span>Reduced flash</span>
+              <button type="button" className="phone-toggle" onClick={() => setSetting({ reducedFlash: !G.settings.reducedFlash })}>{G.settings.reducedFlash ? "On" : "Off"}</button></div>
+            <p className="phone-tip">Drive assist smooths steering at speed (cars and bikes — keyboard, stick, touch and gyro alike); Full also eases the camera back behind your car when you stop orbiting. It never changes top speed, grip or drift scoring. Aim assist is magnetism while free-aiming: your shot leans part-way toward the nearest person in a small cone — never a lock-on, and never through a wall. Hip fire is unassisted. The colourblind-safe HUD recolours only the HUD and map markers (police, targets, money, event badges) from a colourblind-safe palette — the city itself doesn't change. Reduced flash softens lightning and muzzle flashes. Every default is Off — the game plays exactly as before until you turn one on. Subtitle size lives under Subtitles, above.</p>
             <button type="button" className="phone-row" onClick={onChangeCharacter}>
               <span><b>Change character</b><small>Pick who you play as in Port Sable</small></span><span>›</span>
             </button>
+            <h3 className="phone-subhead">Multiplayer</h3>
+            <div className="bank-row"><span>Display name</span>
+              <input type="text" className="phone-text-input" value={G.settings.mpName} maxLength={24} autoComplete="off"
+                onChange={(e) => setSetting({ mpName: e.target.value })} aria-label="Multiplayer display name" /></div>
+            <p className="phone-tip">Shown over your character to players in your multiplayer room, and on your room-chat lines. Applies next time you join a room. The server trims it to 24 plain characters — names are decoration, never identity.</p>
             <h3 className="phone-subhead">Personal theme</h3>
             {THEMES.map((t) => (
               <button key={t.id} type="button" className={`phone-row ${t.id === theme.id ? "active" : ""}`} onClick={() => applyTheme(t)}>
@@ -640,6 +869,23 @@ export default function Phone({ open, onClose, theme, applyTheme, onOpenMap, onC
                 <span><b>{t.name}</b><small>{t.blurb}</small></span>{t.id === theme.id && <span>✓</span>}
               </button>
             ))}
+            <h3 className="phone-subhead">About &amp; credits</h3>
+            <div className="bank-row"><span><b>HARBORFALL</b></span><b>v3.0 — Complete Edition</b></div>
+            <p className="phone-tip">An original open-world game set in Port Sable — an original city, story, cast and fleet. Any resemblance to other harbour cities, real or fictional, is the tide's doing. Created with Muse, for Mostakim.</p>
+            <div className="bank-row"><span>Rayan Kade</span><b>the driver</b></div>
+            <div className="bank-row"><span>Tamim Kade</span><b>the brother</b></div>
+            <div className="bank-row"><span>Victor Solano</span><b>the ledger</b></div>
+            <div className="bank-row"><span>Det. Mara Voss</span><b>harbour patrol</b></div>
+            <div className="bank-row"><span>Lina Park</span><b>the mechanic</b></div>
+            <div className="bank-row"><span>Old Elias</span><b>the fisherman</b></div>
+            <div className="bank-row"><span>Ines Marlo</span><b>the Harbour Wire</b></div>
+            <div className="bank-row"><span>Petra Vane</span><b>the Eastmere Diner</b></div>
+            <div className="bank-row"><span>Marek Doss</span><b>the Fixer</b></div>
+            <div className="bank-row"><span>Ana Ruiz</span><b>Sable Lets</b></div>
+            <div className="bank-row"><span>Ren</span><b>harbour dispatch</b></div>
+            <p className="phone-tip">Built on Three.js / React Three Fiber (web + desktop), a C++17 physics core mirrored exactly in TypeScript, and a Python FastAPI service for leaderboards and session multiplayer. The world tools are C#/.NET (source in tools/).</p>
+            <p className="phone-tip">The honest print: everything you see and hear is procedural — modelled, textured and synthesised in code; no scanned people, places or cars, and the characters are realistic-styled procedural figures, not photographs. Reflections are ray-traced-style screen-space and planar work (a browser has no hardware ray tracing). Multiplayer is session-based rooms on a self-hosted server — no accounts. The dolphins follow a scripted route; the interiors are hand-built pocket rooms.</p>
+            <p className="phone-tip">Port Sable thanks you for playing. 🚢</p>
           </div>
         )}
         <button type="button" className="phone-homebar" aria-label="Close phone" onClick={onClose} />

@@ -27,9 +27,12 @@ const GUN_ITEMS: GunItem[] = [
   { label: "Baseball bat", price: 150, apply: () => { G.weaponOwned.bat = true; G.weaponSel = "bat"; } },
   { label: "SMG", price: 650, apply: () => { G.weaponOwned.smg = true; G.weaponAmmo.smg = Math.min(240, G.weaponAmmo.smg + 60); G.weaponSel = "smg"; } },
   { label: "Shotgun", price: 450, apply: () => { G.weaponOwned.shotgun = true; G.weaponAmmo.shotgun = Math.min(240, G.weaponAmmo.shotgun + 12); G.weaponSel = "shotgun"; } },
+  // Phase 33: the Kestrel Carbine — Sable Arms' own mid-tier automatic
+  { label: "Kestrel Carbine", price: 950, apply: () => { G.weaponOwned.carbine = true; G.weaponAmmo.carbine = Math.min(240, G.weaponAmmo.carbine + 40); G.weaponSel = "carbine"; } },
   { label: "Pistol ammo ×24", price: 60, apply: () => { G.weaponAmmo.pistol = Math.min(240, G.weaponAmmo.pistol + 24); } },
   { label: "SMG ammo ×60", price: 90, apply: () => { G.weaponAmmo.smg = Math.min(240, G.weaponAmmo.smg + 60); } },
   { label: "Shotgun shells ×12", price: 70, apply: () => { G.weaponAmmo.shotgun = Math.min(240, G.weaponAmmo.shotgun + 12); } },
+  { label: "Carbine rounds ×40", price: 80, apply: () => { G.weaponAmmo.carbine = Math.min(240, G.weaponAmmo.carbine + 40); } },
   // ---- Phase 9 weapon mods: bought once, fitted forever (persisted).
   // Effects are real and applied in Combat's spec builder. ----
   { label: "Pistol suppressor — quiet shots, witnesses only", price: 300, owned: () => WMOD.suppPistol, apply: () => { WMOD.suppPistol = true; persistWmod(); } },
@@ -37,6 +40,9 @@ const GUN_ITEMS: GunItem[] = [
   { label: "Pistol match sights — tighter, longer reach", price: 220, owned: () => WMOD.sightsPistol, apply: () => { WMOD.sightsPistol = true; persistWmod(); } },
   { label: "SMG extended mag + match barrel — faster, tighter", price: 350, owned: () => WMOD.magSmg, apply: () => { WMOD.magSmg = true; persistWmod(); } },
   { label: "Shotgun choke — tighter spread, longer reach", price: 260, owned: () => WMOD.chokeShotgun, apply: () => { WMOD.chokeShotgun = true; persistWmod(); } },
+  // ---- Phase 33: the carbine's fittings — same bench, same rules ----
+  { label: "Carbine suppressor — quiet shots, witnesses only", price: 420, owned: () => WMOD.suppCarbine, apply: () => { WMOD.suppCarbine = true; persistWmod(); } },
+  { label: "Carbine match grip + long barrel — tighter, longer, softer", price: 390, owned: () => WMOD.gripCarbine, apply: () => { WMOD.gripCarbine = true; persistWmod(); } },
 ];
 
 export default function Interactions() {
@@ -74,7 +80,7 @@ export default function Interactions() {
           sfx.click();
         }
         eDownAt.current = -1;
-        if (G.hold?.label.startsWith("Robbing") || G.hold?.label.startsWith("Buying")) G.hold = null;
+        if (G.hold?.label.startsWith("Robbing") || G.hold?.label.startsWith("Buying") || G.hold?.label.startsWith("Paying") || G.hold?.label.startsWith("Selling")) G.hold = null;
       }
     };
     window.addEventListener("keydown", down);
@@ -182,7 +188,7 @@ export default function Interactions() {
               sfx.register();
             }
           }
-        } else if (G.hold?.label.startsWith("Buying")) G.hold = null;
+        } else if (G.hold?.label.startsWith("Buying") || G.hold?.label.startsWith("Paying") || G.hold?.label.startsWith("Selling")) G.hold = null;
 
         if (pickIdx >= 0) {
           const victim = G.peds[pickIdx];

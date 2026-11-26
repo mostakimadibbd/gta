@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, addCrime, toast, syncWeaponMirrors, type WeaponKind } from "../game/store";
-import { MANSION, GUN_STORE } from "../world";
+import { MANSION, GUN_STORE, isBlocked } from "../world";
 import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
 import { isInteractiveTarget } from "../keyboard";
@@ -24,6 +24,14 @@ const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   pistol: { cd: 0.26, range: 32, perp: 0.85, spreadRad: 0, carDmg: 8, pedDown: 5, pellets: 1, recoil: 0.05, sfxFire: () => sfx.shot() },
   smg: { cd: 0.095, range: 30, perp: 1.7, spreadRad: 0.055, carDmg: 4, pedDown: 4, pellets: 1, recoil: 0.03, sfxFire: () => sfx.smg() },
   shotgun: { cd: 0.85, range: 17, perp: 1.1, spreadRad: 0.17, carDmg: 5, pedDown: 6, pellets: 5, recoil: 0.17, sfxFire: () => sfx.blast() },
+  // Phase 33: the KESTREL CARBINE — an original Sable Arms mid-tier
+  // automatic between the SMG and the shotgun in role: slower cycle
+  // than the SMG (0.14 vs 0.095) but longer reach (38 vs 30), a
+  // tighter cone and a heavier single hit. Ammo is PER-KIND in this
+  // build (G.weaponAmmo is keyed by weapon, there is no class pool
+  // and no rifle class), so the carbine carries its own pool, capped
+  // at 240 like the others — stated plainly, not dressed as shared.
+  carbine: { cd: 0.14, range: 38, perp: 1.1, spreadRad: 0.03, carDmg: 6, pedDown: 5, pellets: 1, recoil: 0.045, sfxFire: () => sfx.carbine() },
   // Phase 8 bat: fire() routes to swingBat() before this spec is used —
   // the entry exists so the Record stays complete (wider, slower, heavy)
   bat: { cd: 0.55, range: 2.6, perp: 1.5, spreadRad: 0, carDmg: 9, pedDown: 6, pellets: 1, recoil: 0.04, sfxFire: () => sfx.batSwing() },
@@ -37,9 +45,10 @@ function specFor(sel: WeaponKind): WeaponSpec {
   if (sel === "pistol" && WMOD.sightsPistol) return { ...base, perp: 0.6, range: 38 };
   if (sel === "smg" && WMOD.magSmg) return { ...base, cd: 0.08, spreadRad: 0.038 };
   if (sel === "shotgun" && WMOD.chokeShotgun) return { ...base, spreadRad: 0.1, range: 21 };
+  if (sel === "carbine" && WMOD.gripCarbine) return { ...base, spreadRad: 0.018, range: 44, recoil: 0.03 };
   return base;
 }
-const suppressedFor = (sel: WeaponKind) => (sel === "pistol" && WMOD.suppPistol) || (sel === "smg" && WMOD.suppSmg);
+const suppressedFor = (sel: WeaponKind) => (sel === "pistol" && WMOD.suppPistol) || (sel === "smg" && WMOD.suppSmg) || (sel === "carbine" && WMOD.suppCarbine);
 interface Pickup { x: number; z: number; kind: WeaponKind; ammo: number; label: string; }
 const PICKUPS: Pickup[] = [
   { x: MANSION.x - 4.5, z: MANSION.z + 6.5, kind: "pistol", ammo: 24, label: "Pistol" }, // mansion drive
@@ -49,6 +58,7 @@ const PICKUPS: Pickup[] = [
   { x: 74, z: -68, kind: "bat", ammo: 0, label: "Baseball bat" },                        // Phase 8: Lantern Park, by the outdoor gym
   { x: 47, z: 108, kind: "bottle", ammo: 6, label: "Bottles" },                         // Phase 9: crate of empties by Club Solace
   { x: 10, z: 118, kind: "bottle", ammo: 6, label: "Bottles" },                         // Phase 9: pier-side crate
+  { x: -75.5, z: 96.5, kind: "carbine", ammo: 40, label: "Kestrel Carbine" },           // Phase 33: the mansion drive's east end — the same proven-open strip as the pistol pickup (point-tested in the placement audit)
 ];
 const RESPAWN_S = 60;
 
@@ -70,6 +80,11 @@ export default function Combat({ enabled }: { enabled: boolean }) {
   const camera = useThree((s) => s.camera);
   const camRef = useRef(camera); camRef.current = camera;
   const suppressedFx = useRef(false);
+  // Phase 33: suppression heat (timestamps of recent shots, the
+  // stacking/decay model lives in fire()) + the last weapon fired
+  // (the FX block tints the carbine's flash/tracer teal).
+  const recentShots = useRef<number[]>([]);
+  const lastFired = useRef<WeaponKind>("pistol");
 
   useEffect(() => {
     const canAttack = () => enabledRef.current && !G.driving && !G.dialogueActive && !G.status && !G.interior;
@@ -221,6 +236,51 @@ export default function Combat({ enabled }: { enabled: boolean }) {
         if (len > 0.05) base = { x: d.x / len, z: d.z / len };
       }
       const px = G.playerPos.x, pz = G.playerPos.z;
+      // ---- Phase 44: AIM ASSIST (Settings → Assists) — magnetism,
+      // NOT lock-on. The combat model is hitscan along a direction:
+      // fire() resolves each pellet against a perpendicular corridor
+      // around the shot ray (knockPed), so the honest place to help
+      // is the ray itself. While FREE-AIMING (G.aiming — the mode
+      // with a crosshair), the shot direction is pulled part-way
+      // toward the nearest standing ped inside a small cone around
+      // it (Soft: ~5.7° cone, 45% pull; Strong: ~11°, 70% pull),
+      // provided the segment to that ped is clear of the blocker
+      // set — the same isBlocked AABBs the cover system and the
+      // camera guard read, so the assist never bends a shot around
+      // or through a wall, never snaps the remaining distance, and
+      // never tracks: it adjusts THIS shot's direction once, at the
+      // trigger pull, by a fraction of the offset. Hip fire (not
+      // aiming) follows the character's facing and is never
+      // assisted. Off (the default) skips the block entirely. ----
+      if (G.aiming && G.settings.aimAssist !== "off") {
+        const strong = G.settings.aimAssist === "strong";
+        const cone = strong ? 0.19 : 0.10;
+        const pull = strong ? 0.7 : 0.45;
+        const baseAng = Math.atan2(base.x, base.z);
+        let bestDist = Infinity, bestOff = 0, found = false;
+        for (const ped of G.peds) {
+          if (!ped.active || G.timeS < ped.downUntil) continue;
+          const dx = ped.x - px, dz = ped.z - pz;
+          const dist = Math.hypot(dx, dz);
+          if (dist < 1 || dist > spec.range) continue;
+          let da = Math.atan2(dx, dz) - baseAng;
+          da = Math.atan2(Math.sin(da), Math.cos(da)); // wrap to [-π, π]
+          if (Math.abs(da) > cone) continue;
+          // line of sight: sample the segment against the blockers
+          let blocked = false;
+          const steps = Math.ceil(dist / 1.2);
+          for (let s = 1; s < steps; s++) {
+            const k2 = s / steps;
+            if (isBlocked(px + dx * k2, pz + dz * k2, 0.3)) { blocked = true; break; }
+          }
+          if (blocked) continue;
+          if (dist < bestDist) { bestDist = dist; bestOff = da; found = true; }
+        }
+        if (found) {
+          const na = baseAng + bestOff * pull;
+          base = { x: Math.sin(na), z: Math.cos(na) };
+        }
+      }
       const mx = px + base.x * 0.55, mz = pz + base.z * 0.55;
       // Shooting skill ≥50 tightens every cone by 15% (A7)
       const skillMul = G.skills.shooting >= 50 ? 0.85 : 1;
@@ -252,6 +312,37 @@ export default function Combat({ enabled }: { enabled: boolean }) {
           if (ped.active && (ped.x - fxHit.x) ** 2 + (ped.z - fxHit.z) ** 2 < 3.2 ** 2) ped.flinchUntil = Math.max(ped.flinchUntil ?? 0, G.timeS + 0.3);
         }
       }
+      // ---- Phase 33: SUPPRESSION-LITE. A shot that hits nobody can
+      // still break the nerve of everyone near it. The model, in the
+      // open: peds inside the NEAR-MISS band (within 4.5u of where
+      // the shot ended) roll to flee at 50%; peds who only HEAR it
+      // (within 11u of the muzzle) roll at 18%. SUSTAINED fire
+      // stacks — each other shot inside the last 3 s adds +10% (cap
+      // +30%) — and the shot list ageing out IS the decay. A
+      // suppressed weapon halves both chances (quieter — the same
+      // fiction the soft crime path uses). A ped who breaks flees
+      // 5–8 s through the ordinary fleeUntil channel; downed peds
+      // don't roll. Police pressure is deliberately NOT modelled
+      // here: every shot already flows through the one witness path
+      // (addCrime → applyCrime → Phase 29 heat), and this pass adds
+      // no crime, no wanted and no evidence of its own.
+      {
+        recentShots.current = recentShots.current.filter((s) => t - s < 3);
+        const heatBonus = Math.min(0.3, recentShots.current.length * 0.1);
+        recentShots.current.push(t);
+        const endX = fxHit ? fxHit.x : px + base.x * spec.range;
+        const endZ = fxHit ? fxHit.z : pz + base.z * spec.range;
+        const quiet = suppressed ? 0.5 : 1;
+        for (const ped of G.peds) {
+          if (!ped.active || G.timeS < ped.downUntil) continue;
+          const nearMiss = (ped.x - endX) ** 2 + (ped.z - endZ) ** 2 < 4.5 ** 2;
+          const heard = (ped.x - px) ** 2 + (ped.z - pz) ** 2 < 11 ** 2;
+          if (!nearMiss && !heard) continue;
+          if (Math.random() < ((nearMiss ? 0.5 : 0.18) + heatBonus) * quiet)
+            ped.fleeUntil = Math.max(ped.fleeUntil ?? 0, G.timeS + 5 + Math.random() * 3);
+        }
+      }
+      lastFired.current = sel;
       G.shotFx = { t, mx, mz, hx: fxHit ? fxHit.x : px + base.x * 30, hz: fxHit ? fxHit.z : pz + base.z * 30, hit: anyHit };
       // Phase 9: a suppressed shot is only as known as its witnesses
       addCrime("shoot", suppressed);
@@ -287,8 +378,9 @@ export default function Combat({ enabled }: { enabled: boolean }) {
 
   useFrame(() => {
     const t = performance.now() / 1000;
-    // SMG full-auto: keep firing while the trigger is held (A6)
-    if ((held.current.mouse || held.current.j) && G.weaponSel === "smg" && enabledRef.current
+    // SMG full-auto: keep firing while the trigger is held (A6).
+    // Phase 33: the carbine is an automatic too — same held fire.
+    if ((held.current.mouse || held.current.j) && (G.weaponSel === "smg" || G.weaponSel === "carbine") && enabledRef.current
       && !G.driving && !G.dialogueActive && !G.status && !G.interior) fireRef.current();
     // weapon pickups: spin + bob; walking over one arms Rayan
     PICKUPS.forEach((pk, i) => {
@@ -319,26 +411,43 @@ export default function Combat({ enabled }: { enabled: boolean }) {
     // shot FX: muzzle flash (60ms), tracer (80ms), impact sparks (120ms)
     const fx = G.shotFx;
     const age = t - fx.t;
+    // Phase 33: the carbine's flash/light/tracer burn harbour TEAL
+    // (the palette's second colour); every other weapon keeps the
+    // warm amber. Tints are set from the last weapon actually fired.
+    const tint = lastFired.current === "carbine"
+      ? { flash: "#a8e6da", light: "#7fd8c8", tracer: "#b8f0e4" }
+      : { flash: "#ffca7a", light: "#ffca7a", tracer: "#ffe9a8" };
+    // Phase 44: REDUCED FLASH softens this whole shot-flash cluster
+    // at its existing sites — the flash sprite burns dimmer and
+    // smaller, the pooled light caps at a quarter of its peak, and
+    // the impact sparks fade — same durations, no new effects.
+    const softFlash = G.settings.reducedFlash;
     if (flashRef.current) {
       const on = age >= 0 && age < 0.06 && G.armed && !suppressedFx.current;
       flashRef.current.visible = on;
-      if (on) flashRef.current.position.set(fx.mx, 1.35, fx.mz);
+      if (on) {
+        flashRef.current.position.set(fx.mx, 1.35, fx.mz);
+        const fm = flashRef.current.material as THREE.SpriteMaterial;
+        fm.color.set(tint.flash); fm.opacity = softFlash ? 0.35 : 0.95;
+        const fs = softFlash ? 0.5 : 0.85; flashRef.current.scale.set(fs, fs, 1);
+      }
     }
     // pooled muzzle-flash point light (player only — Combat is player-only)
     if (muzzleLight.current) {
       const on = age >= 0 && age < 0.05 && G.armed && !suppressedFx.current;
-      muzzleLight.current.intensity = on ? 26 : Math.max(0, muzzleLight.current.intensity - 300 * 0.016);
-      if (on) muzzleLight.current.position.set(fx.mx, 1.4, fx.mz);
+      muzzleLight.current.intensity = on ? (softFlash ? 7 : 26) : Math.max(0, muzzleLight.current.intensity - 300 * 0.016);
+      if (on) { muzzleLight.current.position.set(fx.mx, 1.4, fx.mz); muzzleLight.current.color.set(tint.light); }
     }
     if (sparkRef.current) {
       const on = age >= 0 && age < 0.12 && fx.hit;
       sparkRef.current.visible = on;
-      if (on) sparkRef.current.position.set(fx.hx, 0.9, fx.hz);
+      if (on) { sparkRef.current.position.set(fx.hx, 0.9, fx.hz); (sparkRef.current.material as THREE.SpriteMaterial).opacity = softFlash ? 0.4 : 0.9; }
     }
     if (tracerRef.current) {
       const on = age >= 0 && age < 0.08 && G.armed;
       tracerRef.current.visible = on;
       if (on) {
+        (tracerRef.current.material as THREE.LineBasicMaterial).color.set(tint.tracer);
         const pos = tracerRef.current.geometry.getAttribute("position") as THREE.BufferAttribute;
         pos.setXYZ(0, fx.mx, 1.35, fx.mz);
         pos.setXYZ(1, fx.hx, 0.9, fx.hz);
@@ -368,6 +477,19 @@ export default function Combat({ enabled }: { enabled: boolean }) {
                   <mesh position={[0, 0.28, 0]}><cylinderGeometry args={[0.03, 0.06, 0.16, 8]} /><meshStandardMaterial color="#2e6b46" roughness={0.25} metalness={0.1} /></mesh>
                 </group>
               ))}
+            </group>
+          ) : pk.kind === "carbine" ? (
+            /* Phase 33: the Kestrel Carbine — its own silhouette: a
+               long receiver, a curved magazine, a skeleton stock and
+               a teal sight dot (Sable Arms' house colour) */
+            <group>
+              <mesh position={[0, -0.05, 0.1]} rotation={[0.5, 0, 0]} castShadow><boxGeometry args={[0.07, 0.22, 0.09]} /><meshStandardMaterial color="#22262b" metalness={0.6} roughness={0.35} /></mesh>
+              <mesh position={[0, 0.05, -0.02]} castShadow><boxGeometry args={[0.065, 0.09, 0.72]} /><meshStandardMaterial color="#2f3a3d" metalness={0.7} roughness={0.3} /></mesh>
+              <mesh position={[0, 0.03, 0.38]}><boxGeometry args={[0.04, 0.045, 0.14]} /><meshStandardMaterial color="#14161a" metalness={0.6} roughness={0.4} /></mesh>
+              <mesh position={[0, -0.13, 0.12]} rotation={[0.28, 0, 0]}><boxGeometry args={[0.05, 0.24, 0.09]} /><meshStandardMaterial color="#1d2126" metalness={0.55} roughness={0.4} /></mesh>
+              <mesh position={[0, 0.02, -0.42]}><boxGeometry args={[0.055, 0.07, 0.22]} /><meshStandardMaterial color="#4a4238" roughness={0.75} /></mesh>
+              <mesh position={[0, 0.14, 0.05]}><boxGeometry args={[0.02, 0.05, 0.1]} /><meshStandardMaterial color="#14161a" metalness={0.6} roughness={0.4} /></mesh>
+              <mesh position={[0, 0.17, 0.05]}><sphereGeometry args={[0.016, 6, 6]} /><meshStandardMaterial color="#5ec8be" emissive="#2e8f86" emissiveIntensity={1.6} /></mesh>
             </group>
           ) : (<>
           {/* low-poly gun: grip + slide + barrel (longer for SMG/shotgun) */}

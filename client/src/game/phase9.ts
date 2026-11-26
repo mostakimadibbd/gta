@@ -62,7 +62,7 @@ export const TATTOO_PRICE = 60;
 // Weapon mods — bought once at Sable Arms, applied in Combat's spec
 // builder. Real stat effects, documented at the counter.
 // ------------------------------------------------------------------
-export const WMOD = { suppPistol: false, suppSmg: false, magSmg: false, sightsPistol: false, chokeShotgun: false };
+export const WMOD = { suppPistol: false, suppSmg: false, magSmg: false, sightsPistol: false, chokeShotgun: false, suppCarbine: false, gripCarbine: false }; // Phase 33: the Kestrel Carbine's two fittings join the same persisted record
 const WMOD_KEY = "harborfall-wpmods";
 export function persistWmod() { try { localStorage.setItem(WMOD_KEY, JSON.stringify(WMOD)); } catch { /* ignore */ } }
 try {
@@ -98,17 +98,34 @@ export const BOTTLE = { active: false, x: 0, y: -10, z: 0, vx: 0, vy: 0, vz: 0, 
 // ------------------------------------------------------------------
 // Photo gallery — Photo Mode shots are kept (downscaled JPEG) so the
 // phone Gallery app can show them later, not just download once.
+//
+// RESOLUTION CAP, stated plainly (Phase 35): the stored copy is
+// 320 px wide (height follows the canvas aspect), JPEG quality
+// 0.72 — roughly 15–35 KB a shot. Twelve shots (the keep limit)
+// cost well under 0.5 MB of the ~5 MB localStorage quota that every
+// other save key also lives in; a full-resolution PNG data URL
+// would run 1–4 MB EACH and evict real saves. The full-res PNG is
+// still the file Photo Mode downloads — the phone copy is a
+// thumbnail you can view full-screen in the app, not the master.
+// Shots saved before Phase 35 carry no district label (the `where`
+// field is absent); the Gallery shows the date alone for those
+// rather than guessing a district after the fact.
 // ------------------------------------------------------------------
-export interface GalleryPhoto { id: number; src: string; at: string; }
+// Phase 43: a shot that completes a Sable Postcard challenge is
+// stamped with the challenge's name (`challenge`) — The Wire bought
+// that one. Shots from before Phase 43 (and ordinary shots since)
+// carry no stamp; the Gallery shows the stamp only when present.
+export interface GalleryPhoto { id: number; src: string; at: string; where?: string; challenge?: string; }
 const GALLERY_KEY = "harborfall-gallery";
+export const GALLERY_LIMIT = 12;
 export function galleryList(): GalleryPhoto[] {
   try { return JSON.parse(localStorage.getItem(GALLERY_KEY) ?? "[]") as GalleryPhoto[]; } catch { return []; }
 }
-export function galleryAdd(src: string) {
+export function galleryAdd(src: string, where?: string, challenge?: string) {
   try {
     const list = galleryList();
-    list.unshift({ id: Date.now(), src, at: new Date().toLocaleString() });
-    localStorage.setItem(GALLERY_KEY, JSON.stringify(list.slice(0, 10)));
+    list.unshift({ id: Date.now(), src, at: new Date().toLocaleString(), where, challenge });
+    localStorage.setItem(GALLERY_KEY, JSON.stringify(list.slice(0, GALLERY_LIMIT)));
   } catch { /* quota — the download in App still happened */ }
 }
 export function galleryDelete(id: number) {

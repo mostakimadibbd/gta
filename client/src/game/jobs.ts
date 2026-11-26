@@ -5,6 +5,8 @@
 // map draws the GPS route to it. Stats persist in localStorage.
 import { depenetrateCar } from "./depenetrate"; // Phase 25: spawn guard
 import { G, LASTCAR, clearLastCar } from "./store";
+import { HOSPITAL_DOOR, FIRE_EXT_DOOR } from "../world"; // Phase 32: service doors
+import { INCIDENT_SPOTS } from "./dispatch"; // Phase 32: the dispatch sim's roadside spots, player-side
 
 export interface Poi { name: string; x: number; z: number; }
 
@@ -62,6 +64,9 @@ export interface JobStats {
   // ---- Phase 22: odd jobs board (valet + courier sprint) ----
   valetJobs: number; valetEarned: number;
   courierDrops: number; courierEarned: number;
+  // ---- Phase 32: service jobs (paramedic + firefighter) ----
+  patientsDelivered: number; medShifts: number;
+  firesOut: number; fireShifts: number; serviceEarned: number;
   // ---- Phase 24: fishing derby records (game/derby.ts) ----
   derbyBest: number;   // best single-derby score ($ of catch value)
   derbyWins: number;   // derbies won against the house score
@@ -73,6 +78,7 @@ export const jobStats: JobStats = {
   farmLoads: 0, farmEarned: 0,
   bestDrift: 0, driftBanked: 0, driftEarned: 0,
   valetJobs: 0, valetEarned: 0, courierDrops: 0, courierEarned: 0,
+  patientsDelivered: 0, medShifts: 0, firesOut: 0, fireShifts: 0, serviceEarned: 0,
   derbyBest: 0, derbyWins: 0,
 };
 try {
@@ -138,6 +144,27 @@ export interface RaceState {
   cup?: boolean;
 }
 
+// ----------------------------------------------------------------
+// Phase 34: THE SABLE SLIDE SERIES (drift championship, game/slide.ts)
+// A round is a gated course: drive the gates in order before the
+// clock dies AND bank at least `target` drift points on the way
+// (game/drift.ts banks — the series counts banks off DRIFT.bankSeq,
+// it never scores a slide itself). The run state mirrors RaceState.
+// ----------------------------------------------------------------
+export interface SlideRoundDef {
+  id: string; name: string; where: string;
+  start: [number, number]; gates: [number, number][];
+  target: number;   // banked drift points needed to pass
+  timeLimit: number; // seconds for the whole route
+}
+export interface SlideRunState {
+  def: SlideRoundDef; phase: "countdown" | "run"; goAt: number; startedAt: number;
+  gate: number;        // next gate index (=== gates.length once finished)
+  score: number;       // drift points banked since GO
+  bankSeq: number;     // DRIFT.bankSeq at the last count
+  left: number;        // seconds left, refreshed per frame for the marker label
+}
+
 // ---------------------------------------------------------------- state
 export const J = {
   // taxi
@@ -166,6 +193,12 @@ export const J = {
   // counts toward the championship. Consumed by whichever race starts
   // first (a non-Cup start simply discards it). ----
   cupArm: "",                     // race id, or "" when unarmed
+  // ---- Phase 34: SABLE SLIDE SERIES arm + live run (game/slide.ts,
+  // components/SlideSeries.tsx). The arm mirrors cupArm: set by the
+  // Series card in Phone → Jobs, consumed by the start prompt at the
+  // course ring. ----
+  slideArm: "",                   // slide round id, or "" when unarmed
+  slide: null as SlideRunState | null,
   // ---- Phase 8: tow shift (Lina's wrecker work) ----
   wantTow: false,                 // set by the phone Jobs app
   towPhase: "idle" as "idle" | "pickup" | "deliver",
@@ -195,7 +228,51 @@ export const J = {
   courierLeg: 0,                  // drops completed this chain (of 3)
   courierPoint: null as Poi | null,
   courierLeft: 0,                 // seconds left on this leg's countdown
+  // ---- Phase 32: SERVICE JOBS — PARAMEDIC + FIREFIGHTER. Flat
+  // fields in the house style; the frame logic lives in
+  // components/ServiceJobs.tsx. med: pickup → treat (hold-E channel
+  // on foot) → return, three patients a shift. fire: respond →
+  // hose (hold-E channel) → refill between fires, two fires a
+  // shift; fireSize is the live fire's strength 1→0 and fireWater
+  // the tender's tank 0–100. ----
+  medPhase: "idle" as "idle" | "pickup" | "treat" | "return",
+  medCarId: -1,                     // G.cars index of the job ambulance
+  medPatient: 0,                    // index of the current patient in MED_SPOTS (deliveries counted in ServiceJobs + jobStats)
+  medSpot: null as Poi | null,      // the live patient's spot
+  medTimer: 0, medTotal: 0,         // the current leg's clock / its budget (s)
+  medDmg0: 0,                       // ambulance damage when the leg began
+  medCollect: false,                // job over — collect the ambulance on step-out
+  firePhase: "idle" as "idle" | "respond" | "hose" | "refill",
+  fireCarId: -1,                    // G.cars index of the fire tender
+  fireN: 0,                         // index of the current fire in FIRE_SPOTS (fires out counted in ServiceJobs + jobStats)
+  fireSpot: null as Poi | null,     // the live fire's frontage point
+  fireSize: 0,                      // the live fire's strength, 1 → 0
+  fireWater: 100,                   // the tender's tank, 0–100
+  fireRefillAt: null as Poi | null, // the live refill point (hydrant / station)
+  fireCollect: false,               // job over — collect the tender on step-out
+  // ---- Phase 41: SUPPLY-SNAG ERRAND — when a business's morning
+  // event is a supply snag (game/economy.ts), the player can run
+  // stock from a depot back to the business door to restore the
+  // day's full takings. The delivery chain's shape (pickup →
+  // dropoff, arrival = close + stopped), one leg each way, $0 pay —
+  // it's your own stock. Frame logic lives in Phase7. ----
+  wantSnag: "",                     // business id requested (Bank app / door prompt)
+  snagPhase: "idle" as "idle" | "pickup" | "dropoff",
+  snagBiz: "",                      // business id the live run serves
+  snagPoint: null as Poi | null,    // the live leg's target
+  snagSerial: -1,                   // Phase 42 audit: ECO.daySerial the run started on — the run serves THAT day's snag only
 };
+
+/** Phase 41: the supply depots a snag run can draw from — the
+ * delivery pickup points minus Lina's Garage (a customer, not a
+ * supplier): the crane office, East Yards, Ferry Quarter, Market Row. */
+export const SNAG_DEPOTS: Poi[] = PICKUP_POINTS.slice(1);
+
+/** Phase 41: end the supply run (completed, expired, stood down —
+ * the caller decides the message). */
+export function endSnagRun() {
+  J.snagPhase = "idle"; J.snagBiz = ""; J.snagPoint = null; J.wantSnag = ""; J.snagSerial = -1;
+}
 
 /** The world point the job/race marker pillar + GPS route should show. */
 export function jobTarget(): { x: number; z: number; label: string } | null {
@@ -203,10 +280,18 @@ export function jobTarget(): { x: number; z: number; label: string } | null {
     const cp = J.race.def.cps[J.race.cp];
     if (cp) return { x: cp[0], z: cp[1], label: `${J.race.def.name} — checkpoint ${J.race.cp + 1}/${J.race.def.cps.length}` };
   }
+  if (J.slide && J.slide.phase === "run") {
+    const s = J.slide;
+    const gate = s.def.gates[Math.min(s.gate, s.def.gates.length - 1)];
+    if (gate) return { x: gate[0], z: gate[1], label: `Slide Series: ${s.def.name} — gate ${Math.min(s.gate + 1, s.def.gates.length)}/${s.def.gates.length} · ${s.score}/${s.def.target} pts · ${Math.max(0, Math.ceil(s.left))}s` };
+  }
   if (J.taxiPhase === "pickup" && J.fare) return { x: J.fare.x, z: J.fare.z, label: `Fare waiting — ${J.fare.name}${J.taxiType ? ` (${TAXI_TYPE_LABEL[J.taxiType]})` : ""}` };
   if (J.taxiPhase === "dropoff" && J.fareDest) return { x: J.fareDest.x, z: J.fareDest.z, label: `Fare → ${J.fareDest.name}` };
   if (J.delPhase !== "idle" && J.delPoint) {
     return { x: J.delPoint.x, z: J.delPoint.z, label: J.delPhase === "pickup" ? `Collect parcel — ${J.delPoint.name}` : `Deliver to — ${J.delPoint.name}` };
+  }
+  if (J.snagPhase !== "idle" && J.snagPoint) {
+    return { x: J.snagPoint.x, z: J.snagPoint.z, label: J.snagPhase === "pickup" ? `Supply run — collect stock at ${J.snagPoint.name}` : `Supply run — deliver the stock to ${J.snagPoint.name}` };
   }
   if (J.towPhase === "pickup" && J.towCarId >= 0) {
     const c = G.cars[J.towCarId];
@@ -223,12 +308,19 @@ export function jobTarget(): { x: number; z: number; label: string } | null {
   if (J.courierPhase === "run" && J.courierPoint) {
     return { x: J.courierPoint.x, z: J.courierPoint.z, label: `Courier — drop ${J.courierLeg + 1}/3 at ${J.courierPoint.name} (${Math.max(0, Math.ceil(J.courierLeft))}s)` };
   }
+  // ---- Phase 32: service jobs ----
+  if (J.medPhase === "pickup" && J.medSpot) return { x: J.medSpot.x, z: J.medSpot.z, label: `Paramedic — reach the patient at ${J.medSpot.name} (${Math.max(0, Math.ceil(J.medTimer))}s)` };
+  if (J.medPhase === "treat" && J.medSpot) return { x: J.medSpot.x, z: J.medSpot.z, label: "Paramedic — treat the patient (hold E beside them)" };
+  if (J.medPhase === "return") return { x: HOSPITAL_DOOR.x, z: HOSPITAL_DOOR.z, label: "Paramedic — back to the hospital bay" };
+  if (J.firePhase === "respond" && J.fireSpot) return { x: J.fireSpot.x, z: J.fireSpot.z, label: `Fire call — ${J.fireSpot.name}: get the tender in close` };
+  if (J.firePhase === "hose" && J.fireSpot) return { x: J.fireSpot.x, z: J.fireSpot.z, label: "Fire call — hose it down (hold E by the flames)" };
+  if (J.firePhase === "refill" && J.fireRefillAt) return { x: J.fireRefillAt.x, z: J.fireRefillAt.z, label: `Refill the tank — ${J.fireRefillAt.name}` };
   return null;
 }
 
 export const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 /** True while any job/race owns the player's attention (missions win). */
-export const jobBusy = () => J.taxiPhase !== "idle" || J.delPhase !== "idle" || !!J.race || J.towPhase !== "idle" || J.farmPhase !== "idle" || J.valetPhase !== "idle" || J.courierPhase !== "idle";
+export const jobBusy = () => J.taxiPhase !== "idle" || J.delPhase !== "idle" || !!J.race || !!J.slide || J.towPhase !== "idle" || J.farmPhase !== "idle" || J.valetPhase !== "idle" || J.courierPhase !== "idle" || J.medPhase !== "idle" || J.firePhase !== "idle" || J.snagPhase !== "idle";
 
 /** Phase 16 farm-work anchors: the loading spot in front of the barn
  * (barn blocker spans z −106.2…−99.8 at x −111.2…−102.8; (−100.5,−97.5)
@@ -410,3 +502,169 @@ export function settleFare(type: TaxiType | "", fare: number, elapsed: number, p
   if (!note) note = type === "chatty" ? "Talked the whole way — and tipped for the company" : "A clean harbour fare";
   return { tip, note };
 }
+
+// ================================================================
+// Phase 32: SERVICE JOBS — PARAMEDIC + FIREFIGHTER.
+// The dispatch sim (game/dispatch.ts) has sent NPC ambulances and
+// fire tenders to INCIDENT_SPOTS since Phase 7; these two shifts
+// put the PLAYER in the unit. Both run on the rental discipline
+// exactly (the valet/courier pattern above): the vehicle is a
+// dynamic, unowned G.cars entry spawned for the shift, never
+// stored, never the session's last car, collected at shift end —
+// immediately, or the moment the player steps out of it — and a
+// wreck ends the shift and stays in the world. The frame logic
+// (timers, channels, flames, siren, stand-downs) lives in
+// components/ServiceJobs.tsx; this module owns the state, the
+// spawn/collect/end paperwork and the E-claim the Vehicle key
+// handler consults. Payouts are computed in ServiceJobs through
+// effectivePayout's multiplier (ngPayoutMult), like every job.
+// ================================================================
+export const MED_PATIENTS_PER_SHIFT = 3;
+export const FIRES_PER_SHIFT = 2;
+export const MED_BASE_PAY = 110;        // per patient delivered
+export const MED_TIME_BONUS = 60;       // scaled by the return leg's remaining fraction
+export const MED_CLEAN_BONUS = 40;      // the ambulance took no damage on the patient's legs
+export const MED_SHIFT_BONUS = 100;     // all three patients delivered
+export const FIRE_BASE_PAY = 160;       // per fire out
+export const FIRE_SPEED_BONUS = 70;     // scaled by how fast the fire died
+export const FIRE_SHIFT_BONUS = 120;    // both fires out
+export const FIRE_TANK = 100;           // the tender's tank capacity
+export const FIRE_COST = 55;            // tank spent per fire — a refill is genuinely required before fire two
+export const FIRE_BURNOUT_S = 240;      // a fire left this long burns out unpaid
+/** The ambulance waits on the hospital lot, clear of the dispatch
+ * sim's rush-event parking at (−93, 108). */
+export const AMBULANCE_SPAWN = { x: -98.5, z: 106.5, heading: 0.9 };
+/** The tender waits on the civic lot west of the fire station,
+ * parallel to the same rush parking, clear of the hospital door. */
+export const FIRETRUCK_SPAWN = { x: -88, z: 108, heading: 0.15 };
+
+const distTo = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
+/** This shift's patients, nearest-first from the hospital — the
+ * escalation is distance: Ferry Quarter, the Docks strip, then
+ * Market Row. The spots are the dispatch sim's own roadside
+ * points, so a patient never waits somewhere a car can't reach. */
+export const MED_SPOTS: Poi[] = INCIDENT_SPOTS
+  .filter((s) => s.kinds.includes("medical"))
+  .map((s) => ({ name: s.label, x: s.x, z: s.z }))
+  .sort((a, b) => distTo(a, HOSPITAL_DOOR) - distTo(b, HOSPITAL_DOOR))
+  .slice(0, MED_PATIENTS_PER_SHIFT);
+/** This shift's fires, nearest-first from the fire station: the
+ * Ferry Quarter, then the south-west grid. */
+export const FIRE_SPOTS: Poi[] = INCIDENT_SPOTS
+  .filter((s) => s.kinds.includes("fire"))
+  .map((s) => ({ name: s.label, x: s.x, z: s.z }))
+  .sort((a, b) => distTo(a, FIRE_EXT_DOOR) - distTo(b, FIRE_EXT_DOOR))
+  .slice(0, FIRES_PER_SHIFT);
+
+/** True when the G.cars index is the live job ambulance or fire
+ * tender. Vehicle.tsx reads this so taking your own unit is never
+ * rolled as a steal or a break-in — the service hands you the keys. */
+export function isServiceCar(idx: number): boolean {
+  return idx >= 0 && (idx === J.medCarId || idx === J.fireCarId);
+}
+
+/** E-key ownership for the service channels (the Phase 24 boat-fish
+ * precedent): while the player stands in a live treat / hose /
+ * refill context on foot, E belongs to the channel in ServiceJobs,
+ * not to the service vehicle's door beside them. */
+export function serviceClaimsE(): boolean {
+  if (G.driving) return false;
+  if (J.medPhase === "treat" && J.medSpot && Math.hypot(G.playerPos.x - J.medSpot.x, G.playerPos.z - J.medSpot.z) < 2.6) return true;
+  if (J.firePhase === "hose" && J.fireSpot && Math.hypot(G.playerPos.x - J.fireSpot.x, G.playerPos.z - J.fireSpot.z) < 7) return true;
+  if (J.firePhase === "refill" && J.fireRefillAt && Math.hypot(G.playerPos.x - J.fireRefillAt.x, G.playerPos.z - J.fireRefillAt.z) < 3.4) return true;
+  return false;
+}
+
+function spawnServiceCar(kind: "ambulance" | "firetruck"): number {
+  const s = kind === "ambulance" ? AMBULANCE_SPAWN : FIRETRUCK_SPAWN;
+  G.cars.push({
+    id: 3200 + G.cars.length, x: s.x, z: s.z, heading: s.heading,
+    color: kind === "ambulance" ? "#eef1f2" : "#b3271e",
+    model: kind === "ambulance" ? "Sable Medic Van" : "Sable Fire Tender",
+    kind, owned: false,
+    state: { x: s.x, z: s.z, heading: s.heading, speed: 0 },
+    stolen: false, damage: 0, fuel: 100,
+    brokenWindow: false, pitch: 0, roll: 0, steerVis: 0, storedAway: false,
+    flatTyre: false, tuneLvl: 0, brakeLvl: 0, driftTyres: false, pitchVel: 0, rollVel: 0,
+  });
+  depenetrateCar(G.cars[G.cars.length - 1]); // Phase 25 guard, as the valet spawn
+  return G.cars.length - 1;
+}
+
+function collectServiceCar(which: "med" | "fire") {
+  const idx = which === "med" ? J.medCarId : J.fireCarId;
+  if (idx < 0) return;
+  const car = G.cars[idx];
+  if (LASTCAR.carIndex === idx) clearLastCar();
+  if (car && !car.storedAway) {
+    car.storedAway = true;
+    car.state = { x: 0, z: -500, heading: 0, speed: 0 };
+  }
+  if (which === "med") J.medCarId = -1; else J.fireCarId = -1;
+}
+export function collectMedCar() { collectServiceCar("med"); }
+export function collectFireCar() { collectServiceCar("fire"); }
+
+/** Dispatch the shift's current patient: the leg clock is generous
+ * by design (60 s + 5 s per 25 units of road) — the pay, not the
+ * survival, is what the clock pressures. */
+export function medDispatchPatient() {
+  const spot = MED_SPOTS[J.medPatient];
+  if (!spot) return;
+  J.medSpot = spot;
+  J.medPhase = "pickup";
+  const car = G.cars[J.medCarId];
+  const from = car ? car.state : HOSPITAL_DOOR;
+  J.medTotal = J.medTimer = 60 + distTo(spot, from) / 5;
+  J.medDmg0 = car ? car.damage : 0;
+}
+
+export function startMedShift(): boolean {
+  if (J.medPhase !== "idle") return false;
+  J.medCarId = spawnServiceCar("ambulance");
+  J.medPatient = 0;
+  J.medCollect = false;
+  medDispatchPatient();
+  return true;
+}
+
+/** Dispatch the shift's current fire at full strength. */
+export function fireDispatch() {
+  const spot = FIRE_SPOTS[J.fireN];
+  if (!spot) return;
+  J.fireSpot = spot;
+  J.fireSize = 1;
+  J.firePhase = "respond";
+}
+
+export function startFireShift(): boolean {
+  if (J.firePhase !== "idle") return false;
+  J.fireCarId = spawnServiceCar("firetruck");
+  J.fireN = 0;
+  J.fireWater = FIRE_TANK;
+  J.fireCollect = false;
+  fireDispatch();
+  return true;
+}
+
+/** End the paramedic paperwork (any reason) — the endValetJob
+ * shape: a wreck stays in the world; a player still sitting in
+ * the ambulance collects it on step-out (ServiceJobs watches
+ * J.medCollect); otherwise it is collected now. */
+export function endMedJob(wrecked: boolean) {
+  J.medPhase = "idle"; J.medSpot = null; J.medTimer = 0; J.medTotal = 0;
+  if (wrecked) { if (LASTCAR.carIndex === J.medCarId) clearLastCar(); J.medCarId = -1; J.medCollect = false; return; }
+  if (J.medCarId >= 0 && G.driving && G.activeCarId === J.medCarId) J.medCollect = true;
+  else collectMedCar();
+}
+
+/** End the firefighter paperwork (any reason) — same shape. */
+export function endFireJob(wrecked: boolean) {
+  J.firePhase = "idle"; J.fireSpot = null; J.fireSize = 0; J.fireRefillAt = null;
+  if (wrecked) { if (LASTCAR.carIndex === J.fireCarId) clearLastCar(); J.fireCarId = -1; J.fireCollect = false; return; }
+  if (J.fireCarId >= 0 && G.driving && G.activeCarId === J.fireCarId) J.fireCollect = true;
+  else collectFireCar();
+}
+
+/** Both service shifts down — the NG+ stand-down entry point. */
+export function endServiceJobs() { endMedJob(false); endFireJob(false); }

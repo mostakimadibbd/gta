@@ -13,10 +13,33 @@ export const M = {
   collected: new Set<number>(),
   failedReason: "",
   // ---- Phase 5: side-arc progress + the Ch.5 choice (persisted) ----
-  side: { lina: 0, voss: 0, heist: 0, after: 0, wire: 0 } as Record<"lina" | "voss" | "heist" | "after" | "wire", number>,
+  side: { lina: 0, voss: 0, heist: 0, after: 0, wire: 0, ledger: 0, quiet: 0, crown: 0 } as Record<"lina" | "voss" | "heist" | "after" | "wire" | "ledger" | "quiet" | "crown", number>,
   choice: "" as "" | "voss" | "elias",
   // ---- Phase 9: the post-story pack's own branching choice ----
   packChoice: "" as string,
+  // ---- Phase 27: THE LEDGER LINE's finale choice — its OWN flag
+  // pair (the Meridian Pair pattern, not the shared packChoice:
+  // After the Fall already spends packChoice on a burn/publish call
+  // with the same flag words, and the two decisions must never read
+  // each other). ledgerChoice locks the moment the player decides
+  // (the other branch can never be taken); ledgerDone records the
+  // completion, so a failed attempt re-offers the SAME branch. ----
+  ledgerChoice: "" as "" | "ledger-burn" | "ledger-publish",
+  ledgerDone: false,
+  // ---- Phase 48: THE HARBOUR CROWN's auction choice — its OWN flag
+  // pair again (the Ledger pattern): crownChoice locks at decision
+  // time, crownDone records the completion (consequences fire once,
+  // a failed attempt re-offers the SAME branch). crownPaid records
+  // that the buy-out branch's $40,000 escrow was actually wired at
+  // decision time (resolveChoice) — the +10% empire dividend in
+  // businessDailyNet requires choice + done + paid, and a checkpoint
+  // retry can never charge twice. crownCarDelivered records the
+  // finale's Sovereign delivery (game/crown.ts) so a replay or a
+  // second NG+ run can never mint a duplicate. ----
+  crownChoice: "" as "" | "crown-buyout" | "crown-expose",
+  crownDone: false,
+  crownPaid: false,
+  crownCarDelivered: false,
   // ---- Phase 15: mutually-exclusive side pair lock (see load below)
   pairChoice: "" as "" | "informant" | "dockcrew",
   // ---- Phase 16 audit fix: pairChoice is set when a branch STARTS,
@@ -47,7 +70,7 @@ loadKey(() => { M.storyIndex = Math.min(6, Number(localStorage.getItem("harborfa
 loadKey(() => { M.storyDone = localStorage.getItem("harborfall-story-done") === "1"; });
 loadKey(() => {
   const sideRaw = localStorage.getItem("harborfall-side");
-  if (sideRaw) { const s = JSON.parse(sideRaw) as Partial<typeof M.side>; M.side.lina = Math.min(3, s.lina ?? 0); M.side.voss = Math.min(3, s.voss ?? 0); M.side.heist = Math.min(2, s.heist ?? 0); M.side.after = Math.min(3, s.after ?? 0); M.side.wire = Math.min(3, s.wire ?? 0); }
+  if (sideRaw) { const s = JSON.parse(sideRaw) as Partial<typeof M.side>; M.side.lina = Math.min(3, s.lina ?? 0); M.side.voss = Math.min(3, s.voss ?? 0); M.side.heist = Math.min(2, s.heist ?? 0); M.side.after = Math.min(3, s.after ?? 0); M.side.wire = Math.min(3, s.wire ?? 0); M.side.ledger = Math.min(3, s.ledger ?? 0); M.side.quiet = Math.min(3, s.quiet ?? 0); M.side.crown = Math.min(4, s.crown ?? 0); }
 });
 loadKey(() => { M.packChoice = localStorage.getItem("harborfall-packchoice") ?? ""; });
 loadKey(() => { M.heistClean = localStorage.getItem("harborfall-heistclean") === "1"; });
@@ -61,6 +84,12 @@ loadKey(() => { G.finesPaid = Number(localStorage.getItem("harborfall-fines") ??
 // other mission stays locked for this playthrough (per save slot) ----
 loadKey(() => { const p = localStorage.getItem("harborfall-pairchoice"); if (p === "informant" || p === "dockcrew") M.pairChoice = p; });
 loadKey(() => { M.pairDone = localStorage.getItem("harborfall-pairdone") === "1"; });
+loadKey(() => { const p = localStorage.getItem("harborfall-ledgerchoice"); if (p === "ledger-burn" || p === "ledger-publish") M.ledgerChoice = p; });
+loadKey(() => { M.ledgerDone = localStorage.getItem("harborfall-ledgerdone") === "1"; });
+loadKey(() => { const p = localStorage.getItem("harborfall-crownchoice"); if (p === "crown-buyout" || p === "crown-expose") M.crownChoice = p; });
+loadKey(() => { M.crownDone = localStorage.getItem("harborfall-crowndone") === "1"; });
+loadKey(() => { M.crownPaid = localStorage.getItem("harborfall-crownpaid") === "1"; });
+loadKey(() => { M.crownCarDelivered = localStorage.getItem("harborfall-crowncar") === "1"; });
 // ---- Phase 20: NEW GAME+ level (per save slot). Lives here, with
 // the rest of the mission state, so effectivePayout and the police
 // systems can read the multipliers without an import cycle (the
@@ -87,6 +116,12 @@ export function persist() {
     if (M.packChoice) localStorage.setItem("harborfall-packchoice", M.packChoice);
     if (M.pairChoice) localStorage.setItem("harborfall-pairchoice", M.pairChoice);
     localStorage.setItem("harborfall-pairdone", M.pairDone ? "1" : "0");
+    if (M.ledgerChoice) localStorage.setItem("harborfall-ledgerchoice", M.ledgerChoice);
+    localStorage.setItem("harborfall-ledgerdone", M.ledgerDone ? "1" : "0");
+    if (M.crownChoice) localStorage.setItem("harborfall-crownchoice", M.crownChoice);
+    localStorage.setItem("harborfall-crowndone", M.crownDone ? "1" : "0");
+    localStorage.setItem("harborfall-crownpaid", M.crownPaid ? "1" : "0");
+    localStorage.setItem("harborfall-crowncar", M.crownCarDelivered ? "1" : "0");
     localStorage.setItem("harborfall-ngplus", String(NGP.level));
   } catch { /* ignore */ }
 }
@@ -94,8 +129,17 @@ export function persist() {
  * post-story pack missions key off M.packChoice via def.altFlag. */
 export function altActive(def: MissionDef): boolean {
   if (def.id === "s5" || def.id === "s6") return M.choice === "elias";
+  // Phase 27: Ledger Line missions read their own choice flag.
+  if (def.choiceKey === "ledger") return !!def.altFlag && M.ledgerChoice === def.altFlag;
+  // Phase 48: the Harbour Crown's auction reads its own flag too.
+  if (def.choiceKey === "crown") return !!def.altFlag && M.crownChoice === def.altFlag;
   return !!def.altFlag && M.packChoice === def.altFlag;
 }
+/** Phase 48: the Meridian buy-out is LIVE — the auction was decided
+ * for the buy-out, the escrow was wired, and the mission completed.
+ * game/economy.ts businessDailyNet reads this to apply the +10%
+ * empire dividend inside the one net function (shown = paid). */
+export const crownBuyoutLive = (): boolean => M.crownChoice === "crown-buyout" && M.crownDone && M.crownPaid;
 /** Ch.6 pays out differently when Rayan warned Elias (Ch.5 choice).
  * Phase 7: replays pay 40%; the heist pays prep-quality bonuses. */
 export function effectivePayout(def: MissionDef): number {
@@ -116,9 +160,16 @@ export function recordBest(id: string, seconds: number) {
   const s = (M.stats[id] ??= { attempts: 0, best: 0 });
   if (seconds > 0 && (s.best === 0 || seconds < s.best)) { s.best = Math.round(seconds); persist(); }
 }
+/** Phase 27: the target list the ACTIVE branch of a mission uses —
+ * targetsAlt when the mission's choice selected the alt branch
+ * (the Ledger Line finale delivers to a different door per choice;
+ * both lists have the same length by construction). */
+export function activeTargets(def: MissionDef): [number, number][] {
+  return def.targetsAlt && altActive(def) ? def.targetsAlt : def.targets;
+}
 export function currentTarget(): [number, number] | null {
   if (!M.active || M.phase !== "play") return null;
-  return M.active.targets[M.step] ?? null;
+  return activeTargets(M.active)[M.step] ?? null;
 }
 export function startPlay(def: MissionDef) {
   M.active = def; M.step = 0; M.timer = def.timeLimit; M.phase = "play"; M.collected = new Set();

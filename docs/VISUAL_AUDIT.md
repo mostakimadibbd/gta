@@ -1412,3 +1412,931 @@ rows). No new eager chunks.
   three 178.2 + react-three 185.8 + CSS 10.7 + HTML 0.7) vs
   Phase 24's 821.1 — +0.3%, this phase's eager code only. The
   Eastmere chunk (9.4 kB, 2.7 kB gzip) is separate and lazy.
+
+## Phase 26 — proof & Westbrook
+
+- **Westbrook reads as working harbour, not a suburb copy:** the
+  three-tube grain silo with rusty cone roofs on the west shore,
+  two teal dock cranes on the quay with hook loads hanging over
+  the water, tar-paper and rust-red industrial shells with amber
+  dock-office glass, a welcome sign at the causeway end and the
+  Breakwater Point pad at the south-west corner. Teal/amber
+  throughout, no pink or purple. It appears on the minimap + big
+  map (labelled WESTBROOK, at its own centre) only once its chunk
+  has loaded — the map never promises a district that isn't in
+  the world, same rule as Eastmere.
+- **A failed district load is now visible, not silent:** if a
+  streamed chunk can't load (offline, 404), a toast says so once
+  per approach and the game retries on a backoff; the causeway
+  simply ends at the water until the district exists. No
+  half-built district, no soft-lock.
+- **Cars no longer move under the player's hands:** the 1 Hz
+  depenetration sweep leaves any car the player is standing at
+  (and any car with a job/dispatch role) exactly where it is, and
+  a car wedged between two buildings settles instead of
+  ping-ponging between them across sweeps.
+- **Perf sanity:** initial-load JS 824.4 kB gzip vs Phase 25's
+  823.4 (+0.1% — the generalised district loader and the audit
+  fixes). The Westbrook chunk (10.0 kB, 2.8 kB gzip) is separate
+  and lazy; Eastmere's chunk is unchanged at 9.4 kB / 2.7 kB gzip.
+
+## Phase 27 — the Ledger Line
+
+- **Petra Vane stands at her diner:** Eastmere gains a named,
+  labelled figure at the diner hatch — grey ponytail, apron-brown
+  top, idle sway, name plate ("Petra Vane — Eastmere Diner")
+  visible within 42 m, the staff-presence convention. She lives
+  inside the Eastmere chunk (it grows to 10.3 kB / 3.0 kB gzip and
+  stays lazy), so the main download carries none of her.
+- **A tail that starts a district away:** the Ledger Line's first
+  job is accepted by phone in Port Sable, but its van waits —
+  parked, labelled, patient — at the Westbrook silo quay until
+  you roll in behind it. No fail timers burn while you travel;
+  the tail itself runs the familiar 12–45 m band across the
+  causeway into the Ferry Quarter.
+- **The gate is honest:** if a streamed district can't load,
+  Petra says so in subtitled dialogue and the job simply doesn't
+  start — you are never sent to tail a van in open water. The
+  load-failure toast also stops repeating itself while you wait
+  at a gate (once per approach, as designed — a Phase 26 re-arm
+  bug made it fire on every retry).
+- **Photograph, then run:** the diner-book job reuses the real
+  camera (stand in the ring, Phone → Camera → Capture); the
+  moment the page is banked, the HUD clock becomes the rival
+  crew's countdown to the Northgate Loft — one number, always
+  visible, no hidden timer.
+- **Two endings, both written:** the finale's burn and publish
+  branches each carry full subtitle dialogue, their own delivery
+  door (Petra's diner / the Market Row newsroom), their own
+  headline and their own reputation shift — and the world
+  remembers which one this save chose.
+- **Perf sanity:** initial-load JS 828.5 kB gzip vs Phase 26's
+  824.4 (+0.5% — the arc's missions, engine branches and App
+  wiring). Westbrook's chunk is byte-identical; Eastmere's grows
+  only by Petra. Placement audit: ALL PLACEMENTS CLEAR; the
+  multiplayer suite stays 32/32 (its world bounds now leave room
+  for shoreline boating off Westbrook and Coral Shores).
+
+## Phase 28 — vehicles
+
+- **Two new silhouettes in the construction kit:** the **Vantara
+  Tempest** reads as the flagship GT it is — longer and lower than
+  the Marlowe GT, cabin set well back, a ducktail deck, side
+  intakes behind the doors, a chrome waist spear and quad
+  exhausts under the light bar; fat rear rubber (0.41 r / 0.36 w)
+  sells the rear-drive brief before it moves. The **Sable Mule**
+  is its opposite: tall narrow cab on oversize wheels, bull bar,
+  a snorkel up the right pillar, mud flaps, and a working bed —
+  hay bale and feed sacks — that tells you its job at a glance.
+  Both wear the full kit (dirt shell, dent panels, CarFx beams,
+  cabin interior), so they weather and crumple like the rest of
+  the fleet.
+- **Boats move like boats now:** under way the bow lifts as the
+  hull climbs toward planing and settles as way comes off (an
+  eased pitch over the buoyancy pose — rise quicker than the
+  settle, like a hull coming onto the step). The wake is no
+  longer a fixed-rate dotted line: puffs lay faster and read
+  denser/wider the harder the throttle is worked, and fade back
+  to a putter at harbour speed. In a storm you can SEE the wind
+  take the hull — a slow onshore set that you correct with the
+  (now heavier-at-speed) helm.
+- **The Sparrow's stall has a face:** below flying speed the nose
+  visibly drops while the pulsing amber-red STALL chip rides the
+  HUD stack — throttle up and both recover together. Touchdowns
+  read in the gear: the airframe settles onto its struts for a
+  beat, deeper after a firmer arrival. At cruise the prop stops
+  strobing as two sticks and becomes a shimmering blur disc,
+  fading in with engine speed and gone again at idle.
+- **Perf sanity:** initial-load JS 829.9 kB gzip vs Phase 27's
+  828.5 (+0.2% — two car shells, the handling branches, the
+  stall chip). The Eastmere (3.0 kB gzip) and Westbrook
+  (2.8 kB gzip) chunks are unchanged and stay lazy. Placement
+  audit: ALL PLACEMENTS CLEAR (the Tempest display car and the
+  farm Mule are audited spawns); multiplayer suite 32/32.
+
+## Phase 29 — police & crime depth
+
+- **The 👁 heat chip:** while your evidence file is open, a small
+  teal-on-glass pill rides in the right HUD stack directly under
+  the wanted stars — an eye glyph and the count in tabular
+  numerals, in the same chip family as the loot/ammo pills. It is
+  simply absent at zero evidence (no dead UI), appears the moment
+  the first witnessed crime lands, and its tooltip carries the
+  whole mechanic: the 25/50/75 floors, the longer searches, and
+  the three ways out (lay low, fresh look, the Fixer). When the
+  floor actually bites, Dispatch says so in a subtitle bark —
+  "that report matches the harbour file" — so the jump in stars
+  never reads as a bug.
+- **The Fixer reads as a phone call, not a menu:** Marek Doss
+  sits in Contacts between Voss and Ines; calling him runs a
+  subtitle dialogue on the standard letterboxed phone-call stage.
+  Every refusal is a line in his voice that names the real
+  blocker — mid-job, mid-escort, the once-a-day limit, a clean
+  file, thin funds — and the line-of-sight refusal is the one the
+  harbour repeats: "Not while they're looking at you." A paid
+  burn lands with the cash sfx, a three-line exchange, and a
+  receipt in Messages, so the transaction leaves the same paper
+  trail every other phone deal does.
+- **Fresh looks announce themselves:** the wardrobe, Thread &
+  Tide and Sable Cuts toasts gain one shared suffix while a file
+  is open — "Fresh look — your patrol file thins faster for a
+  while." — so the decay window is visible at the moment it
+  starts, and the Stats app's evidence row shows the count, the
+  current floor and the Fixer's live quote against the full
+  plain-text rules.
+- **Perf sanity:** initial-load JS ≈832 kB gzip vs Phase 28's
+  829.9 (+0.3% — the heat module, the contact handler, the chip).
+  The Eastmere (3.0 kB gzip) and Westbrook (2.8 kB gzip) chunks
+  are unchanged and stay lazy. Placement audit: ALL PLACEMENTS
+  CLEAR; multiplayer suite 32/32 (server untouched).
+
+## Phase 30 — property income
+
+- **The warehouse is a building, not a buy point:** Unit 7 joins
+  the Docks strip in its own visual language — a corrugated
+  steel slab (10 × 8.2, the clinic/café footprint) with a ribbed
+  roller door, a personnel door, and a lit "HARBOUR STORAGE ·
+  UNIT 7" sign over the road face, plus a small Sable Lets board
+  by the door. It collides like its neighbours (a real
+  STATIC_BLOCKER), so the strip's rhythm of doors along the
+  z=103.2 line now runs HQ · garage · café · warehouse · clinic.
+- **The other two doors are marked the way agents mark them:**
+  a wooden A-board post — "SABLE LETS — TO LET" in amber on
+  harbour teal — stands beside the Coral flat's door (65, 242.6)
+  and the Northgate townhouse's door (−59, −236.7), facing the
+  street the tenant would walk in from. No floating markers, no
+  map pins: you find your properties the way you'd find them on
+  foot, and Ana's contact hint names the streets.
+- **The Bank grows a landlord section:** under the businesses,
+  "Rental properties — Sable Lets" lists each unit with its
+  state in plain words — the daily rent while let, a red-flag
+  "−$X due" with the pause explained while a repair bill stands,
+  or the purchase price and blurb (business gate included)
+  before you own it. Selling arms a two-step confirm in the
+  NG+ style, with the net proceeds (80% less any due bill)
+  computed on the button itself — the number you tap is the
+  number that lands. A "Daily rent (paid each morning)" total
+  sits under the units, computed by the same rentDailyNet the
+  tick pays.
+- **Ana Ruiz writes like a person, sparingly:** her messages
+  arrive only when something happens — a repair (paid, or DUE
+  with the terms spelled out), a late payer, a tenant worth
+  writing home about — each signed and specific with the dollar
+  figures in it. Quiet days produce only the SableBank aggregate
+  rent line. Calling her reads the portfolio back to you, unit
+  by unit, due bills included.
+- **Door language is honest at arm's length:** every state has
+  its own prompt — the business gate stated before the warehouse
+  can be bought, the paused rent and the bill amount stated at
+  a DUE unit's door, the 80% figure stated before a sale — and
+  the hold-E bar now reads "Paying…" / "Selling…" for those
+  verbs instead of calling everything a purchase.
+- **Perf sanity:** initial-load JS 836.0 kB gzip vs Phase 29's
+  ≈832 (+0.5% — the rent module, the Bank section, the door
+  block, Ana's handler, one warehouse visual). The Eastmere
+  (3.0 kB gzip) and Westbrook (2.8 kB gzip) chunks are unchanged
+  and stay lazy. Placement audit: ALL PLACEMENTS CLEAR (136
+  colliders — the warehouse blocker joins the set; all three
+  rental doors point-tested). Multiplayer suite 32/32 (server
+  untouched).
+
+## Phase 31 — Northreach
+
+- **A headland, not another harbour:** Northreach reads quiet
+  from the bridge — low cottages in stone and weathered teal, a
+  tea house with an amber sign, grass-green land instead of dock
+  grey, and a fence line running the cliff edge. Where Eastmere
+  got a lighthouse and Westbrook a silo, Northreach's silhouettes
+  are a **chapel** (pale stone, steep teal pyramid roof, a slim
+  spire tipped with a lamp that warms up after dark) and an
+  **observatory dome** in weathered teal over a stone drum, its
+  shutter slit angled at the northern sky.
+- **The bridge is the same sentence as the causeways:** an 8-wide
+  deck with pale rails continuing Northgate's x=−20 column — you
+  drive the road you've been driving since Phase 6 and it simply
+  keeps going north. The NORTHREACH welcome sign stands at the
+  deck's north end facing arrivals, lit at night like its two
+  predecessors.
+- **Northreach Point earns its pause:** a paved pad at the cliff
+  edge at the main street's end, fence gap, sign turned a few
+  degrees toward the view — the whole northern sea, Northgate's
+  rooftops behind you. Wind-bent pines lean off the cliff corners.
+- **The map tells the truth, wider:** the minimap/big-map frame
+  widened (span 720, centre (5, −20)) so the headland is on the
+  map at all — one uniform scale, nothing redrawn or distorted;
+  Northreach draws from the registry only once loaded, name at
+  its own centre, with a vertical causeway stub for its bridge
+  (the east/west districts draw exactly as before).
+- **You can finally drive into Westbrook:** the audit's envelope
+  census found the driven-car clamp was still the Phase 24 box —
+  Westbrook has been walk-in-only since it shipped. The clamp
+  (and the Sparrow's) now grows over a loaded district you're
+  entering; arriving at Northreach by car works the same way,
+  and the boat chart + swim limit moved north with the chart,
+  so the strait beyond the headland is sailable and swimmable.
+- **Perf sanity:** initial-load JS 836.4 kB gzip vs Phase 30's
+  836.0 (+0.05% — the stub, registry entry and poll/render
+  wiring). The Northreach chunk is 10.65 kB (2.93 kB gzip),
+  separate and lazy; Eastmere (3.02 kB gzip) and Westbrook
+  (2.77 kB gzip) chunks unchanged. Placement audit: ALL
+  PLACEMENTS CLEAR (base 136 + Westbrook 11 + Northreach 8
+  colliders). Multiplayer suite 32/32 (bounds extended north,
+  far-position tests extended with them).
+
+## Phase 32 — service jobs
+
+- **Two new service bodies** (CarBody.tsx): the Sable Medic Van — the
+  van shell in service white with a red waist stripe, red crosses on
+  both flanks and the rear doors, and a lightbar base; the Sable Fire
+  Tender — a working truck, not a red van: short cab with a white brow
+  stripe, a tall shuttered equipment body with flank hose reels, a
+  roof ladder and its lightbar. Both read as their service at street
+  distance, in the strip's teal/amber world (the reds are service
+  reds, not palette accents).
+- **The Sable Fire Station** joins the Docks strip at (−80, 109.1) in
+  the Phase7Frontages set: brick-red slab, two ribbed tender doors on
+  the road face, lit watch-room windows, and a hose-drying tower at
+  the west end — it sits between Harbour Patrol HQ and the hospital
+  lot like it was always there, and the audit checks its blocker
+  against every neighbour and lane.
+- **The patient**: a humanoid rig lying on its back at the dispatch
+  spot with a slow breathing bob — the first casualty figure in the
+  game (the dispatch sim's medical calls were marker-only). Three
+  looks cycle across a shift's patients.
+- **The fire**: new presentation, honestly modest — three flickering
+  emissive flame cones whose scale IS the fire's remaining strength,
+  six recycled smoke puffs rising and swelling, and a single orange
+  point light so a night fire throws light on its frontage. While
+  you hose: a droplet arc on a parabola from your position to the
+  base and steam puffs where it lands. No particle engine was
+  added; pooled meshes only.
+- **Beacons**: red/blue pairs ride each unit's lightbar and alternate
+  at the same cadence as the NPC service units' beacons in
+  GameSystems, so the player's unit and the sim's units read as one
+  fleet.
+- **What was NOT claimed**: no scanned/photoreal anything (standing
+  line); the flame is stylised cones, not a simulation; traffic's
+  courtesy is the horn path's kerb-ward visual ease — cars do not
+  change lanes or stop for your siren, and the patrol does not yield.
+
+## Phase 33 — combat depth
+
+- **The Kestrel Carbine pickup model** (Combat.tsx): its own
+  silhouette next to the shared low-poly gun — a long receiver in
+  dark harbour steel, a curved magazine, a skeleton stock in worn
+  timber, and a single teal sight dot (Sable Arms' house colour).
+  One waits on the mansion drive's east end; the counter at Sable
+  Arms sells the same gun. No weapon in this build has an in-hand
+  mesh — the pickup model is where weapon models live, and the
+  carbine's is distinct at street distance.
+- **Teal shot signature**: the carbine's muzzle flash, muzzle light
+  and tracer burn harbour teal (#a8e6da / #7fd8c8 / #b8f0e4) — the
+  palette's second colour — while every other weapon keeps the
+  warm amber. You can tell a carbine is firing across a street.
+- **Cover reads on the body**: in combat cover the crouch tuck
+  deepens (a lower dip, torso pitched further over the knees);
+  aiming out of it raises the gun arm and head through the existing
+  free-aim pose layer — the peek is visible, not just a number.
+  The HUD carries a 🛡 IN COVER chip (teal) that flips to an amber
+  PEEKING chip while you aim.
+- **Suppression is a crowd behaviour, not an effect**: near-miss
+  and sustained fire send bystanders running through the ordinary
+  flee reaction — no new particle, no screen effect, just people
+  deciding the street is dangerous.
+- **What was NOT claimed**: no NPC accuracy system exists in this
+  build for cover to modify (the patrol arrests; nobody shoots
+  back) — cover's effects are the sight radius and bust rate, and
+  the docs say so. The carbine's ammo is its own pool; there is no
+  shared "rifle class" pool to claim.
+
+## Phase 34 — drift championship + local bests
+
+- **Course furniture**: each Slide Series course gets an amber
+  start ring in the world at all times (the race rings' own visual
+  language), offset a few metres from its sister race's ring on the
+  same road so the two series never share a silhouette. The armed
+  round's ring burns brighter. During a run the course's gates
+  appear as rings strung along the route — the next gate amber, the
+  ones behind it harbour teal, passed gates dark — on top of the
+  usual objective pillar and GPS line, which carry the live
+  score/target/clock in their label.
+- **Slide Gold**: the champion's respray is a warm amber-gold
+  (#d8a920) — the palette's metal, not a new colour family — and it
+  sits in Lina's existing swatch row with a 🏆 note under it. On a
+  car it reads as a gold paint job, nothing more theatrical; the
+  honour is that the bench only offers it to a champion.
+- **The Records board** is a phone list, not a podium: one 🏅
+  section in Stats with the drift chain, the Slide title and round
+  bests, all five race times, the derby and the best catch — plain
+  rows in the app's existing style, "—" where a record is unearned.
+- **What was NOT claimed**: no new cosmetic system (the gold is a
+  colour in the respray palette that already existed), no drift
+  physics change (the Series scores the Phase 18 banks and nothing
+  else), and no server drift board (the service ranks race times;
+  a points total is not a time — the Records screen says so).
+
+## Phase 35 — phone media
+
+- **Sable Tunes** is the phone's existing Music app grown into a
+  player, in the phone's own visual language: the music-card with
+  its disc glyph (◉ while a track sounds, ♪ at rest), the track
+  name in the harbour typeface, and a thin stat-bar under it that
+  fills with position inside the loop — teal fill on the phone's
+  dark card, amber nowhere it doesn't belong. The transport row is
+  three plain buttons (⏮ Prev / ▶ Play–⏸ Pause / Next ⏭) and the
+  track list below is four phone-rows, the playing one prefixed ♪.
+  Nothing about the handset chrome changed; the app simply has
+  something real to show now.
+- **What the two new tracks look like from the chair**: nothing —
+  they are music. "Daylight Causeway" is mixed low and warm
+  (triangle pads, a round bass, a clean pluck lead) to sit under
+  daytime driving; "Neon Meridian" is darker (detuned saw pads, a
+  pulsing filtered bass, a quiet arp) for the night city. Both are
+  original compositions synthesised live by WebAudio — there are
+  no audio files to look at, and the Phone tip says so.
+- **Club priority is visible, not magic**: walk into Club Solace
+  with a Tunes track playing and the room's bass takes over as it
+  always has; reopen the phone inside and the now-playing card
+  says the track is held by the club and will resume outside —
+  which it does, from its top, when you leave. If your selected
+  track IS the club loop, nothing audible changes at the door at
+  all: the same loop just changes carrier.
+- **The Gallery viewer**: tapping a shot fills the phone page with
+  the photo — full width, district and date under it ("Eastmere ·
+  11/26/2026, …"), Delete and back in the app's toggle style. The
+  list keeps its date line and gains the district prefix on new
+  shots. The viewer caption states the storage deal in one line:
+  this is the phone's 320 px copy; the full-resolution PNG
+  downloaded when the shutter fired.
+- **What was NOT claimed**: no volume slider (the game has no
+  volume setting — the N mute is the one audio switch and Tunes
+  rides it like the theme and the club; the app says so), no
+  total-length progress bar (a loop has no end — the bar is loop
+  position and the card says that too), no full-res in-phone
+  photos (320 px thumbnails by documented quota design), and no
+  district retro-labelled onto pre-Phase-35 shots (they show
+  their date alone rather than a guess).
+
+## Phase 36 — weather depth
+
+- **The forecast reads like the harbour service, because it is
+  the machine**: the phone's weather page gains one bank-row —
+  "Turning to ⛈️ Storm" (or "Holding as Clear" when the roll says
+  the sky stays) — under the next-change timer it already had,
+  plus a one-line tip explaining that Y re-rolls it. No new
+  chrome; the row sits in the page's existing ledger style. The
+  HUD's contribution is deliberately tiny: an amber "→ ⛈️" inside
+  the weather chip for the final ~2 real seconds before a turn
+  (10 game-minutes at Port Sable's 300-second day) — a blink you
+  learn to read as "it's turning", not a second weather display.
+- **Lightning lands somewhere now**: a strike used to be a jagged
+  line from y=38 to y≈1.6 at a random bearing — through rooftops,
+  under the sea. From the chair, storm-watching changes: roughly
+  half the bolts visibly terminate on the tallest roof in view
+  (the downtown towers take them like lightning rods), and out at
+  sea they end ON the water. The flash + delayed thunder are the
+  Phase 2 originals; the strike point is the new part. It remains
+  pure spectacle — nothing in the game takes lightning damage,
+  and the audit copy says so wherever it is described.
+- **The sea state is a thing you can see from the dock**: in calm
+  weather the hulls ride as they always have; as rain builds the
+  bob and roll grow, and in a full storm the swell multiplier
+  reaches ~×2.2 — a moored skiff worries at its line and the
+  speedboat's bow works visibly harder, on top of the Phase 28
+  storm drift pushing the hull itself. No numbers were faked for
+  this: it is the existing buoyancy amplitude, scaled.
+- **The Sparrow shudders**: in a storm the airframe carries a
+  slow, small worried shake (±~0.05 rad) that is NOT in its flight
+  path — rings thread exactly as before and the Run's par is
+  unmoved. It reads as weather, not as a handling change, which
+  is precisely what it is; the docs say so rather than letting a
+  player believe the storm can push them off a ring.
+- **Drying streets**: the visual tell is the puddles — they used
+  to vanish with the last raindrop. Now the gloss, the puddle
+  sheen and the fat streetlight halos bleed off over ~2.5 minutes
+  after the rain stops, and the car stays loose for exactly as
+  long as the road looks wet (same grip formula, honest input).
+  Rain itself — particles, splash rings, the darkened sky — still
+  stops with the weather; only the WET lingers.
+- **Autumn leaves**: 130 amber/brown points fluttering down and
+  blowing sideways across the frame, fading in when the season
+  turns and out when it passes. They ride the same wind value as
+  the palm sway, so a gusting day visibly blows harder. From the
+  chair they are street-level weather — they never appear
+  indoors, and no other season gets a particle (spring blossom
+  was considered and not built; the audit copy says so).
+- **What was NOT claimed**: no lightning damage (none exists), no
+  turbulence effect on flight physics or race times (pose only),
+  no new seasonal sun behaviour (Phase 13 already warps the arc
+  and the day length — this phase's season addition is the
+  leaves alone), and no forecast "accuracy" (the forecast is the
+  machine's committed roll, so it is never wrong — unless the
+  player rewrites it with Y, which re-rolls it in the same press).
+
+## Phase 37 — the quiet harbour
+
+- **A bench that was always missing**: the Coral Shores promenade
+  gains a plain bench at (72, 200.3), in the open gap between the
+  waterfront houses, facing north across the bay — city skyline,
+  the Bay Bridge deck at x=60, the water in front. It renders
+  through the same instanced prop pass as every other bench in
+  Port Sable, so it costs the scene nothing new; it is simply
+  furniture the promenade should have had. It is also a mission
+  place now: the Quiet Harbour's finale meets there, with Elias
+  and Tamim standing at either end of it as named figures.
+- **The plaque**: after the arc completes, a small brass plaque on
+  a dark post stands at the bench's north side — tilted face,
+  engraved-style canvas lettering: "For the ones who stayed." over
+  a rule and PORT SABLE. It is deliberately small: you find it by
+  standing at the bench, not by seeing it from the road. It
+  renders from the saved arc record, so it is simply THERE on
+  every later visit — and gone again if the story is run back
+  through NG+, because the arc it commemorates no longer happened
+  on that slot.
+- **People, waiting**: the arc's figures use the established named-
+  NPC presentation — Elias at the pier watching the water while
+  the markers are lifted; Lina at her garage kerb, then standing
+  at Northreach Point looking back at the whole bay (the view her
+  mission is about); Elias and Tamim flanking the bench. Idle
+  rigs, name labels inside 42u, no new character system.
+- **Lightning lands honestly now**: the Phase 36 bolt could spear
+  through a roof to ground level when its random point fell inside
+  a building footprint. Strikes now hit the roof they land on, in
+  the base city and (by resampling) never through a streamed
+  district's roof either. Same bolt, same flash — the endpoint is
+  just on a surface that exists.
+- **What was NOT claimed**: no in-car passenger — Lina's ride is
+  kerbside figures and subtitle conversation, the game's one
+  passenger convention, and the docs say so; no new NPC behaviour
+  system (the figures stand and breathe; the dialogue carries the
+  arc); the plaque is a prop with a canvas face, not an engraved
+  mesh; and nothing about the arc touches the weather — it plays
+  in whatever sky the forecast machine has committed to.
+
+## Phase 38 — multiplayer polish
+
+- **Names over heads**: remote players now wear their display name
+  as a floating label (the same canvas-sprite pattern the named
+  townsfolk use), so a room reads as people, not capsules. The
+  avatar's old indigo (#6e72cc) is gone with them — it sat outside
+  the game's teal/amber palette; remote cars and figures are teal
+  now, with the amber name plate doing the distinguishing.
+- **quiet2's clock is silent now**: Lina's day-off ride no longer
+  shows a ticking 60:00 in the objective banner. The hour-long
+  backstop still runs underneath (the engine has no timerless
+  mode), but a mission designed to have no pressure no longer
+  wears a countdown. Every other mission's timer is untouched.
+- **Room chat overlay**: the last six chat lines float over the
+  lower-left of the world, each fading as it ages — readable while
+  fresh, gone from attention once stale, and toggleable from the
+  game panel. Lines sit on the same dark-glass plate as the rest
+  of the HUD, sender names in amber.
+- **What was NOT claimed**: names are decoration, not identity —
+  anyone in a room can pick any name, and the UI copy says so;
+  chat is room-scoped text only (no DMs, no history, no
+  moderation tooling); the overlay shows six lines because that
+  is what fits the HUD honestly, not a scrollback.
+
+## Phase 39 — two more interiors
+
+- **The Eastmere Diner, indoors**: Petra's street block gains a
+  teal door plate, a step and an hours board under its awning;
+  inside is a warm brick room — counter with red stools and the
+  coffee machine, three booths down the east wall, a chalk menu
+  board, pendant glows, and the street window lit amber. Petra
+  stands behind her counter in the same rig she wears outside;
+  while you're in here, the street figure is gone — one Petra,
+  one place.
+- **The jukebox**: a red-brown cabinet by the diner door with
+  amber and teal glass. Off until you switch it on; then Daylight
+  Causeway fills the room and the phone's own music waits,
+  resuming when you leave — the club's room rules, in a diner.
+- **The silo office**: Westbrook's grain silo gains a lift-shaft
+  door and an "always open" sign at its base; the room at the top
+  is grey concrete and grain dust — a desk with a red log book, a
+  painted harbour chart (both shores, the causeway, the amber
+  shipping lane), and the whole bay painted into the east window
+  at amber hour, in the same fake-window language as the Loft.
+- **What was NOT claimed**: the silo office has no real view —
+  the window is a painting, like every interior window in the
+  game; the "lift" is the standard door fade and the signage
+  says so; the diner's regulars are seated figures who nod, not
+  diners who order; and both rooms are pocket interiors in the
+  game's established sense, not walk-in building geometry.
+
+## Phase 40 — bike handling
+
+- **Lean, on both bikes, rider included**: the motorcycle keeps
+  its speed-scaled bank into corners and the bicycle gains one of
+  its own (it used to corner bolt-upright — its mesh read pitch/
+  roll fields its own step never writes). The rider figure now
+  rolls by the bike's exact lean angle, so through a corner the
+  rider and the machine read as one body instead of a statue
+  bolted to a tilting frame.
+- **The wheelie**: hold DRIFT (Space) with the throttle open at
+  low-mid speed and the Stinger's front rises — up to a strong
+  ~35° — the rider leaning back with it. Hold it past the
+  balance point for too long and the bike loops out: the front
+  flops over and down, the bike drops to a crawl, and you roll
+  again a second later. No speed comes with it — the wheelie is
+  a pose with a price, not a boost.
+- **The bunny hop**: tap DRIFT (Space) while pedalling and the
+  little Shoreline Cruiser pops half a metre into the air, rider
+  and all, and lands rolling.
+- **What was NOT claimed**: the hop is a visual hop — it clears
+  nothing; a wall or the water stops the bicycle mid-hop exactly
+  as before. The wheelie changes no speed, grip or heading
+  number. Neither bike's physics step was re-modelled; this
+  round is presentation and input, over the steps that already
+  shipped.
+
+## Phase 41 — business events
+
+- **The brake light tells the truth now**: holding a wheelie
+  used to leave the motorcycle's brake light burning the whole
+  time — the light read the raw key while the physics step read
+  the reinterpreted one. It now goes dark for the gesture, the
+  same fix the slide trim and the skid smoke/sound got in the
+  same pass: a held wheelie no longer smokes or squeals like a
+  drift either.
+- **Mornings have news from your own people**: the phone's
+  morning messages now come from the businesses themselves —
+  your lead hand at the Wraps stall telling you the queue was
+  out the door, the inspector's verdict, a staffer having the
+  day of their life. The SableBank app shows a matching badge
+  under each business (🔥 Rush day, 🌙 Quiet day, 📦 Supply
+  snag, 🧾 Inspection, ⭐ star day) — and the number above the
+  badge already includes the event, because both read the same
+  record the morning tick pays from.
+- **The supply run**: a snagged business shows its fix in the
+  Bank app and at its own door. The run itself is the familiar
+  amber marker out to a depot and back — no new visual language,
+  deliberately: it is the delivery chain's shape wearing a
+  different hat, and it reads instantly because of it.
+- **What was NOT claimed**: no new art, models or world
+  geometry this round — the events are systems and words over
+  the businesses that already stand in the city. The inspection
+  has no minigame and no hidden staffing maths: 15% flat, a
+  fine, a message — stated as such in the Bank badge itself.
+
+## Phase 42 — harbour wildlife
+
+- **The pod**: five dolphins, built from the same primitive
+  vocabulary as everything else in the city (scaled-sphere
+  body, cone beak and dorsal fin, box flukes) in a slate
+  grey-teal — deliberately no painted eyes, no smiling mouths:
+  they read as animals at harbour distance, not mascots. They
+  porpoise in loose formation along the shore and around
+  Sable Island, followers trailing the leader with a slow
+  lateral sway, each breach and re-entry throwing a small
+  splash ring in the fishing-splash idiom.
+- **The dive**: bring a moving boat within nine metres and
+  the nearest dolphins sound — a flattening pitch, a splash,
+  three seconds under. It is the pod's one performed reaction
+  and it is a real distance check against live boats, not a
+  timer: a stationary hull (yours at anchor, the moored
+  scenery fleet the route already avoids) never triggers it.
+- **Perched gulls**: six new mooring posts — pier deck,
+  island dock shore, mainland waterline — each with a gull
+  (white/grey primitives, amber beak, wings folded flat on
+  the post). Approach within five metres and the gull is up:
+  a slow holding circle over its post, wings working; back
+  off beyond nine and it glides home and folds again. The
+  Phase 2 flock still circles as one body overhead — this is
+  a second, closer behaviour, not a replacement.
+- **The honest frame**: the pod's route is scripted — the
+  same loop, all day, in all weathers. It is labelled as
+  ambient life in the code and the blueprint, not simulated
+  ecology; there is no feeding, no migration, and a boat
+  arriving faster than the dive reads can visually overlap a
+  surfacing dolphin, because dolphins have no collision —
+  stated here rather than discovered by the player.
+
+## Phase 43 — photo challenges (the Sable Postcards)
+
+- **The hint line**: Photo Mode's bar gains one quiet line —
+  the nearest unsold postcard, its condition in plain words,
+  and the running count ("📮 Golden Span — the bay bridge in
+  golden light · 3/8 sold"). It lives inside the bar because
+  the bar is all the chrome Photo Mode has: enter and it's
+  there, exit (H / U / Esc) and the frame is clean again.
+- **The Gallery spread**: the Postcards panel sits at the top
+  of the Gallery app — eight rows, each with its fee or SOLD
+  stamp, its hint, and a "Checked:" line stating the real
+  test in plain language. A winning shot carries its stamp
+  into the list and the full-screen viewer ("📮 Sold to The
+  Wire — 'The Pod, Breaching'"). The honesty note is part of
+  the furniture, not a footnote: the desk checks where you
+  stood, which way the camera pointed, the hour, the weather
+  and your wanted level — it cannot see the picture itself.
+- **The Postcard Wall**: the Loft's east wall carries eight
+  small wood-framed slots in a row. Unsold postcards are
+  dark, empty frames — a collector's wall waiting. Each sale
+  fills its slot with the print's colour (amber for the
+  golden shots, bay blue for the pod, deep teal for the sign,
+  rust for air support) with a soft emissive lift, and the
+  full set earns the titled plaque above the row. It updates
+  live, mid-session, the moment a shot sells.
+- **The certificate**: completing the set adds a certificate
+  panel to the Gallery app and a Wire headline — the record
+  exists even for a player who never buys the Loft and so
+  never sees the wall itself.
+- **Not claimed**: the prints on the wall are coloured
+  plates, not the player's actual photographs — the phone
+  keeps the real 320 px shots (and the full-res PNG already
+  downloaded at the shutter press); hanging eight live image
+  textures in a pocket interior is possible but was judged
+  weight without meaning. And no part of the feature looks
+  at the image: framing the subject well makes a better
+  photo for the player's own album, not a better score —
+  the checks are positional and conditional, and the game
+  says so everywhere the set is described.
+
+## Phase 44 — assists & accessibility
+
+- **What you see when everything is off**: nothing new. All
+  four settings default to the pre-Phase-44 behaviour, the
+  palette module returns the shipped colours (and no DOM
+  inline styles), the steering value is the raw merged
+  input, the lightning strike peaks where it always did.
+  The only visible addition is the Settings section itself.
+- **Drive assist, felt not seen**: at Light the wheel stops
+  twitching at speed — full-lock taps become a fast lean
+  instead of a snap — while parking-speed steering stays
+  direct. At Full the chase camera also drifts home behind
+  the car a few seconds after you stop orbiting; drag the
+  camera and it is yours again instantly, for as long as
+  you keep holding it. The front wheels and the bike lean
+  follow the smoothed value, so what the car shows is what
+  it does.
+- **Aim assist**: there is no visual tell — no reticle
+  change, no snap. A near-miss while aiming becomes a hit
+  more often because the shot leans part-way toward the
+  person in the cone; a target behind a wall gets nothing,
+  and hip fire is exactly as wild as it always was.
+- **Colourblind-safe HUD on**: the map's police dots turn
+  sky blue and the wanted stars match them; targets and
+  the GPS line go yellow; you and your cars read white;
+  traffic goes orange; the incident cross goes vermillion.
+  In the Bank, takings figures turn bluish green, the loan
+  and due bills vermillion, and the event badges split
+  good day (green) from bad day (vermillion) — always next
+  to the same +/− signs and words as before. The city
+  itself does not change colour at all: same teal water,
+  same amber light, same liveries.
+- **Reduced flash on**: a storm still reads as a storm —
+  the bolt draws, thunder lands late — but the sky no
+  longer whites out; the strike peaks at under a third of
+  its old brightness and is gone sooner. A gunshot still
+  flashes and sparks, smaller and dimmer, and the muzzle
+  light stops flooding the street for a frame.
+- **Not claimed**: no new effects were built for the
+  reduced-flash pass — there is no explosion flash in the
+  game to soften, and police light bars keep their strobe
+  (they are identity, not flash). Subtitle size is not new
+  either: S/M/L has scaled the dialogue and bark renderers
+  since Phase 5; this round only points at it from the new
+  Settings section.
+
+## Phase 45 — performance round 2
+
+- **The start screen, one beat later**: the poster key-art
+  panels no longer ride the first download. The splash
+  screen opens with its shade, the HARBORFALL title and the
+  Play button over the city itself, and the crew panel
+  crossfades in a moment later when its chunk arrives —
+  on a fast connection you will not notice; on a slow one
+  the screen is usable sooner and the art catches up.
+  In game, nothing about the slideshow changes.
+- **Low looks flatter — on purpose**: the Low preset now
+  turns shadows off entirely. Buildings, cars and palms
+  lose their contact shadows and the city reads flatter
+  and brighter at midday; that flatness is the trade the
+  preset makes for frame rate on a weak phone, and the
+  Settings notes say so in plain words. Medium and High
+  are visually untouched — same 2048 follow shadows, same
+  composer, same everything.
+- **Low is also emptier and softer-edged**: ambient
+  traffic and crowds cap at half on Low whatever the
+  density levers say (jobs, buses, taxis and emergency
+  units still run, and nothing vanishes in front of you),
+  and the picture renders at native resolution instead of
+  1.25× — a little softer on a high-density phone screen,
+  in exchange for roughly a third fewer fragments.
+- **Wildlife on Low**: the dolphins and gulls update at
+  half rate. Their motion is slow and clock-driven, so
+  the pod porpoises and the gulls scatter exactly as
+  before; you would need a stopwatch and a side-by-side
+  to tell.
+- **Not claimed**: no frame-rate number is promised
+  anywhere for any device — the savings are structural
+  (no shadow pass, fewer fragments, fewer ambient
+  entities, ~237 kB less to download before the game
+  starts), and the HUD's FPS counter on your own phone
+  is the verdict. High and Medium should look pixel-for-
+  pixel like Phase 44; if they don't, that's a bug, not
+  a tuning choice.
+
+## Phase 46 — dynamic music (an audio round)
+
+- **What you hear in free-roam now**: under everything,
+  a slow pad bed in the opening theme's chords drifts a
+  bar at a time. It is deliberately quiet — furniture,
+  not a soundtrack moment. As the light goes, a sparse
+  pluck fades in with the dusk and stays through the
+  night; by day it is gone and the pad plays alone. The
+  pluck's fade is the world's own night value, so it
+  breathes with the same dusk the sky shows.
+- **A chase sounds different**: at 3★ a low pulse
+  starts under the pad and the chords themselves walk
+  to the minor side of the key at the next bar line —
+  nothing snaps; the change arrives the way a bar
+  change does. At 5★ the pulse doubles its rate. Lose
+  the stars and both unwind over about two seconds.
+- **Your music still wins**: start any Sable Tunes
+  track and the score steps aside within a couple of
+  seconds and comes back when you pause. Walk into
+  Club Solace or switch the diner jukebox on and the
+  room owns the speakers exactly as before — the score
+  never talks over a room. The start screen is still
+  the theme song's alone.
+- **One audit fix you can see**: on the Low preset with
+  traffic density on High, the rush-hour reserve cars
+  now park overnight like they should — before, they
+  circulated all night on Low because their parking
+  decision read the density lever past the preset's
+  ceiling. The number of cars on Low was never over
+  the cap; their behaviour was.
+- **Not claimed**: this is layered loops keyed to
+  game state, not adaptive or generative "AI music";
+  there are no samples and no audio files — every note
+  is an oscillator, as with all of Harborfall's music.
+  The score adds no visual change at any tier, and
+  with Settings → Music → Ambient score off, the game
+  sounds exactly as it did in Phase 45.
+
+## Phase 47 — two more world events
+
+- **Regatta day**: the Harbour Wire and a phone message
+  from the Harbourmaster announce it that morning, and
+  the bay gains a course — a teal start gate (two buoys
+  and a ring on the water) south-west of the marina and
+  six amber checkpoint buoys looping around Sable
+  Island's west side, bobbing on the same swell as the
+  dolphin pod's waters. Sail any boat or skiff through
+  the gate and the run starts — no countdown, the
+  crossing is the start; the next buoy pulses, the
+  prompt counts your checkpoints and the clock, and
+  coming home through the gate banks the time. Your
+  best sits in Phone → Stats → Records as "⛵ Harbour
+  Regatta" next to the Bay Circuit, and beating 1:00
+  wins the $250 purse once that day (a second, faster
+  run still improves your best — it just doesn't pay
+  twice).
+- **Market day**: three canopy stalls stand on the
+  Coral Shores promenade for the day — amber food,
+  teal parts, rust curios, in the same striped-canopy
+  language as the permanent market props — with a small
+  crowd of townsfolk browsing and chatting between
+  them. The food stall sells the Harbour Wraps lines;
+  the parts stall names the day's deal, and Lina's
+  bench then shows that one upgrade at 25% off (the
+  price on the button is the price charged — one
+  function computes both) until you buy it once; the
+  curios stall fences your whole stash at +20%, and
+  the toast says so. Sleep, and the stalls, the crowd,
+  the buoys and any unspent deal are gone — the
+  promenade is exactly as it was.
+- **Siting, verified by the placement audit**: the
+  course sits in open water clear of the moored yacht,
+  the tug, the rental skiff's berth and the cargo
+  ship's hull; the stalls stand on the pedestrian
+  promenade clear of the driven lanes, the bridge
+  ramp's landing and every shop door (the audit's first
+  draft caught a stall on the ramp landing and moved
+  it — the check now guards all three stalls and their
+  canopy corners).
+- **Not claimed**: the regatta is a time trial against
+  the clock — there are no AI racers, no rival boats
+  and no simulated opponents, and the Wire copy says
+  "time trial" rather than dressing it up as a race
+  fleet. The stalls are one-day fixtures, not new
+  permanent shops: the parts deal is a voucher spent
+  at Lina's existing bench, not a second shop, and the
+  curios price is the existing fence price with a
+  market-day bonus, not a new economy. Nothing about
+  the world's permanent geometry, collision or palette
+  changes — teal and amber throughout, no new colours.
+
+## Phase 48 — the Harbour Crown (endgame empire chain)
+
+- **The auction set-piece**: while the chain's third
+  part is live, the seized mansion on the Northgate
+  row has its sale party on the frontage — an
+  auctioneer at a small wooden podium on the east
+  steps, Meridian's bidder (broad build, harbour-grey
+  jacket) and a harbour bidder opposite, all named
+  procedural rigs with floating labels inside 42u, in
+  the QuietHarbour figure language. The party is there
+  because the arc record says so — it appears when the
+  part opens, survives a reload, and is gone once the
+  auction settles. Nothing else about the mansion row
+  changes; the spots are placement-audited against the
+  mansion blockers.
+- **The Vantara Sovereign**: the Tempest family's
+  grand-touring elder — the same long bonnet, set-back
+  cabin and ducktail deck, a touch longer and wider —
+  wearing its fixed two-tone livery: deep harbour teal
+  paint under a GOLD roof panel, a gold waist spear
+  running the body's length, a gold deck band and gold
+  exhaust tips. The gold is livery, not paint: Lina's
+  respray can change the teal and the crown stays gold.
+  It is never seen in traffic, never on a forecourt —
+  the only Sovereign in Port Sable is the player's.
+- **What the chain looks like in play**: Breakwater
+  Point at the Westbrook shore for the meet; the
+  chandlery street and the Eastmere Light steps for the
+  photographs (the real photo-mode camera, framed the
+  way the Wire arcs taught); the Docks stack yard's
+  container row for the copy, with the hold-channel bar
+  reading "Copying the manifest…"; the mansion frontage
+  for the auction; then the long water run up the east
+  channel — past Eastmere's shore, along Northreach's
+  cliffs — to the jetty below the observatory dome,
+  and the drive back down to Patrol HQ. Every location
+  is an existing place in the world; the chain adds no
+  new geometry except the podium and the car.
+- **Siting, verified by the placement audit**: every
+  mission target is pinned in section 14 — the meet
+  sits exactly on Breakwater Point clear of the
+  viewpoint's blockers, both photographs stand clear of
+  Eastmere's buildings, the container point is quay
+  ground (the first candidate stood on the bridge deck
+  and was moved), the auction frontage and its three
+  figures clear the mansion row, and the jetty landing
+  is open water east of the Northreach cliffs with the
+  whole sailing line walked on the water rig.
+- **Not claimed**: the auction is a dialogue
+  set-piece, not a bidding simulation — there is no
+  paddle-raising minigame and no rival bid ladder; the
+  decision is the one the player made on the phone,
+  and the room reacts to it. The bagman in Part 1 is
+  shadowed by authored stops, not a simulated NPC
+  walking a route — the engine's tail kind and photo
+  kind cannot combine in one mission, and the doc
+  says so. The wanted ceiling in Part 2 is a mission
+  rule (Voss's pressure on the port authority), not a
+  change to the police system. Nothing about the
+  world's permanent geometry, collision or palette
+  changes — teal and amber, and now one gold crown,
+  throughout.
+
+## Phase 49 — regression marathon (an audit round)
+
+- **Nothing visual changed, and nothing visual is
+  claimed.** This round added no geometry, no
+  materials, no palette entries and no effects. Its
+  three fixes are invisible by design: leaderboard
+  posts now carry the player's own multiplayer name,
+  the Crown's Sovereign reward re-delivers itself if
+  its one storage snapshot was overwritten before a
+  reload, and the physics build script's export list
+  matches what the loader asks for. The fourth change
+  is a comment. What this section can honestly record
+  is verification, not visuals: the placement audit
+  still prints ALL PLACEMENTS CLEAR across all 14
+  sections (the world the previous sections describe
+  is the world that ships), the initial bundle is
+  unchanged in class (≈641.2 kB gzip), and no frame
+  of the game was re-rendered, re-lit or re-textured
+  by this round. Playability remains the user's own
+  smoke test, as in every section above.
+
+## Phase 50 — v3.0 finale (version stamp + credits)
+
+- **Two visible touches, both typographic.** The start
+  screen's stamp now reads "v3.0 — Complete Edition"
+  in the same .version-stamp style (muted, letterspaced,
+  under the tagline) — no layout moved. Phone → Settings
+  gains a closing **About & credits** section in the
+  page's own bank-row / phone-tip idiom: the version row,
+  eleven cast rows (name left, role right), and three
+  short paragraphs — the originality line, the tech
+  credits, and the honest print. No new colours, no new
+  components; the section inherits the phone's existing
+  theme variables, so all five personal themes dress it
+  unchanged, and nothing in it is text-selectable, like
+  the rest of the UI.
+- **Not claimed:** no frame of the world was re-rendered,
+  re-lit or re-textured by this round; the world that
+  ships is the Phase 49-verified world. The Phase 50
+  recount changed numbers in documents, not a single
+  state in the game: the ledger as written is
+  104 ✅ / 8 🟡 / 0 ⬜ over 112 topics, and the eight
+  partial lines keep the honest reasons they always
+  carried (pocket interiors, the farm-corner countryside,
+  no structural destruction, procedural faces, no cuff
+  IK, authored-not-tree branching, no rota sim,
+  day-scoped ambient persistence). Playability remains
+  the user's own smoke test — the consolidated list is
+  in docs/RELEASE_3_0.md.

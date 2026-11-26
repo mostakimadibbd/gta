@@ -2,15 +2,15 @@ import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, addCrime, processPendingCrimes, resetAfterArrest, resetAfterWasted, persistSavedCar, persistStoredCars, persistSkills, persistZoneRep, bark, toast } from "../game/store";
-import { M, currentTarget, endMission, persist, effectivePayout, recordBest, altActive, ngCopMult, ngBustMult } from "../game/missionState";
+import { M, currentTarget, endMission, persist, effectivePayout, recordBest, altActive, activeTargets, ngCopMult, ngBustMult } from "../game/missionState";
 import { J } from "../game/jobs";
 import { gates, type QualityTier } from "../game/quality";
-import { perf, SIM_STEP, SIM_MAX_SUBSTEPS, trafficDensityShare, pedDensityFactor, viewStreamScale } from "../game/perf";
+import { perf, SIM_STEP, SIM_MAX_SUBSTEPS, trafficDensityShare, pedDensityFactor, viewStreamScale, trafficReserveAlwaysOut } from "../game/perf";
 import { pushPhoneMsg } from "../game/phone";
 import { pushNews } from "../game/feed";
 import { ROAD_COORDS, CORAL_ROAD_X, CORAL_ROAD_Z, NORTH_ROAD_X, NORTH_ROAD_Z, BUS_STOPS, REGISTERS, PAWN_SHOP, DEALERSHIP, VENDOR, districtAt, isBlocked, inNorth, onIsland, MANSION_DRIVE, groundYAt, CAR_MODELS, buildings, props as WORLD_PROPS } from "../world";
 import { lightAllows } from "../game/lights";
-import { depenetrateCar, depenetrateNpc } from "../game/depenetrate"; // Phase 25: spawn guard + settled sweep
+import { depenetrateCar, depenetrateNpc, guardRadius } from "../game/depenetrate"; // Phase 25: spawn guard + settled sweep
 import { ECO } from "../game/economy";
 import { seasonSun, tickSeasonVisuals, seasonWatcher, seasonTint, type SunWarp } from "../game/season";
 import { nudgeStock } from "../game/invest";
@@ -24,6 +24,8 @@ import { seedRagdoll, stepRagdoll, poseRigFromRagdoll } from "../game/ragdoll";
 import { tickDispatch, stepDispatchDrive } from "../game/dispatch";
 import { ESCORT, startEscort, stepEscort, cancelEscort } from "../game/escort";
 import { rhythmFactor } from "../game/rhythm";
+import { tickHeat, searchSeconds } from "../game/heat"; // Phase 29: evidence decay tick + longer searches
+import { deliverSovereign, armExposeSeries, EXPOSE_EDITIONS } from "../game/crown"; // Phase 48: the Crown's consequences
 import { HORN } from "../game/horn";
 
 // Phase 13: seasonal sun-warp scratch (written by seasonSun each frame)
@@ -205,8 +207,11 @@ function initWorld() {
     if (brontoU) { brontoU.kind = "bronto"; brontoU.color = "#5c6650"; }
     // Phase 25: spawn guard — no traffic unit starts life inside a
     // building collider (the lanes are audited clear; this is the
-    // belt-and-braces pass for any future placement slip)
-    for (const t of G.traffic) depenetrateNpc(t);
+    // belt-and-braces pass for any future placement slip). Phase 26:
+    // destinations are checked against the other units, so the pass
+    // can never shove one lane's car into its neighbour.
+    const initObs = G.traffic.map((t) => ({ x: t.x, z: t.z, r: guardRadius(t.kind) }));
+    for (const t of G.traffic) depenetrateNpc(t, initObs.filter((o) => o.x !== t.x || o.z !== t.z));
   }
   if (G.peds.length === 0) {
     for (let i = 0; i < 14; i++) {
@@ -322,16 +327,18 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     buildHumanoid({ top: "#c9a227", bottom: "#274268", skin: "#ffdbac", hair: "#4a2f1a", topStyle: "varsity", gender: "m", hairStyle: "flat" }),
   ], []);
   const drillT = useRef(0); // Phase 7: heist strongroom drill progress
+  const crownT = useRef(0); // Phase 48: crown2 manifest-copy channel progress
   // ---- Phase 17: Harbour Wire mission machinery — the photo-arm
   // state (which step is framed + when it was armed) and the tail
   // mission's courier van (a dedicated state, NOT a traffic unit:
   // it drives an authored loop on the road grid, axis-aligned) ----
   const photoArm = useRef({ step: -1, at: 0 });
-  const courier = useRef<{ key: string; x: number; z: number; heading: number; wp: number; pauseT: number; closeT: number; farT: number } | null>(null);
+  const courier = useRef<{ key: string; x: number; z: number; heading: number; wp: number; pauseT: number; closeT: number; farT: number; armed: boolean } | null>(null);
   const courierRef = useRef<THREE.Group>(null);
   const eventRefs = useRef<Array<THREE.Group | null>>([]);
   const eventCarRef = useRef<THREE.Group>(null);
   const eventState = useRef<{ kind: string; x: number; z: number; heading: number; until: number; barked: boolean } | null>(null);
+  const quietBeats = useRef<Set<number>>(new Set()); // Phase 37: quiet2 conversation beats fired this attempt
   const eventTimer = useRef(50);
   const vitals = useRef({ driveAcc: 0, sprintAcc: 0, stamDelay: 0, lastHealth: 100, lastShotAcc: 0, hurtAt: -99 });
   const disguise = useRef<{ carId: number; district: string }>({ carId: -2, district: "" });
@@ -406,6 +413,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
   const shadowKey = useRef({ cx: Infinity, cz: Infinity, bucket: Infinity, on: false, sizeKey: "" });
   const shadowTick = useRef(0);
   const depenAcc = useRef(0); // Phase 25: settled-car sweep accumulator
+  const heatAcc = useRef(0); // Phase 29: evidence decay tick accumulator (1 Hz)
   // Phase 12: the dog's owner never changes after world init
   const dogOwnerIdx = useMemo(() => G.peds.findIndex((p) => p.hasDog), []);
 
@@ -413,6 +421,18 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     const dt = Math.min(delta, 0.05);
     const t = clock.elapsedTime;
     G.timeS = t;
+    // Phase 29: 1 Hz evidence decay — the patrol's file thins while
+    // the player stays clean and unseen (game/heat.ts owns the rules;
+    // playerSeen is last step's LOS result, a frame's lag at 1 Hz is
+    // nothing). Runs even at 0 stars: unseen is trivially true there.
+    // Phase 30 audit hardening: while the arrest ESCORT is walking
+    // the player to the patrol car they are in custody — the LOS
+    // check reads the patrol CAR's position, and in heavy fog its
+    // sight radius can shrink below the officer's walk distance,
+    // which would have let the file thin mid-arrest. Custody counts
+    // as seen, unconditionally.
+    heatAcc.current += dt;
+    if (heatAcc.current >= 1) { tickHeat(heatAcc.current, playerSeen.current || ESCORT.active); heatAcc.current = 0; }
     // Phase 25: 1 Hz settled-car depenetration sweep — a car at rest
     // that somehow ended up intersecting a building collider (a
     // physics shove, a restored snapshot, a placement slip) is eased
@@ -423,14 +443,30 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     depenAcc.current += dt;
     if (depenAcc.current >= 1) {
       depenAcc.current = 0;
+      // Phase 26 exemptions (audit): the sweep must never shove a car
+      // the player is entering/exiting or standing at the door of
+      // (door reach is 3.6u — the exemption is 4.5u), never move a
+      // car with a job role (the valet customer's car, the tow
+      // target — their systems own them), and never move a
+      // dispatched service unit. Destinations are also checked
+      // against neighbouring cars (game/depenetrate.ts) so a push
+      // out of a wall can't land the car inside another car.
+      const carObs = G.cars.filter((c) => !c.storedAway).map((c) => ({ x: c.state.x, z: c.state.z, r: guardRadius(c.kind) }));
       for (let i = 0; i < G.cars.length; i++) {
         const c = G.cars[i];
         if (c.storedAway || c.state.speed !== 0) continue;
         if (G.driving && i === G.activeCarId) continue;
-        depenetrateCar(c);
+        if (i === J.valetCarId || i === J.towCarId) continue;
+        if (!G.driving) {
+          const dx = c.state.x - G.playerPos.x, dz = c.state.z - G.playerPos.z;
+          if (dx * dx + dz * dz < 4.5 * 4.5) continue; // player at the door
+        }
+        depenetrateCar(c, carObs.filter((o) => o.x !== c.state.x || o.z !== c.state.z));
       }
+      const npcObs = G.traffic.map((t) => ({ x: t.x, z: t.z, r: guardRadius(t.kind) }));
       for (const tc of G.traffic) {
-        if (tc.speed === 0 && (tc.parked || tc.rushOnly)) depenetrateNpc(tc);
+        if (tc.dispatch) continue; // dispatch owns the unit (Phase 26)
+        if (tc.speed === 0 && (tc.parked || tc.rushOnly)) depenetrateNpc(tc, npcObs.filter((o) => o.x !== tc.x || o.z !== tc.z));
       }
     }
     // ---- day cycle (5-minute full cycle; L pauses/resumes it from App) ----
@@ -449,7 +485,12 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     const night = THREE.MathUtils.clamp(-elev * 1.4 + 0.35, 0, 1);
     G.nightFactor = night;
     if (sun.current) {
-      sun.current.castShadow = G.settings.shadows; // Settings toggle (PDF delta C)
+      // Settings toggle (PDF delta C) — Phase 45: the Low preset
+      // forces shadows OFF (the shadow pass is the largest single
+      // GPU cost a weak phone can shed; the toggle still rules on
+      // Medium/High). With castShadow false three skips the shadow
+      // render entirely, map allocation included.
+      sun.current.castShadow = G.settings.shadows && G.settings.quality !== "low";
       sun.current.intensity = theme.sunIntensity * THREE.MathUtils.clamp(elev + 0.45, 0.12, 1);
       sun.current.color.set(theme.sunColor);
       // Phase 12 shadow cost control (the shadow camera still FOLLOWS
@@ -645,7 +686,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // Phase 16: at HIGH traffic density the reserve never parks —
       // the whole pool circulates all day.
       if (car.rushOnly) {
-        const densHigh = G.settings.trafficDensity === "high";
+        const densHigh = trafficReserveAlwaysOut(); // Phase 46: via perf.ts — the Low preset's ceiling reaches this reader too
         if (!rush && !densHigh && !car.parked && distP > 60) {
           car.parked = true; car.x = car.parkX ?? car.x; car.z = car.parkZ ?? car.z;
           car.heading = car.parkHeading ?? car.heading; car.speed = 0;
@@ -1012,8 +1053,12 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     let seen = false;
     if (want > 0) {
       // crouch-behind-cover (A6): crouched against a wall/car shrinks the
-      // sight radius further — G.inCover is computed in the vitals block
-      const sightR = 58 * (1 - G.fogAmt * 0.45) * (1 - G.rainAmt * 0.15) * (G.crouched && !G.driving ? (G.inCover ? 0.62 : 0.85) : 1);
+      // sight radius further — G.inCover is computed in the vitals block.
+      // Phase 33 PEEK: aiming out of combat cover exposes you — the
+      // sight discount falls back to the plain-crouch 0.85 while you
+      // aim (the cover factor only holds while you stay tucked).
+      const peek = G.inCombatCover && G.aiming;
+      const sightR = 58 * (1 - G.fogAmt * 0.45) * (1 - G.rainAmt * 0.15) * (G.crouched && !G.driving ? (G.inCover ? (peek ? 0.85 : 0.62) : 0.85) : 1);
       for (const cop of G.cops) {
         if (!cop.active) continue;
         const d = Math.hypot(cop.x - px, cop.z - pz);
@@ -1021,8 +1066,9 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       }
       if (!seen && want >= 4) seen = true; // police heli keeps eyes on you at 4+ stars
       playerSeen.current = seen;
+      G.copSeen = seen; // Phase 29: shared mirror for the Fixer's LOS refusal
       if (seen) { lastKnown.current = { x: px, z: pz }; G.wantedCooldown = 0; }
-    } else { playerSeen.current = false; lastKnown.current = null; }
+    } else { playerSeen.current = false; G.copSeen = false; lastKnown.current = null; }
     G.cops.forEach((cop, i) => {
       const should = i < Math.min(6, want + (want > 0 ? 1 : 0));
       if (should && !cop.active) {
@@ -1192,7 +1238,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const disguised = disguise.current.carId !== -2 && (G.activeCarId !== disguise.current.carId || districtAt(px, pz) !== disguise.current.district);
       // Phase 13: riding the Sable Line never bleeds heat (the tram is
       // not a hiding place) — the cooldown simply doesn't run up there
-      if (!seen && G.tramRide < 0 && G.busRide < 0) { G.wantedCooldown += dt * (disguised ? 1.6 : 1); if (G.wantedCooldown > 11) { G.wanted -= 1; G.starHeat = 0; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup(disguised ? "New wheels, new district — heat lost faster" : "Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
+      if (!seen && G.tramRide < 0 && G.busRide < 0) { G.wantedCooldown += dt * (disguised ? 1.6 : 1); if (G.wantedCooldown > searchSeconds()) { G.wanted -= 1; G.starHeat = 0; G.wantedCooldown = 0; lastKnown.current = null; cb.current.popup(disguised ? "New wheels, new district — heat lost faster" : "Heat lost — wanted level down"); bark("Dispatch", "Visual lost. Suspect heat level dropping — keep searching."); } }
       // busted: cop close + player slow (unchanged rule, cleaner condition;
       // crouched in cover slows the grab — A6). Phase 13: the patrol
       // never boards the tram — no bust while riding, they wait below.
@@ -1202,7 +1248,10 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         G.bustTimer = 3;
       } else if (nearestCop < 7.5 && pSpeed < 2.5 && G.tramRide < 0 && G.busRide < 0) {
         // Phase 20: NG+ arrests land quicker (+10%/level, cap +30%)
-        G.bustTimer += dt * (G.inCover ? 0.6 : 1) * ngBustMult();
+        // Phase 33: the cover relief (0.6×) is suspended while you
+        // PEEK — aiming out of combat cover means your head and gun
+        // are up, and the grab lands at the normal rate.
+        G.bustTimer += dt * (G.inCover && !(G.inCombatCover && G.aiming) ? 0.6 : 1) * ngBustMult();
         if (G.bustTimer > 3) {
           // Phase 16: ON FOOT, the bust becomes the escort scene when
           // a patrol car is in reach; otherwise (in a car, swimming,
@@ -1224,6 +1273,16 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       if (G.statusTimer > 0.4 && G.statusTimer < 0.5) { /* overlay handled by HUD */ }
     }
     // ---- missions ----
+    // Phase 28 audit: the tail courier is retired by failMission /
+    // completion, but a mission can also end through paths that
+    // never reach either (NG+ stands the active mission down via
+    // endMission() from game/ngplus.ts, which cannot reach this
+    // component's ref). A courier left behind would render at the
+    // quay forever — and a later tail mission whose key matched
+    // the stale entry would inherit its armed/mid-route state
+    // instead of a fresh spawn. Self-heal: no active tail mission
+    // in play = no courier.
+    if (courier.current && !(M.active && M.phase === "play" && M.active.kind === "tail")) courier.current = null;
     if (M.active && M.phase === "play") {
       const def = M.active;
       M.timer -= dt;
@@ -1255,6 +1314,37 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
             if (G.hold?.label.startsWith("Drilling")) G.hold = null;
           }
         }
+        // ---- Phase 48: crown2 "Cold Storage" — the manifest copy.
+        // The channel mirrors the heist2 drill (the same G.hold
+        // presentation): hold position on foot within 7u of the
+        // marked container for 8 s while the seal reader copies.
+        // Starting the copy trips the seal's quiet alarm (wanted 2 —
+        // the heist2 alarm precedent). For the WHOLE mission the
+        // patrol's escalation is capped at 3★ — the narrative device
+        // is Voss leaning on the port authority, implemented as a
+        // per-frame clamp inside this mission block (an existing
+        // mission-wanted tool, not a new police system): crimes
+        // still raise wanted up to the ceiling and evidence still
+        // accrues; the escape step still needs wanted 0 to bank. ----
+        if (def.id === "crown2") {
+          if (G.wanted > 3) G.wanted = 3;
+          if (M.step === 0 && tgt && !G.driving) {
+            const dCopy = Math.hypot(tgt[0] - px, tgt[1] - pz);
+            if (dCopy < 7) {
+              crownT.current += dt;
+              if (crownT.current > 0.1 && G.wanted < 2) { G.wanted = 2; G.wantedCooldown = 0; sfx.alarm(); cb.current.popup("The seal chirps — a quiet alarm. The patrol stirs, but Voss's ceiling holds: no more than 3★ tonight."); }
+              G.hold = { label: "Copying the manifest…", progress: Math.min(1, crownT.current / 8) };
+              if (crownT.current >= 8) {
+                crownT.current = 0; G.hold = null; M.step = 1; M.checkpointStep = 1; sfx.cash();
+                cb.current.popup("Manifest copied — every crate a lie, in writing. Lose the heat and reach the safehouse.");
+                pushNews("Cold-storage seal fault at the Docks", "Port authority logs a refrigeration-seal fault in the stack yard overnight. Meridian Holdings declined to comment on what a fish container needs a data core for.");
+              }
+            } else {
+              crownT.current = Math.max(0, crownT.current - dt * 2);
+              if (G.hold?.label.startsWith("Copying")) G.hold = null;
+            }
+          }
+        }
         // ---- Phase 17: THE HARBOUR WIRE kinds ----
         // "photo": meet steps are plain reach steps; evidence steps
         // ARM when the player stands in the ring (bark explains) and
@@ -1268,19 +1358,28 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
         // fail through the standard failMission path (R retries).
         let handled17 = false;
         if (def.kind === "photo" && tgt) {
-          handled17 = true;
-          G.objective = { x: tgt[0], z: tgt[1], label: def.objectiveText, kind: def.kind };
-          const meet = M.step < (def.meetSteps ?? 0);
+          // Phase 27: the photo steps are counted by def.photoSteps
+          // when present (the Ledger Line's hybrid: photograph, THEN
+          // run). Steps beyond the photo steps fall through to the
+          // generic reach-step block below (handled17 stays false) —
+          // the Wire's defs set no photoSteps, so every post-meet
+          // step is a photo step exactly as before.
+          const meetSteps = def.meetSteps ?? 0;
+          const photoTotal = def.photoSteps ?? (def.targets.length - meetSteps);
+          const isPhotoStep = M.step >= meetSteps && M.step < meetSteps + photoTotal;
+          handled17 = M.step < meetSteps || isPhotoStep;
+          if (handled17) G.objective = { x: tgt[0], z: tgt[1], label: def.objectiveText, kind: def.kind };
+          const meet = M.step < meetSteps;
           const dP = Math.hypot(tgt[0] - px, tgt[1] - pz);
           if (meet) {
             if (dP < 7) {
-              if (M.step < def.targets.length - 1) { M.collected = new Set(M.collected).add(M.step); M.step += 1; M.checkpointStep = M.step; photoArm.current = { step: -1, at: 0 }; sfx.pickup(); cb.current.popup("Ines Marlo — 'Now the evidence. Three spots. Make them undeniable.'"); }
+              if (M.step < def.targets.length - 1) { M.collected = new Set(M.collected).add(M.step); M.step += 1; M.checkpointStep = M.step; photoArm.current = { step: -1, at: 0 }; sfx.pickup(); cb.current.popup(`${def.giver} — 'Now the evidence. ${photoTotal} spot${photoTotal === 1 ? "" : "s"}. Make them undeniable.'`); }
               else completeMission();
             }
-          } else if (dP < 10) {
+          } else if (isPhotoStep && dP < 10) {
             if (photoArm.current.step !== M.step) {
               photoArm.current = { step: M.step, at: t };
-              bark("Ines Marlo", `That's the spot (${M.step}/${def.targets.length - (def.meetSteps ?? 0)} evidence) — frame it: Phone → Camera → Capture.`);
+              bark(def.giver, `That's the spot (${M.step - meetSteps + 1}/${photoTotal} evidence) — frame it: Phone → Camera → Capture.`);
               sfx.click();
             }
             // a capture stamped (App → G.lastPhotoAt, same clock as
@@ -1292,10 +1391,23 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
               // capture taken anywhere else can never bank on re-entry
               M.collected = new Set(M.collected).add(M.step);
               sfx.pickup();
-              if (M.step < def.targets.length - 1) { M.step += 1; M.checkpointStep = M.step; photoArm.current = { step: -1, at: 0 }; cb.current.popup(`📷 Evidence photographed (${M.collected.size}/${def.targets.length - (def.meetSteps ?? 0)})`); }
+              if (M.step < def.targets.length - 1) {
+                M.step += 1; M.checkpointStep = M.step; photoArm.current = { step: -1, at: 0 };
+                if (def.runTimer && M.step >= meetSteps + photoTotal) {
+                  // Phase 27: the last photograph is banked and the
+                  // RUN begins — the rival crew's countdown replaces
+                  // the mission clock (the HUD shows it; expiry fails
+                  // through the standard timer path, R retries).
+                  M.timer = def.runTimer;
+                  bark(def.giver, def.id === "crown1" ? "Got it — now RUN. His people are already rolling; beat them to the Harbour Wire newsroom." : "Got it — now RUN. Their car is already rolling; beat it to the Northgate Loft.");
+                  cb.current.popup(`📷 Photographed — the rival crew is rolling (${def.runTimer} s)`);
+                } else {
+                  cb.current.popup(`📷 Evidence photographed (${M.collected.size}/${photoTotal})`);
+                }
+              }
               else completeMission();
             }
-          } else if (photoArm.current.step === M.step) {
+          } else if (isPhotoStep && photoArm.current.step === M.step) {
             // ---- Phase 18 audit: PHOTO FARMING HOLE. Phase 17 armed
             // a step on entering the ring and banked on ANY capture
             // stamped after the arm — but the arm SURVIVED leaving
@@ -1318,12 +1430,30 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
             // also restores the REAL collected set — see missionState)
             const wp0 = Math.max(0, Math.min(M.step, def.targets.length - 1));
             const s0 = def.targets[wp0];
-            courier.current = { key, x: s0[0] + 14, z: s0[1], heading: -Math.PI / 2, wp: wp0, pauseT: 0, closeT: 0, farT: 0 };
-            bark("Ines Marlo", "That's him — the grey van pulling out. Stay in the band: 12 to 45 metres.");
+            // Phase 27: a holdStart tail (the Ledger Line's van, whose
+            // meet is a district away from where the mission was
+            // accepted) spawns DISARMED — it waits at the quay until
+            // the player first closes within 55 m, so the travel-in
+            // can't burn the far-fail timer. A checkpoint retry
+            // (checkpointStep > 0) spawns armed, as before.
+            courier.current = { key, x: s0[0] + 14, z: s0[1], heading: -Math.PI / 2, wp: wp0, pauseT: 0, closeT: 0, farT: 0, armed: !def.holdStart || M.checkpointStep > 0 };
+            if (courier.current.armed) bark(def.giver, "That's him — the grey van pulling out. Stay in the band: 12 to 45 metres.");
           }
           const cv = courier.current;
           const wpT = def.targets[cv.wp];
-          if (cv.pauseT > 0) {
+          if (!cv.armed) {
+            // waiting at the meet: no driving, no band, no fail
+            // timers — just the marker and the hold label. The
+            // mission clock still runs (the def's timeLimit is the
+            // fairness margin for the travel-in).
+            const dMeet = Math.hypot(cv.x - px, cv.z - pz);
+            G.objective = { x: cv.x, z: cv.z, label: def.objectiveText, kind: def.kind };
+            G.hold = { label: `The van waits at the quay — get in position behind it (${Math.round(dMeet)} m)`, progress: Math.max(0, 1 - dMeet / 300) };
+            if (dMeet <= 55) {
+              cv.armed = true;
+              bark(def.giver, "That's him — the grey van pulling out. Stay in the band: 12 to 45 metres.");
+            }
+          } else if (cv.pauseT > 0) {
             cv.pauseT -= dt;
             if (cv.pauseT <= 0) {
               // the stop counts only if the player held the band
@@ -1337,7 +1467,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
                 if (M.collected.size >= def.targets.length) { courier.current = null; if (G.hold?.label.startsWith("Tail:")) G.hold = null; completeMission(); }
                 else { cv.wp = (cv.wp + 1) % def.targets.length; M.step = cv.wp; M.checkpointStep = cv.wp; }
               } else {
-                bark("Ines Marlo", "You weren't in position for that stop — stay with him, the loop repeats.");
+                bark(def.giver, "You weren't in position for that stop — stay with him, the loop repeats.");
                 cv.wp = (cv.wp + 1) % def.targets.length;
                 if (cv.wp === 0) { /* a full missed loop: keep tailing, stops already banked stay banked */ }
                 M.step = cv.wp;
@@ -1350,7 +1480,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
             else if (Math.abs(dz) > 0.6) { cv.heading = dz > 0 ? 0 : Math.PI; cv.z += Math.sign(dz) * Math.min(Math.abs(dz), 7.2 * dt); }
             else { cv.pauseT = 3.2; }
           }
-          if (courier.current) {
+          if (courier.current && cv.armed) {
             const dC = Math.hypot(cv.x - px, cv.z - pz);
             if (dC < 10) { cv.closeT += dt; if (cv.closeT > 2.5) { courier.current = null; if (G.hold?.label.startsWith("Tail:")) G.hold = null; failMission("Too close — the courier made you and burned the route."); } }
             else if (dC > 55) { cv.farT += dt; if (cv.farT > 6) { courier.current = null; if (G.hold?.label.startsWith("Tail:")) G.hold = null; failMission("You lost him in traffic — the route's gone cold."); } }
@@ -1362,18 +1492,40 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
             }
           }
         }
-        if (tgt && !handled17 && !(def.id === "heist2" && M.step === 0)) {
+        if (tgt && !handled17 && !(def.id === "heist2" && M.step === 0) && !(def.id === "crown2" && M.step === 0)) {
           G.objective = { x: tgt[0], z: tgt[1], label: def.objectiveText, kind: def.kind };
           const d2 = (tgt[0] - px) ** 2 + (tgt[1] - pz) ** 2;
           const radius = def.kind === "collect" ? 3.4 : 7;
           if (d2 < radius ** 2) {
             if (def.kind === "escape" && G.wanted > 0) { /* must lose heat first — HUD text explains */ }
-            else if (M.step < def.targets.length - 1) { M.collected = new Set(M.collected).add(M.step); M.step += 1; M.checkpointStep = M.step; sfx.pickup(); cb.current.popup(def.kind === "collect" ? "Ledger page recovered!" : "Checkpoint!"); }
+            else if (M.step < activeTargets(def).length - 1) { M.collected = new Set(M.collected).add(M.step); M.step += 1; M.checkpointStep = M.step; sfx.pickup(); cb.current.popup(def.kind === "collect" ? (def.collectLabel ?? "Ledger page recovered!") : "Checkpoint!"); }
             else completeMission();
           }
         }
+        // ---- Phase 37: quiet2's en-route conversation. Lina rides
+        // the way every passenger in this game rides — kerbside
+        // figure + subtitle barks (the taxi Chatty pattern; there is
+        // no in-car passenger mesh for anyone). Beats fire once each,
+        // only while she's aboard (step 1) and the player is driving:
+        // boarding, rolling clear of the garage, then three northward
+        // thresholds — the last (z < −305) is only reachable over the
+        // Northreach bridge, i.e. with the district loaded, which the
+        // start gate already guaranteed. The fired-set clears
+        // whenever the ride isn't in step 1, so a retry replays the
+        // conversation from the top.
+        if (def.id === "quiet2" && M.step === 1) {
+          const fired = quietBeats.current;
+          const pz2 = G.playerPos.z;
+          const dPickup = Math.hypot(G.playerPos.x + 40, G.playerPos.z + 28);
+          if (G.driving && !fired.has(0)) { fired.add(0); bark("Lina Park", "Right. I'm in. Northreach, driver — the observatory first. Marlo's article had a photograph and everything."); }
+          else if (G.driving && !fired.has(1) && dPickup > 60) { fired.add(1); bark("Lina Park", "You know I can tell when you're about to do something stupid in this car? There's a noise. The engine does it too."); }
+          else if (G.driving && !fired.has(2) && pz2 < -120) { fired.add(2); bark("Lina Park", "Northgate already. Huh. From the yard, the whole north of town is just… weather."); }
+          else if (G.driving && !fired.has(3) && pz2 < -230) { fired.add(3); bark("Lina Park", "That bridge up ahead — Elias says his grandfather poured its footings. Half the town's grandfathers did, if you ask them."); }
+          else if (G.driving && !fired.has(4) && pz2 < -305) { fired.add(4); bark("Lina Park", "Oh. Oh, look at the water from up here. Okay. Day off: justified."); }
+        }
       }
     }
+    if (!(M.active && M.phase === "play" && M.active.id === "quiet2" && M.step === 1) && quietBeats.current.size) quietBeats.current.clear();
     // ---- property: park on the villa drive (owned) to garage-save the car —
     // it reappears there next session (localStorage, via the store loader)
     {
@@ -1381,7 +1533,15 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       const car = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
       // Phase 7: the Coral apartment's parking spot is garage-save point #2
       const ownsApt = (() => { try { return localStorage.getItem("harborfall-apartment") === "1"; } catch { return false; } })();
-      const onDrive = !!car && Math.abs(car.state.speed) < 0.5 &&
+      // Phase 34 audit: the Phase 32 service units are excluded —
+      // this auto-save files ANY car parked here into the stored
+      // garage list + the garage-car snapshot, both of which restore
+      // as OWNED; a job ambulance/tender is a shift vehicle on the
+      // rental discipline (never ownable/storable), and filing one
+      // also orphaned the shift's J.medCarId/fireCarId bookkeeping
+      // (the unit went storedAway mid-shift). persistSavedCar now
+      // refuses the kinds too, but the storedCars push lives here.
+      const onDrive = !!car && car.kind !== "ambulance" && car.kind !== "firetruck" && Math.abs(car.state.speed) < 0.5 &&
         ((G.ownsMansion && Math.abs(car.state.x - MANSION_DRIVE.x) < MANSION_DRIVE.hw && Math.abs(car.state.z - MANSION_DRIVE.z) < MANSION_DRIVE.hd) ||
           (ownsApt && Math.abs(car.state.x - 36) < 4 && Math.abs(car.state.z - 208) < 5));
       if (onDrive && car) {
@@ -1455,6 +1615,17 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           if ((c.state.x - G.playerPos.x) ** 2 + (c.state.z - G.playerPos.z) ** 2 < 2.6 ** 2) { G.inCover = true; break; }
         }
       }
+      // Phase 33: combat cover = the same geometry with a firearm in
+      // hand (a bat or bottle is not a gunfight), on foot, and never
+      // while swimming (the crouch flag can outlive entering water;
+      // the cover claim cannot). Interiors are already excluded:
+      // inCover's own guard requires !G.interior, and the pocket
+      // rooms' furniture is not in the city blocker map the probe
+      // reads, so cover simply never engages indoors — stated, not
+      // faked. Read by the sight/bust maths (peek rule), the HUD
+      // chip and the Player pose.
+      G.inCombatCover = G.inCover && !G.swimming
+        && (G.weaponSel === "pistol" || G.weaponSel === "smg" || G.weaponSel === "shotgun" || G.weaponSel === "carbine");
     }
     // ---- spike strips at 4★+ roadblocks (A5): run them over and the
     // tyre lets go — pull, wobble and a hard speed cap until repaired ----
@@ -1547,7 +1718,16 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
       // Phase 17: a failed tail retires its courier — a retry (R or
       // re-accept) respawns the van at the loop start, never mid-route
       courier.current = null;
-      if (G.hold?.label.startsWith("Tail:")) G.hold = null;
+      // Phase 28 audit: a failed PHOTO mission retires its arm too.
+      // The arm was left standing when a mission died with the
+      // player inside the ring (timer expiry), and an R-retry to
+      // the same step then banked on the first capture taken
+      // ANYWHERE — its timestamp merely had to postdate the stale
+      // arm. A narrow reopening of the Phase 18 farming hole,
+      // across attempts instead of within one.
+      photoArm.current = { step: -1, at: 0 };
+      // Phase 27: the holdStart waiting label clears here too.
+      if (G.hold?.label.startsWith("Tail:") || G.hold?.label.startsWith("The van waits")) G.hold = null;
       G.missionResult = { ok: false, title: M.active.title, reward: 0, items: 0, timeLeft: 0, reason, at: t };
       // Phase 7: remember the checkpoint for an R-key retry; a failed
       // replay simply ends the replay (progress untouched either way)
@@ -1557,6 +1737,10 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
     }
     function completeMission() {
       const def = M.active; if (!def) return;
+      // Phase 28 audit: same stale-arm hygiene as failMission — a
+      // photo mission's final bank calls here directly, leaving the
+      // arm standing for the next photo mission's same-index step.
+      photoArm.current = { step: -1, at: 0 };
       // Phase 5: Ch.6 pays the alternate split when Elias was warned;
       // side arcs advance their own progress and NEVER touch storyIndex.
       const pay = effectivePayout(def);
@@ -1584,7 +1768,7 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
           if (M.storyIndex >= 6) { M.storyDone = true; persist(); cb.current.storyFinished(); }
           persist(); cb.current.event("missionEnd");
         } else if (side) {
-          const cap = side === "heist" ? 2 : 3;
+          const cap = side === "heist" ? 2 : side === "crown" ? 4 : 3;
           M.side[side] = Math.min(cap, M.side[side] + 1);
           if (side === "heist" && M.side.heist === 1) M.heistClean = G.wanted === 0; // prep seen or unseen
           persist();
@@ -1622,6 +1806,113 @@ export default function GameSystems({ paused, physicsRef, theme, cb, tokenCountR
             pushNews("Harbour Wire: PRINT RUN", "The exposé lands whole — routes, payments, the new ledger's skeleton. Solano's lawyers threaten the paper; the paper prints the threat too. Port Sable talks of nothing else.");
             pushPhoneMsg("Ines Marlo", "We did it. The harbour knows, and knowing is the one cargo they can't spill. The Wire's door — and its coffee — are yours for good. Replay the investigation any time from your Missions app.");
             toast("🗞 The Harbour Wire arc complete — Ines Marlo, and the free press of Port Sable, owe you.");
+          }
+          // ---- Phase 27: THE LEDGER LINE fallout (before the
+          // generic arc-complete line, which names only Lina/Voss) ----
+          else if (side === "ledger" && M.side.ledger === 1) {
+            pushPhoneMsg("Petra Vane", "The route's proved and the van never knew. The diner book is next — call me when you're ready to move fast.");
+          }
+          else if (side === "ledger" && M.side.ledger === 2) {
+            pushPhoneMsg("Ines Marlo", "A little bird at the diner says you photographed something interesting, Kade. The Wire pays for interesting. Remember that before your next call.");
+          }
+          else if (side === "ledger" && M.side.ledger >= 3) {
+            // The finale consequence — the Meridian Pair pattern:
+            // fires exactly once (first completion only; replays
+            // returned above), and M.ledgerDone records it. The
+            // choice itself (M.ledgerChoice) locked at decision
+            // time, so a failed attempt re-offers the SAME branch
+            // and the other can never be taken on this slot.
+            M.ledgerDone = true;
+            if (M.ledgerChoice === "ledger-burn") {
+              for (const zone of ["Eastmere", "Westbrook"]) {
+                G.zoneRep[zone] = Math.min(100, (G.zoneRep[zone] ?? 0) + 45);
+              }
+              persistZoneRep();
+              pushNews("Harbour Wire: ASHES OVER EASTMERE", "The diner owner who kept Solano's books says the old ledger went into her stove last night, page by page, and the crews who hunted it across two districts are standing down. Nothing to seize, nothing to sell, nothing to print. The harbour, for once, is quiet on purpose.");
+              pushPhoneMsg("Ines Marlo", "Forty years of harbour history, up a diner chimney. I hope the quiet was worth it, Kade. It never is, for long.");
+            } else {
+              // publish: the story lands on the newsroom's district —
+              // Market Row, where Ines works and Voss's office reads
+              // the Wire (the pair's informant branch likewise moved
+              // its own ground, The Docks).
+              G.zoneRep["Market Row"] = Math.min(100, (G.zoneRep["Market Row"] ?? 0) + 45);
+              persistZoneRep();
+              pushNews("Harbour Wire: THE LEDGER, IN FULL", "Solano's own routes and names, printed above the fold by the Harbour Wire. Eastmere and Westbrook read it twice; by noon, the yards that hunted the book are answering questions instead.");
+              pushPhoneMsg("Det. Mara Voss", "The Wire's special edition just became my office's reading list. Half those names are about to have an honest week, Kade. Good work.");
+            }
+            persist();
+          }
+          // ---- Phase 48: THE HARBOUR CROWN fallout (before the
+          // generic arc-complete line, which names only Lina/Voss).
+          // Fires exactly once per part — first completions only;
+          // replays returned above. The auction consequences key off
+          // M.crownChoice, which locked at decision time; crownDone
+          // records that they landed. ----
+          else if (side === "crown" && M.side.crown === 1) {
+            pushPhoneMsg("Ines Marlo", "The photographs develop beautifully, Rayan — faces, plates, a manifest changing hands twice. The noose has page numbers now. The Docks manifest is next: call me.");
+          }
+          else if (side === "crown" && M.side.crown === 2) {
+            pushPhoneMsg("Det. Mara Voss", "Manifest received and matched against my seizures. Tomorrow's auction is where this ends, Kade — be rested, be rich or be ready. Preferably all three.");
+          }
+          else if (side === "crown" && M.side.crown === 3) {
+            M.crownDone = true;
+            if (M.crownChoice === "crown-buyout") {
+              // The $40,000 escrow was wired at DECISION time
+              // (App.resolveChoice, once — M.crownPaid guards a
+              // retry); what lands here is the dividend itself:
+              // businessDailyNet applies +10% from crownBuyoutLive()
+              // (choice + done + paid), so the Bank's figure and
+              // the morning payout move together from this moment.
+              pushNews("Harbour Wire: THE STAKE SELLS — TO A KADE", "The auction of the old harbour stake lasted eleven seconds: the escrow had already moved. Meridian Holdings' bidder closed his briefcase and left by the service door. The deeds, the moorings, the counting-house rights — Port Sable's harbour now answers to one of its own.");
+              pushPhoneMsg("SableBank", "🏢 Meridian stake acquired. The harbour dividend is live: +10% on all business takings, applied inside your Bank figures from today — the number you see is the number that pays.");
+              pushPhoneMsg("Ines Marlo", "You bought the harbour, Rayan. Legally, even. One run left — the deeds themselves. Call me tomorrow.");
+            } else {
+              // EXPOSE: the $15,000 whistleblower reward already
+              // rode payoutAlt through effectivePayout (never paid
+              // twice). What lands here: edition 1 of the series,
+              // editions 2–3 armed for the next two mornings
+              // (game/crown.ts, on advanceDay's serial guard), and
+              // the harbour's gratitude — reputation up in EVERY
+              // district, the Ledger-publish pattern at full scale.
+              for (const zone of ["Eastmere", "Westbrook", "Northreach", "Sable Island", "Northgate", "Northgate Causeway", "Coral Shores", "Bay Bridge", "The Docks", "Ferry Quarter", "Lantern Park", "Gull Heights", "East Yards", "Market Row"]) {
+                G.zoneRep[zone] = Math.min(100, (G.zoneRep[zone] ?? 0) + 25);
+              }
+              persistZoneRep();
+              pushNews(EXPOSE_EDITIONS[0].title, EXPOSE_EDITIONS[0].body);
+              armExposeSeries();
+              pushPhoneMsg("Det. Mara Voss", "My office reads the Wire with warrants open, Kade. The whistleblower reward is in your payout — and the harbour knows whose it is. It isn't Meridian's.");
+              pushPhoneMsg("Ines Marlo", "Edition one is on the stands. Two more mornings, two more editions — the harbour answers last. The deeds still need their run, Rayan. Call me.");
+            }
+            persist();
+          }
+          else if (side === "crown" && M.side.crown >= 4) {
+            // The finale's 4★ was the mission's own device
+            // (forceWanted — the tipped-off patrol), cleared on
+            // delivery on the wire3 precedent: the receipt is
+            // filed, the injunction is dead, the chase has no
+            // narrative cause left.
+            G.wanted = 0; G.starHeat = 0; G.wantedCooldown = 0;
+            pushNews("Harbour Wire: THE CROWN SETTLES", "The observatory archive sealed the harbour deeds at noon, beyond injunction, beyond Meridian. Patrol HQ confirms the archive receipt is filed. Port Sable's harbour — its moorings, its counting-house, its future — belongs to the harbour again. And in a villa garage across the bay, a one-of-one Vantara Sovereign has a new keeper.");
+            deliverSovereign();
+            pushPhoneMsg("Ines Marlo", "It's over, Rayan. Meridian is a headline, not a landlord. The Sovereign's in your garage — the harbour's crown, with wheels. Drive it like you earned it.");
+            toast("👑 THE HARBOUR CROWN complete — the Vantara Sovereign waits in your garage.");
+          }
+          // ---- Phase 37: THE QUIET HARBOUR fallout (before the
+          // generic arc-complete line, which names only Lina/Voss).
+          // The plaque itself needs no flag: QuietHarbour.tsx renders
+          // it from M.side.quiet >= 3, so it appears with this
+          // completion, persists per slot with the side record, and
+          // leaves when NG+ resets the arc.
+          else if (side === "quiet" && M.side.quiet === 1) {
+            pushPhoneMsg("Old Elias", "Markers are with the harbour office. Beach looks longer without them. Thank you, Rayan.");
+          }
+          else if (side === "quiet" && M.side.quiet === 2) {
+            pushPhoneMsg("Lina Park", "Still thinking about that view. Don't tell the customers I have feelings. — L");
+          }
+          else if (side === "quiet" && M.side.quiet >= 3) {
+            pushNews("Harbour Wire: A QUIETER HARBOUR", "No sirens, no story — our reporter found the news anyway: an old harbourmaster, a brother home, and a bench on the Coral Shores promenade where Port Sable sat still for a whole afternoon. A small brass plaque has appeared on that bench. It reads: For the ones who stayed.");
+            pushPhoneMsg("Tamim Kade", "Coffee was on me and nobody arrested anybody. Best day of my life, statistically. — T");
+            toast("🪑 The Quiet Harbour complete — a brass plaque now sits on the Coral Shores bench.");
           }
           else if (M.side[side] >= 3) pushPhoneMsg(side === "lina" ? "Lina Park" : "Det. Mara Voss", side === "lina" ? "That's the whole line done, Rayan. The garage owes you — come by any time." : "File closed and filed. The parole board has everything. Thank you, Kade.");
           cb.current.event("missionEnd");

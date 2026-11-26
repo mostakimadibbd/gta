@@ -52,6 +52,13 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
 
   const storeCurrent = () => {
     if (!current || G.storedCars.length >= 6) return;
+    // Phase 34 audit: a Phase 32 service unit (job ambulance / fire
+    // tender) is never storable — it is a shift vehicle on the rental
+    // discipline, and takeOut below would hand it back as an OWNED
+    // car while the shift's J.medCarId/fireCarId bookkeeping still
+    // points at the stored entry. The button is hidden for a unit
+    // (see the render), and the guard stands behind it regardless.
+    if (current.kind === "ambulance" || current.kind === "firetruck") return;
     // Phase 13: a car put away in the garage stops being the "last
     // car" — it lives in the garage system now, not on the street
     if (LASTCAR.carIndex === G.cars.indexOf(current)) clearLastCar();
@@ -68,7 +75,10 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
     const stored: StoredCar | undefined = G.storedCars[idx];
     if (!stored) return;
     // swap: the car you're sitting in goes into storage in its place
-    if (current && G.storedCars.length <= 6) {
+    // (Phase 34 audit: unless it's a service unit — never storable;
+    // taking a car out while seated in the job ambulance/tender
+    // simply leaves the unit where it stands, like having no car)
+    if (current && current.kind !== "ambulance" && current.kind !== "firetruck" && G.storedCars.length <= 6) {
       if (LASTCAR.carIndex === G.cars.indexOf(current)) clearLastCar(); // Phase 13: stored = no longer the street last-car
       G.storedCars[idx] = { kind: current.kind, color: current.color, name: CAR_MODELS[current.kind].name, damage: Math.round(current.damage), fuel: Math.round(current.fuel), brokenWindow: current.brokenWindow, tuneLvl: current.tuneLvl ?? 0, brakeLvl: current.brakeLvl ?? 0, flatTyre: current.flatTyre ?? false, driftTyres: current.driftTyres ?? false };
       current.storedAway = true;
@@ -122,8 +132,8 @@ export default function GaragePanel({ zoneId, onClose }: { zoneId: string; onClo
             <div className="garage-section">CURRENT CAR</div>
             <CarCard name={CAR_MODELS[current.kind].name} color={current.color} kind={current.kind}
               damage={current.damage} fuel={current.fuel} brokenWindow={current.brokenWindow}
-              action={G.storedCars.length < 6 ? storeCurrent : undefined}
-              actionLabel={G.storedCars.length < 6 ? "Store this car" : "Garage full (6)"} />
+              action={G.storedCars.length < 6 && current.kind !== "ambulance" && current.kind !== "firetruck" ? storeCurrent : undefined}
+              actionLabel={G.storedCars.length >= 6 ? "Garage full (6)" : current.kind === "ambulance" || current.kind === "firetruck" ? "Service unit — not storable" : "Store this car"} />
           </div>
         )}
         <div className="garage-section">STORED</div>

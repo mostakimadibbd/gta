@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { isBlocked, INTERIORS, groundYAt, isWaterAt, blockersNear, BRIDGE, VAULT_SPOTS } from "../world";
+import { isBlocked, INTERIORS, groundYAt, isWaterAt, blockersNear, BRIDGE, PARK_GARAGE, VAULT_SPOTS } from "../world";
 import { G, toast, bark } from "../game/store";
 import { sfx } from "../game/audio";
 import { isInteractiveTarget, normalizeGameKey } from "../keyboard";
@@ -16,6 +16,7 @@ import { seedRagdoll, stepRagdoll, poseRigFromRagdoll, type RagdollState } from 
 import { padKeys, padMove } from "../game/gamepad";
 import { SIM_STEP, SIM_MAX_SUBSTEPS } from "../game/perf";
 import { touchMove } from "../game/touch";
+import { BIKE_POSE } from "../game/bikepose";
 
 type AnimationState = "Idle" | "Walk" | "Run" | "Driving";
 
@@ -367,8 +368,24 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
           const r = INTERIORS[G.interior];
           return Math.abs(x - r.cx) < r.w / 2 - 0.55 && Math.abs(z - r.cz) < r.d / 2 - 0.55;
         }
-        if (isWaterAt(x, z)) return Math.abs(x) < 175 && z > -320 && z < 365;
+        // Phase 31: the north swim limit follows the chart — it sat
+        // 20u past the farthest northern land (Eastmere −300 →
+        // −320); Northreach's north shore is −368, so the limit is
+        // −388 now (still inside the server's −416 bound).
+        if (isWaterAt(x, z)) return Math.abs(x) < 175 && z > -388 && z < 365;
         if (groundYAt(x, z) > 0.05 || groundYAt(positionRef.current.x, positionRef.current.z) > 0.05) {
+          // Phase 32 audit: the PARKING-GARAGE deck + ramp are
+          // elevated floors too, but this branch only knew the south
+          // bridge's corridor shape — a player who stepped out of a
+          // car on the Northgate deck (z −276..−252) failed the
+          // bridge test (z > 86) at every point and was frozen on
+          // foot until they got back into a car. Inside the garage
+          // footprint, elevated ground defers to the blocker map
+          // instead (the deck's own perimeter walls are blockers, so
+          // the rails still hold and the ramp still lands you at
+          // its ground-floor mouth).
+          const pg = PARK_GARAGE;
+          if (x >= pg.x0 && x <= pg.x1 && z >= pg.z0 && z <= pg.z1) return !isBlocked(x, z, 0.45);
           return Math.abs(x - BRIDGE.x) <= BRIDGE.halfW + 0.4 && z > 86 && z < 238;
         }
         return !isBlocked(x, z, 0.45);
@@ -565,12 +582,29 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
     // ---- pose overrides (applied after the base animation) ----
     const crouchPose = G.crouched && !driving && !G.swimming && !onMoto;
     rig.group.position.y = onMoto || onBike ? -0.15 : crouchPose ? -0.48 : G.sitting && !driving ? -0.42 : 0;
+    // Phase 40: the rider moves WITH the bike — Vehicle publishes
+    // the driven bike's lean (and the bicycle's hop lift) in
+    // BIKE_POSE; the rig rolls by the same angle the bike mesh
+    // uses, about its local forward axis, so rider and machine
+    // read as one body through a corner. Written every frame
+    // (0 off the bikes) so it can never latch.
+    rig.group.rotation.z = (onMoto || onBike) ? BIKE_POSE.lean : 0;
+    if (onBike) rig.group.position.y += BIKE_POSE.hopY;
     if (crouchPose) {
       // crouch: knees bent, torso pitched — reads ~1.25u tall
       rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.05;
       rig.lShin.rotation.x = rig.rShin.rotation.x = 1.25;
       rig.torso.rotation.x = 0.34;
       rig.head.rotation.x = -0.18;
+      // Phase 33: in combat cover the tuck deepens — lower behind
+      // the wall/car line, torso pitched further over the knees.
+      // (While you AIM out of it, the Phase 9 aim layer below raises
+      // the gun arm and head again — the visible peek.)
+      if (G.inCombatCover) {
+        rig.group.position.y = -0.56;
+        rig.torso.rotation.x = 0.44;
+        rig.head.rotation.x = -0.1;
+      }
     }
     if (entering) {
       // slide-in pose: legs swing into the cabin as the glide progresses
@@ -586,7 +620,10 @@ export default function Player({ positionRef, rotationRef, driving, paused, pres
       rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
       rig.lArm.rotation.x = rig.rArm.rotation.x = -0.85;
       rig.lFore.rotation.x = rig.rFore.rotation.x = -0.25;
-      rig.torso.rotation.x = 0.16;
+      // Phase 40: in a wheelie the rider leans back with the rise
+      // (BIKE_POSE.wheelie is the same display amount the bike mesh
+      // pitches by, loop-out overshoot included)
+      rig.torso.rotation.x = 0.16 - BIKE_POSE.wheelie * 0.28;
     } else if (onBike) {
       // cyclist: legs PEDAL (alternating circles) while the bike rolls,
       // hands on the bars, torso leaned in (Phase 6, A3)

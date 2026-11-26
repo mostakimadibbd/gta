@@ -462,8 +462,11 @@ function NorthgateGroup({ night }: { night: number }) {
  * STATIC_BLOCKERS; doors/prompts in Interiors.tsx + Phase7.tsx. */
 function Phase7Frontages({ night }: { night: number }) {
   const policeTex = useMemo(() => makeSignTexture("HARBOUR PATROL HQ", "#16283e", "#cfe0f2", 512), []);
+  const fireTex = useMemo(() => makeSignTexture("SABLE FIRE STATION", "#571d16", "#ffd9a8", 512), []);
   const clinicTex = useMemo(() => makeSignTexture("SABLE CLINIC", "#eef2f0", "#c22e2e", 512), []);
   const cafeTex = useMemo(() => makeSignTexture("CAFÉ CORAL", "#2b1c10", "#ffca7a", 512), []);
+  const warehouseTex = useMemo(() => makeSignTexture("HARBOUR STORAGE · UNIT 7", "#20303a", "#7fd8e8", 512), []);
+  const letsTex = useMemo(() => makeSignTexture("SABLE LETS — TO LET", "#12303f", "#ffca7a", 512), []);
   const restTex = useMemo(() => makeSignTexture("MARINA TABLE", "#241a12", "#ffca7a", 512), []);
   const aptTex = useMemo(() => makeSignTexture("CORAL SHORES APARTMENTS", "#17303a", "#ffe9c9", 512), []);
   const washTex = useMemo(() => makeSignTexture("NORTHGATE CAR WASH", "#0f2c38", "#7fd8e8", 512), []);
@@ -478,6 +481,29 @@ function Phase7Frontages({ night }: { night: number }) {
         {[-4.2, -1.4, 1.4, 4.2].map((x) => <mesh key={x} position={[x, 3.4, -4.13]}><boxGeometry args={[1.7, 1.6, 0.06]} />{winMat}</mesh>)}
         <mesh position={[0, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#10161e" roughness={0.4} /></mesh>
         <mesh position={[0, 7.6, 0]}><sphereGeometry args={[0.32, 10, 8]} /><meshStandardMaterial color="#3f7fae" emissive="#3f7fae" emissiveIntensity={0.4 + night * 1.6} /></mesh>
+      </group>
+      {/* Sable Fire Station (-80, 109.1) — Phase 32: the firefighter
+          shift's home. Brick-red slab on the strip between HQ and
+          the hospital lot, two tender doors on the road face, the
+          watch-room windows lit warm. Blocker in world.ts
+          STATIC_BLOCKERS; door point FIRE_EXT_DOOR (-80, 103.2). */}
+      <group position={[-80, 0, 109.1]}>
+        <mesh position={[0, 3.25, 0]} castShadow receiveShadow><boxGeometry args={[11, 6.5, 8.2]} /><meshStandardMaterial color="#7c3a2e" roughness={0.85} /></mesh>
+        <mesh position={[0, 6.65, 0]} castShadow><boxGeometry args={[11.4, 0.3, 8.6]} /><meshStandardMaterial color="#4a2620" roughness={0.8} /></mesh>
+        <mesh position={[0, 5.5, -4.16]} rotation={[0, Math.PI, 0]}><planeGeometry args={[8.2, 1.4]} /><meshStandardMaterial map={fireTex} emissive="#ffffff" emissiveMap={fireTex} emissiveIntensity={0.25 + night * 0.7} /></mesh>
+        {/* two tender doors: red slabs with pale ribs */}
+        {[-2.7, 2.7].map((x) => (
+          <group key={x} position={[x, 0, 0]}>
+            <mesh position={[0, 1.9, -4.13]}><boxGeometry args={[4.4, 3.8, 0.08]} /><meshStandardMaterial color="#8e2f24" roughness={0.55} /></mesh>
+            {[0.7, 1.5, 2.3, 3.1].map((y) => <mesh key={y} position={[0, y, -4.18]}><boxGeometry args={[4.4, 0.09, 0.03]} /><meshStandardMaterial color="#d8cfc4" roughness={0.6} /></mesh>)}
+          </group>
+        ))}
+        {/* watch-room windows + personnel door */}
+        {[-4.6, 4.6].map((x) => <mesh key={x} position={[x, 4.6, -4.13]}><boxGeometry args={[1.3, 1.2, 0.06]} />{winMat}</mesh>)}
+        <mesh position={[0, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#2c1712" roughness={0.5} /></mesh>
+        {/* the hose-drying tower at the west end */}
+        <mesh position={[-6.1, 4.5, 0]} castShadow><boxGeometry args={[1.6, 9, 1.6]} /><meshStandardMaterial color="#6d3328" roughness={0.85} /></mesh>
+        <mesh position={[-6.1, 9.2, 0]} castShadow><boxGeometry args={[2.0, 0.5, 2.0]} /><meshStandardMaterial color="#3c2a24" roughness={0.8} /></mesh>
       </group>
       {/* Sable Clinic (88, 109.1) */}
       <group position={[88, 0, 109.1]}>
@@ -504,6 +530,34 @@ function Phase7Frontages({ night }: { night: number }) {
             <mesh position={[0, 0.62, 0]}><boxGeometry args={[1.6, 0.28, 0.45]} /><meshStandardMaterial color="#2c5f42" roughness={1} /></mesh>
           </group>
         ))}
+      </group>
+      {/* Docks Warehouse Unit (60, 109.1) — Phase 30: the buyable
+          rental on the strip; corrugated sides, a roller door on the
+          road face, Sable Lets board by the personnel door. Blocker
+          in world.ts STATIC_BLOCKERS, door point (60, 103.2). */}
+      <group position={[60, 0, 109.1]}>
+        <mesh position={[0, 3, 0]} castShadow receiveShadow><boxGeometry args={[10, 6, 8.2]} /><meshStandardMaterial color="#5d6d72" roughness={0.6} metalness={0.35} /></mesh>
+        <mesh position={[0, 6.15, 0]} castShadow><boxGeometry args={[10.4, 0.3, 8.6]} /><meshStandardMaterial color="#37434a" roughness={0.8} /></mesh>
+        <mesh position={[0, 5.1, -4.16]} rotation={[0, Math.PI, 0]}><planeGeometry args={[7.8, 1.3]} /><meshStandardMaterial map={warehouseTex} emissive="#ffffff" emissiveMap={warehouseTex} emissiveIntensity={0.2 + night * 0.6} /></mesh>
+        {/* roller door: a wide slab + its horizontal ribs */}
+        <mesh position={[-1.6, 1.7, -4.13]}><boxGeometry args={[5.6, 3.4, 0.08]} /><meshStandardMaterial color="#7d8b90" roughness={0.45} metalness={0.55} /></mesh>
+        {[0.6, 1.4, 2.2, 3.0].map((y) => <mesh key={y} position={[-1.6, y, -4.18]}><boxGeometry args={[5.6, 0.09, 0.03]} /><meshStandardMaterial color="#4a565c" roughness={0.6} metalness={0.4} /></mesh>)}
+        {/* personnel door + the letting board beside it */}
+        <mesh position={[3.4, 1.05, -4.13]}><boxGeometry args={[1.1, 2.1, 0.08]} /><meshStandardMaterial color="#20303a" roughness={0.5} /></mesh>
+        <mesh position={[4.6, 1.7, -4.3]} rotation={[0, Math.PI, 0]}><planeGeometry args={[1.7, 0.95]} /><meshStandardMaterial map={letsTex} emissive="#ffffff" emissiveMap={letsTex} emissiveIntensity={0.15 + night * 0.5} /></mesh>
+      </group>
+      {/* Phase 30: Sable Lets A-boards at the two rental doors that
+          front generated buildings (Coral flat + Northgate
+          townhouse) — a post and board beside each door point, the
+          way the letting agent actually marks them. Visual only;
+          the door points themselves are audited in tools/. */}
+      <group position={[66.6, 0, 242.2]}>
+        <mesh position={[0, 0.75, 0]} castShadow><boxGeometry args={[0.14, 1.5, 0.14]} /><meshStandardMaterial color="#3a2c1c" roughness={0.8} /></mesh>
+        <mesh position={[0, 1.45, 0]}><planeGeometry args={[1.9, 1.0]} /><meshStandardMaterial map={letsTex} emissive="#ffffff" emissiveMap={letsTex} emissiveIntensity={0.15 + night * 0.5} /></mesh>
+      </group>
+      <group position={[-61.2, 0, -237.2]}>
+        <mesh position={[0, 0.75, 0]} castShadow><boxGeometry args={[0.14, 1.5, 0.14]} /><meshStandardMaterial color="#3a2c1c" roughness={0.8} /></mesh>
+        <mesh position={[0, 1.45, 0]}><planeGeometry args={[1.9, 1.0]} /><meshStandardMaterial map={letsTex} emissive="#ffffff" emissiveMap={letsTex} emissiveIntensity={0.15 + night * 0.5} /></mesh>
       </group>
       {/* Marina Table restaurant (64, 218) — Coral waterfront */}
       <group position={[64, 0, 216.5]}>
@@ -1098,23 +1152,28 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
     clubBouncer.lArm.rotation.x = -0.35; clubBouncer.rArm.rotation.x = -0.35;
     clubBouncer.lFore.rotation.x = -2.15; clubBouncer.rFore.rotation.x = -2.15;
     clubBouncer.lFore.rotation.z = 0.55; clubBouncer.rFore.rotation.z = -0.55;
-    // rain gloss: wet asphalt gets darker + shinier as rain builds up;
-    // at night in rain it goes near-mirror (target: wet neon streets)
-    const wet = 1 - G.rainAmt * (0.5 + night * 0.38);
+    // rain gloss: wet asphalt gets darker + shinier as it soaks;
+    // at night on a soaked street it goes near-mirror (target: wet
+    // neon streets). Phase 36: this reads ROAD WETNESS (G.roadWet),
+    // not the live rain intensity — the gloss now lingers and fades
+    // over ~2.5 minutes while the street dries (game/weather tick
+    // in Weather.tsx), instead of snapping dry with the last drop.
+    const wet = 1 - G.roadWet * (0.5 + night * 0.38);
     let rough = (0.96 - night * 0.5) * wet;
-    if (night > 0.45 && G.rainAmt > 0.25) rough = Math.max(0.15, rough);
+    if (night > 0.45 && G.roadWet > 0.25) rough = Math.max(0.15, rough);
     mats.asphaltV.roughness = rough;
     mats.asphaltH.roughness = rough;
-    mats.asphaltV.metalness = 0.04 + night * 0.1 + G.rainAmt * 0.12;
+    mats.asphaltV.metalness = 0.04 + night * 0.1 + G.roadWet * 0.12;
     mats.asphaltH.metalness = mats.asphaltV.metalness;
-    // rain puddles fade in with the weather (Phase 3); Phase 10: their
-    // env reflection strengthens at night so they catch the streetlights
-    puddleMat.opacity = G.rainAmt * 0.88;
+    // rain puddles fade in with the soaking (Phase 3) and linger
+    // while it dries (Phase 36); Phase 10: their env reflection
+    // strengthens at night so they catch the streetlights
+    puddleMat.opacity = G.roadWet * 0.88;
     // Phase 11: the whole term scales with the tier's probe strength;
     // on High the puddles ADDITIONALLY pick up true SSR (roughness
     // 0.05 is far under the SSR maxRoughness gate), so wet streets
     // mirror the neon twice over — probe for body, SSR for detail.
-    puddleMat.envMapIntensity = (1.3 + night * 1.0 + G.rainAmt * 0.5) * gates.envRefl(quality);
+    puddleMat.envMapIntensity = (1.3 + night * 1.0 + G.roadWet * 0.5) * gates.envRefl(quality);
     // sun disc + warm glow riding the day cycle (low amber disc at dusk)
     if (sunDiscRef.current) {
       const ang = G.dayTime * Math.PI * 2 - Math.PI / 2;
@@ -1149,8 +1208,10 @@ export default function World({ theme, night, quality, stage, reflFx }: { theme:
     if (starMat.current) {
       starMat.current.opacity = Math.max(0, night * (1 - G.fogAmt * 0.85 - G.rainAmt * 0.4)) * (0.9 + 0.1 * Math.sin(t * 2.7)) * 0.95;
     }
-    // streetlight glow halos (one Points draw): stronger on wet nights
-    if (lampGlowMat.current) lampGlowMat.current.opacity = night * (0.3 + G.rainAmt * 0.3);
+    // streetlight glow halos (one Points draw): stronger on wet
+    // nights — Phase 36: wet = road wetness, so the halos stay fat
+    // while the street dries, like the gloss they reflect in
+    if (lampGlowMat.current) lampGlowMat.current.opacity = night * (0.3 + G.roadWet * 0.3);
   });
 
   return (

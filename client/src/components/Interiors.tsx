@@ -4,20 +4,25 @@
 // movement to the room while G.interior is set. This component also runs
 // ALL proximity interactions (doors + the mansion gate) and publishes
 // the HUD prompt through G.promptText / G.interact.
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, toast, nowS, bark, persistStoredCars } from "../game/store";
 import { isBind } from "../game/keybinds";
 import { pushPhoneMsg } from "../game/phone";
 import { sfx } from "../game/audio";
-import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, GYM_EXT_DOOR, LOFT_EXT_DOOR, CLOTHING_EXT_DOOR, FARMHOUSE_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
+import { GARAGE_EXT_DOOR, CLUB_EXT_DOOR, POLICE_EXT_DOOR, CLINIC_EXT_DOOR, RESTAURANT_EXT_DOOR, AIRPORT_DOOR, SHOWROOM_EXT_DOOR, CAFE_EXT_DOOR, GYM_EXT_DOOR, LOFT_EXT_DOOR, CLOTHING_EXT_DOOR, FARMHOUSE_EXT_DOOR, DINER_EXT_DOOR, SILO_EXT_DOOR, INTERIORS, MANSION_GATE, MANSION_PRICE, DEALER_CARS, CAR_MODELS, type InteriorKind } from "../world";
+import { eastmereState } from "../game/eastmere"; // Phase 39: the diner door is gated on Eastmere's chunk being loaded
+import { westbrookState } from "../game/westbrook"; // Phase 39: same for the silo office door
+import { newsFeed } from "../game/feed"; // Phase 39: the silo office harbour log reads the live Wire feed
 import { ECO, LOFT, persistEco, setHomePref, sleepToMorning } from "../game/economy";
 import { CLOTH, CLOTHING_ITEMS, persistClothing, type ClothingItem } from "../game/phase8";
 import { shopsClosed, gameHour } from "./Interactions";
 import { isClubOpen, CLUB_CLOSE_HOUR, CLUB_DRINK_NAME, CLUB_DRINK_PRICE, CLUB_DRINK_STAMINA, CLUB_DRINK_WARM_S } from "../game/club";
-import { startClubBass, stopClubBass } from "../game/audio";
+import { tunesClubEnter, tunesClubExit, tunesJukeboxStart, tunesJukeboxStop, tunesJukeboxOn } from "../game/tunes"; // Phase 35: club priority over the phone's Sable Tunes lives in game/tunes.ts; Phase 39 adds the diner jukebox on the same room-hold machinery
+import { HEAT, noteFreshLook, FRESH_LOOK_SUFFIX } from "../game/heat"; // Phase 29: wardrobe change = fresh look
 import { dealerPrice, consumeVoucher } from "../game/cup";
+import { POSTCARD_DEFS, POSTCARDS, POSTCARDS_EVENT, postcardSetComplete } from "../game/postcards"; // Phase 43: the Loft's Postcard Wall
 import CarBody from "./CarBody";
 import { buildHumanoid, animateHumanoid, type HumanoidRig } from "../humanoid";
 import { neonSignTexture } from "../textures";
@@ -29,6 +34,43 @@ function signTexture(text: string, bg: string, fg: string, w = 512): THREE.Canva
   g.fillStyle = fg; g.font = "bold 44px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
   g.fillText(text, w / 2, 52);
   return new THREE.CanvasTexture(c);
+}
+
+/** Phase 43: THE POSTCARD WALL — the Northgate Loft's east wall
+ * carries eight framed slots for the Sable Postcards. An unsold
+ * postcard is a dark empty frame; selling one (game/postcards.ts)
+ * fills its slot with the print's colour, and the titled plaque
+ * appears when the set completes. Local coords: it renders inside
+ * the Loft group, on the +x wall facing into the room. Live state
+ * rides the postcards-changed event (the clothing-changed pattern). */
+function PostcardWall() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const on = () => setTick((v) => v + 1);
+    window.addEventListener(POSTCARDS_EVENT, on);
+    return () => window.removeEventListener(POSTCARDS_EVENT, on);
+  }, []);
+  const plaque = useMemo(() => signTexture("THE SABLE POSTCARDS", "#232a31", "#ffca7a"), []);
+  const full = postcardSetComplete();
+  return (
+    <group position={[7.9, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
+      {POSTCARD_DEFS.map((d, i) => (
+        <group key={d.id} position={[-2.87 + i * 0.82, 1.8, 0]}>
+          <mesh castShadow><boxGeometry args={[0.68, 0.52, 0.05]} /><primitive object={WOOD} attach="material" /></mesh>
+          <mesh position={[0, 0, 0.035]}>
+            <planeGeometry args={[0.56, 0.4]} />
+            <meshStandardMaterial color={POSTCARDS.done[d.id] ? d.color : "#20262b"} roughness={0.7} emissive={POSTCARDS.done[d.id] ? d.color : "#000000"} emissiveIntensity={POSTCARDS.done[d.id] ? 0.25 : 0} />
+          </mesh>
+        </group>
+      ))}
+      {full && (
+        <mesh position={[0, 2.5, 0]}>
+          <planeGeometry args={[3.4, 0.55]} />
+          <meshStandardMaterial map={plaque} emissive="#ffffff" emissiveMap={plaque} emissiveIntensity={0.7} />
+        </mesh>
+      )}
+    </group>
+  );
 }
 
 const WALL_G = new THREE.MeshStandardMaterial({ color: "#4d4438", roughness: 0.9 });
@@ -87,6 +129,107 @@ const CLUB_SCRATCH = new THREE.Color();
 /** Phase 23: the 7 clubbers' spots on the floor grid (room-relative). */
 const DANCER_SPOTS: ReadonlyArray<readonly [number, number]> = [[-1, -2], [1.6, -2.1], [-2.4, 0.4], [0.4, 0.2], [3, -0.9], [-0.9, 2.1], [2.3, 2.2]];
 
+// ---- Phase 39: THE EASTMERE DINER — hours + menu. The diner keeps
+// its OWN hours, 06:00–23:00 (Petra opens for the fishing crews,
+// an hour before the 07:00 shops): the street door locks outside
+// them and the kitchen stops serving, but — the club's Phase 24
+// closing rule — nobody already inside is thrown out. The menu's
+// effects follow the game's existing food rules (café coffee:
+// full stamina + a 2-minute half-drain boost; café pastry: +35
+// health; the Marina Table set menu: a full heal at $25) — the
+// diner sits between the café and the restaurant, priced so. ----
+export const DINER_OPEN_HOUR = 6;
+export const DINER_CLOSE_HOUR = 23;
+export function dinerOpen(): boolean { const h = gameHour(); return h >= DINER_OPEN_HOUR && h < DINER_CLOSE_HOUR; }
+const DINER_MENU = [
+  { name: "Harbour chowder", price: 14, blurb: "restores 45 health" },
+  { name: "Diner coffee", price: 6, blurb: "full stamina, steady hands for 2 min" },
+  { name: "Fisherman's plate", price: 22, blurb: "full health + full stamina" },
+] as const;
+const DINER_BARKS = [
+  "Chowder's from this morning's catch. Everything here is.",
+  "Coffee. Strong enough to stand a spoon in — that's the review we frame.",
+  "The full plate. Eat it all, love — the harbour's watching.",
+] as const;
+
+// Phase 39: wall materials for the two new rooms — the diner in
+// warm brick over dark boards, the silo office in grain-dust grey
+// over concrete.
+const WALL_DN = new THREE.MeshStandardMaterial({ color: "#8a5a40", roughness: 0.92 });
+const FLOOR_DN = new THREE.MeshStandardMaterial({ color: "#4a3421", roughness: 0.8 });
+const WALL_SL = new THREE.MeshStandardMaterial({ color: "#6e675c", roughness: 0.9 });
+const FLOOR_SL = new THREE.MeshStandardMaterial({ color: "#4c4a44", roughness: 0.7, metalness: 0.1 });
+
+/** Phase 39: the silo office's harbour chart (canvas): the bay,
+ * Westbrook's quay, the causeway and the island light — drawn in
+ * the game's teal/amber, the way the Loft's window panes are
+ * painted rather than photographed. */
+function harbourChartTexture(): THREE.CanvasTexture {
+  const c = document.createElement("canvas"); c.width = 512; c.height = 256;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#274b5c"; g.fillRect(0, 0, 512, 256); // the bay
+  g.fillStyle = "#5d7268"; // Westbrook shore along the west edge
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(120, 0); g.lineTo(96, 90); g.lineTo(120, 170); g.lineTo(88, 256); g.lineTo(0, 256); g.closePath(); g.fill();
+  g.fillStyle = "#4d6a72"; // Eastmere headland, east edge
+  g.beginPath(); g.moveTo(512, 30); g.lineTo(430, 60); g.lineTo(452, 130); g.lineTo(512, 160); g.closePath(); g.fill();
+  g.fillStyle = "#5d7268"; g.beginPath(); g.arc(300, 205, 26, 0, Math.PI * 2); g.fill(); // Sable Island
+  g.strokeStyle = "#d9d4c5"; g.lineWidth = 5; // the causeway
+  g.beginPath(); g.moveTo(310, 30); g.lineTo(300, 178); g.stroke();
+  g.strokeStyle = "#ffb340"; g.lineWidth = 2; g.setLineDash([7, 6]); // the shipping lane
+  g.beginPath(); g.moveTo(140, 235); g.quadraticCurveTo(280, 130, 445, 70); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle = "#ffb340"; // the island light + the two lighthouses' marks
+  for (const [x, y] of [[300, 205], [452, 92], [150, 40]] as const) { g.beginPath(); g.arc(x, y, 4.5, 0, Math.PI * 2); g.fill(); }
+  g.fillStyle = "#e8e2d4"; g.font = "bold 19px sans-serif"; g.textAlign = "left";
+  g.fillText("PORT SABLE — WESTBROOK HARBOUR", 14, 26);
+  g.font = "14px sans-serif"; g.fillStyle = "#cfe0e4";
+  g.fillText("soundings in metres · lane marked amber", 14, 48);
+  g.fillText("WESTBROOK QUAY", 14, 150);
+  g.fillText("SABLE ISLAND", 268, 245);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Phase 39: the diner's menu board (canvas) — chalk on black,
+ * priced exactly as DINER_MENU prices it. */
+function dinerMenuTexture(): THREE.CanvasTexture {
+  const c = document.createElement("canvas"); c.width = 512; c.height = 192;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#22252a"; g.fillRect(0, 0, 512, 192);
+  g.strokeStyle = "#8a5a40"; g.lineWidth = 6; g.strokeRect(6, 6, 500, 180);
+  g.fillStyle = "#ffca7a"; g.font = "bold 30px sans-serif"; g.textAlign = "center";
+  g.fillText("— TODAY —", 256, 44);
+  g.fillStyle = "#e8e2d4"; g.font = "24px sans-serif"; g.textAlign = "left";
+  g.fillText("Harbour chowder", 44, 92); g.fillText("Fisherman's plate", 44, 130); g.fillText("Diner coffee", 44, 168);
+  g.textAlign = "right";
+  g.fillText("$14", 468, 92); g.fillText("$22", 468, 130); g.fillText("$6", 468, 168);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Phase 39: the silo office's fake window (canvas) — the bay at
+ * amber hour, painted in the Loft idiom: gradient bands, the far
+ * shore, a crane silhouette against the light. */
+function bayWindowTexture(): THREE.CanvasTexture {
+  const c = document.createElement("canvas"); c.width = 256; c.height = 256;
+  const g = c.getContext("2d")!;
+  const sky = g.createLinearGradient(0, 0, 0, 150);
+  sky.addColorStop(0, "#7fb2c9"); sky.addColorStop(0.72, "#e8c88a"); sky.addColorStop(1, "#f2a65e");
+  g.fillStyle = sky; g.fillRect(0, 0, 256, 150);
+  const sea = g.createLinearGradient(0, 150, 0, 256);
+  sea.addColorStop(0, "#e8a34c"); sea.addColorStop(0.25, "#2e6f7e"); sea.addColorStop(1, "#274b5c");
+  g.fillStyle = sea; g.fillRect(0, 150, 256, 106);
+  g.fillStyle = "#3d5a52"; g.fillRect(0, 138, 256, 12); // the far shore line
+  g.fillStyle = "#22303a"; // a dock crane, silhouetted
+  g.fillRect(196, 84, 7, 62); g.fillRect(168, 80, 76, 6); g.fillRect(228, 86, 3, 26);
+  g.fillStyle = "#ffdf94"; g.beginPath(); g.arc(52, 118, 13, 0, Math.PI * 2); g.fill(); // low sun
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /** Wanted-poster wall art (canvas): three harbour faces, drawn not copied. */
 function posterTexture(): THREE.CanvasTexture {
   const c = document.createElement("canvas"); c.width = 512; c.height = 256;
@@ -117,6 +260,11 @@ export default function Interiors() {
   const gymSign = useMemo(() => signTexture("SABLE FITNESS", "#0f4442", "#ffca7a"), []);
   const loftSign = useMemo(() => signTexture("NORTHGATE LOFT", "#232a31", "#ffca7a"), []);
   const ttSign = useMemo(() => signTexture("THREAD & TIDE", "#17303a", "#ffb340"), []);
+  const dinerSignIn = useMemo(() => signTexture("EASTMERE DINER", "#2b1c10", "#ffca7a"), []);
+  const siloSign = useMemo(() => signTexture("SILO OFFICE — WESTBROOK", "#232a31", "#ffca7a"), []);
+  const chartTex = useMemo(harbourChartTexture, []);
+  const bayTex = useMemo(bayWindowTexture, []);
+  const menuTex = useMemo(dinerMenuTexture, []);
   // Phase 13: showroom turntables (rotated in useFrame) + the café's
   // two regulars — static seated rigs, posed once (they're mid-chat
   // and in no hurry; a slow head-bob in useFrame keeps them alive)
@@ -134,6 +282,28 @@ export default function Interiors() {
     return [
       mk({ top: "#e8e4da", bottom: "#40342a", skin: "#c68863", hair: "#4a2f1a", topStyle: "tee", gender: "f", hairStyle: "bun" }),
       mk({ top: "#31556e", bottom: "#232c38", skin: "#8d5524", hair: "#14100e", topStyle: "hoodie", gender: "m", hairStyle: "flat" }),
+    ];
+  }, []);
+  // Phase 39: the diner's people. PETRA behind her counter — the
+  // SAME rig parameters as her street figure in Eastmere.tsx (grey
+  // ponytail, apron-brown top): while the player is inside, the
+  // street figure hides (Eastmere.tsx), so she is never in two
+  // places at once. Two regulars sit in the booths on the café
+  // guests' seated pose.
+  const petraInterior = useMemo(() => buildHumanoid({ top: "#8c5a2b", bottom: "#2e3138", skin: "#b07a52", hair: "#c9c9c9", topStyle: "tee", gender: "f", hairStyle: "ponytail" }), []);
+  const dinerGuests = useMemo<HumanoidRig[]>(() => {
+    const mk = (o: Parameters<typeof buildHumanoid>[0]) => {
+      const rig = buildHumanoid(o);
+      rig.group.position.y = -0.42;
+      rig.lThigh.rotation.x = rig.rThigh.rotation.x = -1.45;
+      rig.lShin.rotation.x = rig.rShin.rotation.x = 1.35;
+      rig.lArm.rotation.x = -0.55; rig.rArm.rotation.x = -0.7;
+      rig.rFore.rotation.x = -0.5;
+      return rig;
+    };
+    return [
+      mk({ top: "#31556e", bottom: "#232c38", skin: "#6b4423", hair: "#20242a", topStyle: "hoodie", gender: "m", hairStyle: "flat" }),
+      mk({ top: "#e8e4da", bottom: "#40342a", skin: "#f1c27d", hair: "#7a1f1f", topStyle: "tee", gender: "f", hairStyle: "long" }),
     ];
   }, []);
   // Phase 13: the showroom counter works like the forecourt's — tap E
@@ -168,6 +338,34 @@ export default function Interiors() {
     window.addEventListener("keydown", down); window.addEventListener("keyup", up);
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
   }, []);
+  // Phase 39: the diner counter runs the showroom's tap/hold
+  // pattern — TAP E browses the 3-item menu, HOLD E (0.9 s, in the
+  // useFrame branch) orders. Its own e-down clock (dnEDown), and
+  // both halves read the interact BINDING (the Phase 15 rule).
+  const dnEDown = useRef(-1);
+  const dnIdx = useRef(0);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (isBind(e, "interact") && !e.repeat) dnEDown.current = performance.now() / 1000; };
+    const up = (e: KeyboardEvent) => {
+      if (!isBind(e, "interact")) return;
+      const held = dnEDown.current > 0 ? performance.now() / 1000 - dnEDown.current : 9;
+      dnEDown.current = -1;
+      if (G.hold?.label.startsWith("Ordering")) G.hold = null;
+      if (held < 0.35 && G.interior === "diner" && dinerOpen()) {
+        const D = INTERIORS.diner;
+        const d2 = (G.playerPos.x - D.cx) ** 2 + (G.playerPos.z - (D.cz - 2.2)) ** 2;
+        if (d2 < 2.6 ** 2) {
+          dnIdx.current = (dnIdx.current + 1) % DINER_MENU.length;
+          const it = DINER_MENU[dnIdx.current];
+          toast(`Eastmere Diner — ${it.name} · $${it.price} (${it.blurb}) — hold E to order`);
+          sfx.click();
+        }
+      }
+    };
+    window.addEventListener("keydown", down); window.addEventListener("keyup", up);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+  }, []);
+  const dinerPrevHour = useRef(-1); // Phase 39: Petra's closing-time bark watcher (the club's pattern)
   const posters = useMemo(() => posterTexture(), []);
   const clubNeon = useMemo(() => neonSignTexture("SOLACE", "#2ee6c8"), []);
   const beamMatA = useMemo(() => new THREE.MeshBasicMaterial({ color: "#2ee6c8", transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }), []);
@@ -192,7 +390,7 @@ export default function Interiors() {
     Array.from({ length: 24 }, () => new THREE.MeshStandardMaterial({ color: "#141e26", roughness: 0.25, metalness: 0.4, emissive: "#2ee6c8", emissiveIntensity: 0.3 })), []);
   const clubBassOn = useRef(false);
   const clubPrevHour = useRef(-1); // Phase 24: closing-time bark watcher
-  useEffect(() => () => { stopClubBass(); }, []);
+  useEffect(() => () => { tunesClubExit(); tunesJukeboxStop(); }, []); // Phase 35: unmount mid-visit = leaving the room (guarded no-ops when not inside); Phase 39: the jukebox likewise
 
   // Phase 6 screen flow: door teleports are DELAYED ~130 ms behind a
   // fade-to-black (App watches G.fadeAt) so entering a room reads as a
@@ -232,7 +430,12 @@ export default function Interiors() {
     const inClub = G.interior === "club";
     if (inClub !== clubBassOn.current) {
       clubBassOn.current = inClub;
-      if (inClub) startClubBass(); else stopClubBass();
+      // Phase 35: the room transition goes through Sable Tunes'
+      // club priority — entering suspends the phone's track (the
+      // club loop takes the room), leaving resumes it. The bass
+      // loop itself is still game/audio.ts's startClubBass, started
+      // and stopped inside game/tunes.ts.
+      if (inClub) tunesClubEnter(); else tunesClubExit();
     }
     // Phase 24 audit: CLOSING TIME, CALLED ONCE — when the clock
     // turns 04:00 with the player inside, the bartender calls it:
@@ -244,6 +447,23 @@ export default function Interiors() {
       bark("Bartender", "That's the last song, friends — doors are locked behind you and the bar's done for the night. Head out whenever you're ready.");
     }
     clubPrevHour.current = hrNow;
+    // Phase 39: leaving the diner hands the speakers back — the
+    // jukebox is a room appliance and never follows you out (the
+    // unmount cleanup below covers leaving the game mid-visit).
+    const inDiner = G.interior === "diner";
+    if (!inDiner && tunesJukeboxOn()) tunesJukeboxStop();
+    // Phase 39: Petra calls closing at 23:00, once, on the club's
+    // Phase 24 pattern — the kitchen stops serving (the counter
+    // branch below), the street door locks, nobody is ejected.
+    if (inDiner && dinerPrevHour.current !== DINER_CLOSE_HOUR && hrNow === DINER_CLOSE_HOUR) {
+      bark("Petra Vane", "That's the kitchen closed, loves — last plates are out. Finish your coffee and head out whenever you're ready.");
+    }
+    dinerPrevHour.current = hrNow;
+    // Phase 39: the diner's people idle — the regulars nod along
+    // to a conversation you're not part of (the café pattern);
+    // Petra watches the room from behind her counter.
+    dinerGuests.forEach((rig, i) => { rig.head.rotation.y = Math.sin(t * 0.35 + i * 2.4) * 0.22; rig.head.rotation.x = 0.08 + Math.sin(t * 0.8 + i * 1.3) * 0.05; });
+    petraInterior.head.rotation.y = Math.sin(t * 0.3) * 0.18;
 
     // ---------- proximity interactions ----------
     let prompt = ""; let warn = false; let act: (() => void) | null = null;
@@ -431,7 +651,8 @@ export default function Interiors() {
               const idx = opts.findIndex((o) => (o?.id ?? null) === (CLOTH.current?.id ?? null));
               const next = opts[(idx + 1) % opts.length];
               CLOTH.current = next; persistClothing();
-              toast(next ? `🧥 Changed into ${next.label}.` : "Back to your character-select outfit.");
+              noteFreshLook(); // Phase 29: a change of clothes thins the patrol file faster (decay only — recognition is not appearance-based)
+              toast((next ? `🧥 Changed into ${next.label}.` : "Back to your character-select outfit.") + (HEAT.evidence > 0 ? FRESH_LOOK_SUFFIX : ""));
               sfx.click();
             };
           }
@@ -460,6 +681,70 @@ export default function Interiors() {
           act = () => { sleepToMorning("the Downs farmhouse bunk"); };
         }
         else if (near(FH.cx, FH.cz + 3.4, 2.2)) prompt = "The farmhouse kitchen — kettle on the stove, yesterday's catch still in the sink. The bunk's through the back.";
+      } else if (G.interior === "diner") {
+        // ---- Phase 39: THE EASTMERE DINER — Petra's counter (tap
+        // E browses, hold E orders — the showroom pattern), the
+        // jukebox by the door, and the standing interior wanted
+        // rule (no bust in the pocket; heat bleeds while unseen,
+        // as in every other room). Hours are enforced at the
+        // street door and at the kitchen: after 23:00 the counter
+        // stops serving, but nobody inside is thrown out. ----
+        const [x, z] = INTERIORS.diner.exitDoor;
+        const D = INTERIORS.diner;
+        if (near(x, z, 2.2)) { prompt = "Press E — step out to Eastmere"; act = go(DINER_EXT_DOOR.x, DINER_EXT_DOOR.z + 1.2, ""); }
+        else if (near(D.cx, D.cz - 2.2, 2.6)) {
+          if (!dinerOpen()) { prompt = "The kitchen's dark — Petra serves 06:00–23:00. The booths are yours until you head out."; warn = true; }
+          else {
+            const it = DINER_MENU[dnIdx.current];
+            prompt = `Eastmere Diner — ${it.name} · $${it.price} (${it.blurb}) (tap E to browse · hold E to order)`;
+            if (dnEDown.current > 0) {
+              const progress = (performance.now() / 1000 - dnEDown.current) / 0.9;
+              G.hold = { label: `Ordering ${it.name} — $${it.price}…`, progress: Math.min(1, progress) };
+              if (progress >= 1) {
+                dnEDown.current = -1; G.hold = null;
+                if (G.cash < it.price) { toast(`${it.name} is $${it.price} — you're short.`); sfx.dryFire(); }
+                else {
+                  G.cash -= it.price;
+                  if (dnIdx.current === 0) G.health = Math.min(100, G.health + 45);
+                  else if (dnIdx.current === 1) { G.stamina = 100; G.staminaBoostUntil = G.timeS + 120; }
+                  else { G.health = 100; G.stamina = 100; G.staminaBoostUntil = G.timeS + 120; }
+                  G.eatingUntil = G.timeS + 2.2;
+                  sfx.eat();
+                  bark("Petra Vane", DINER_BARKS[dnIdx.current]);
+                  toast(`🍽 ${it.name} — $${it.price}. ${it.blurb.charAt(0).toUpperCase() + it.blurb.slice(1)}.`);
+                }
+              }
+            }
+          }
+        }
+        else if (near(D.cx - 6.6, D.cz + 3.6, 2.2)) {
+          if (tunesJukeboxOn()) { prompt = "Press E — switch the jukebox off"; act = () => { tunesJukeboxStop(); toast("The jukebox clicks off. Harbour noise comes back."); sfx.click(); }; }
+          else { prompt = "Press E — jukebox: Daylight Causeway (Sable Tunes)"; act = () => { tunesJukeboxStart(); toast("🎵 The diner jukebox rolls into Daylight Causeway — it plays while you're in the room."); sfx.click(); }; }
+        }
+        else prompt = "Eastmere Diner — Petra's counter at the back, booths along the east wall, the jukebox by the door.";
+      } else if (G.interior === "silo") {
+        // ---- Phase 39: THE WESTBROOK SILO OFFICE — a lookout
+        // room at the top of the grain silo (the door fade is the
+        // lift, stated on the street sign). No NPC, always open.
+        // Its one working function is the HARBOUR LOG on the
+        // desk: the live Wire feed + district reputation, read
+        // off the real stores at the moment you open it. Wanted
+        // follows the standing interior rule, as everywhere. ----
+        const [x, z] = INTERIORS.silo.exitDoor;
+        const S = INTERIORS.silo;
+        if (near(x, z, 2.2)) { prompt = "Press E — take the lift down to the quay"; act = go(SILO_EXT_DOOR.x, SILO_EXT_DOOR.z + 1.2, ""); }
+        else if (near(S.cx - 1.8, S.cz - 3.0, 2.2)) {
+          prompt = "Press E — read the harbour log (the Wire's latest + your district standing)";
+          act = () => {
+            G.harbourLog = {
+              headlines: newsFeed.slice(0, 5).map((f) => ({ title: f.title, body: f.body })),
+              districts: Object.entries(G.zoneRep).sort((a, b) => b[1] - a[1]).map(([name, rep]) => ({ name, rep })),
+            };
+            window.dispatchEvent(new Event("harborfall:harbour-log"));
+            sfx.click();
+          };
+        }
+        else prompt = "The silo office — the harbour log's on the desk, the whole bay's in the east window.";
       } else if (near(GARAGE_EXT_DOOR.x, GARAGE_EXT_DOOR.z, 2.8)) {
         prompt = "Press E — enter Lina's Garage";
         act = go(INTERIORS.garage.spawnIn[0], INTERIORS.garage.spawnIn[1], "garage");
@@ -516,6 +801,31 @@ export default function Interiors() {
         // working farmhouse, and the bunk is the farmhand's by right
         prompt = "Press E — enter the Downs farmhouse";
         act = go(INTERIORS.farmhouse.spawnIn[0], INTERIORS.farmhouse.spawnIn[1], "farmhouse");
+      } else if (near(DINER_EXT_DOOR.x, DINER_EXT_DOOR.z, 2.8)) {
+        // ---- Phase 39: the Eastmere Diner door. The gate is the
+        // district chunk: unloaded, Eastmere is open water and the
+        // player cannot be standing here at all — the loaded check
+        // is the belt to those braces (it also covers swimming in
+        // toward the shore before the chunk arrives). The pocket
+        // itself is in the base bundle with every other interior
+        // (world.ts INTERIORS); only the street geometry is lazy.
+        // Hours 06:00–23:00, stated on the door sign. ----
+        if (!eastmereState.loaded) { prompt = "Eastmere is still loading — the diner door will work in a moment."; warn = true; }
+        else if (!dinerOpen()) { prompt = "Eastmere Diner — closed (opens 06:00, kitchen till 23:00). The sign says: fishing crews first."; warn = true; }
+        else {
+          prompt = "Press E — enter the Eastmere Diner";
+          act = go(INTERIORS.diner.spawnIn[0], INTERIORS.diner.spawnIn[1], "diner");
+        }
+      } else if (near(SILO_EXT_DOOR.x, SILO_EXT_DOOR.z, 2.8)) {
+        // ---- Phase 39: the silo office door — always open (an
+        // unlocked lookout office; the sign on the silo says so),
+        // gated on Westbrook's chunk exactly like the diner door.
+        // The fade is the lift ride, stated in the prompt. ----
+        if (!westbrookState.loaded) { prompt = "Westbrook is still loading — the silo lift will work in a moment."; warn = true; }
+        else {
+          prompt = "Press E — the silo office (the lift — always open)";
+          act = go(INTERIORS.silo.spawnIn[0], INTERIORS.silo.spawnIn[1], "silo");
+        }
       } else if (near(LOFT_EXT_DOOR.x, LOFT_EXT_DOOR.z, 2.8)) {
         // ---- Phase 14: the Loft is bought at its own door, like the
         // villa at its gate — owning both properties is supported;
@@ -558,6 +868,7 @@ export default function Interiors() {
   const GY0 = INTERIORS.gym, LF0 = INTERIORS.loft;
   const TT0 = INTERIORS.clothing;
   const FH0 = INTERIORS.farmhouse;
+  const DN0 = INTERIORS.diner, SL0 = INTERIORS.silo;
   return (
     <group>
       {/* ================= LINA'S GARAGE — interior ================= */}
@@ -935,6 +1246,9 @@ export default function Interiors() {
           <mesh position={[0, 0.3, 0]}><cylinderGeometry args={[0.3, 0.24, 0.6, 10]} /><meshStandardMaterial color="#b3542e" roughness={0.8} /></mesh>
           <mesh position={[0, 1, 0]}><sphereGeometry args={[0.55, 10, 8]} /><meshStandardMaterial color="#2e5d43" roughness={0.95} /></mesh>
         </group>
+        {/* Phase 43: the Postcard Wall on the east wall (see the
+            PostcardWall component above) */}
+        <PostcardWall />
         <mesh position={[0, 1.4, LF0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#232a31" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
       </group>
 
@@ -1016,6 +1330,134 @@ export default function Interiors() {
         {/* window glow over the yard + a door mat at the exit */}
         <mesh position={[0, 1.5, FH0.d / 2 - 0.12]}><boxGeometry args={[1.8, 1.3, 0.08]} /><meshStandardMaterial color="#17303a" emissive="#ffb340" emissiveIntensity={0.3} /></mesh>
         <mesh position={[0, 0.02, FH0.d / 2 - 1.1]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[1.4, 0.8]} /><meshStandardMaterial color="#5d4a33" roughness={0.95} /></mesh>
+      </group>
+
+      {/* ================= Phase 39: THE EASTMERE DINER ==============
+          Petra's room: counter along the back wall (the order
+          point, rel 0,−2.2), booths down the east wall, the
+          jukebox by the door (rel −6.6,+3.6). Warm brick over
+          dark boards; the street window glows on the south wall. */}
+      <RoomShell cx={DN0.cx} cz={DN0.cz} w={DN0.w} d={DN0.d} h={3.4} wall={WALL_DN} floor={FLOOR_DN} ceiling />
+      <group position={[DN0.cx, 0, DN0.cz]}>
+        <pointLight position={[0, 2.85, 0]} intensity={21} distance={16} decay={1.7} color="#ffca7a" />
+        <mesh position={[0, 2.5, -DN0.d / 2 + 0.2]}>
+          <planeGeometry args={[5.6, 1.05]} />
+          <meshStandardMaterial map={dinerSignIn} emissive="#ffffff" emissiveMap={dinerSignIn} emissiveIntensity={0.9} />
+        </mesh>
+        {/* the counter + stools + the coffee machine that pays the rent */}
+        <mesh position={[0, 0.55, -3.6]} castShadow><boxGeometry args={[7.5, 1.1, 0.9]} /><primitive object={WOOD} attach="material" /></mesh>
+        <mesh position={[0, 1.14, -3.6]}><boxGeometry args={[7.7, 0.07, 1.05]} /><meshStandardMaterial color="#e8e0d0" roughness={0.3} /></mesh>
+        {[-3, -1.8, -0.6, 0.6, 1.8, 3].map((sx) => (
+          <group key={sx} position={[sx, 0, -2.55]}>
+            <mesh position={[0, 0.38, 0]}><cylinderGeometry args={[0.05, 0.05, 0.76, 6]} /><primitive object={METAL} attach="material" /></mesh>
+            <mesh position={[0, 0.8, 0]} castShadow><cylinderGeometry args={[0.27, 0.27, 0.09, 12]} /><meshStandardMaterial color="#8c2f26" roughness={0.6} /></mesh>
+          </group>
+        ))}
+        <mesh position={[2.6, 1.5, -3.75]} castShadow><boxGeometry args={[0.9, 0.65, 0.6]} /><meshStandardMaterial color="#22262b" metalness={0.55} roughness={0.35} /></mesh>
+        <mesh position={[2.6, 1.9, -3.75]}><boxGeometry args={[0.5, 0.14, 0.4]} /><meshStandardMaterial color="#c8ccd0" metalness={0.7} roughness={0.3} /></mesh>
+        {[-1.9, -0.9, 0.1].map((x, i) => (
+          <mesh key={i} position={[x, 1.32, -3.5]}><cylinderGeometry args={[0.16, 0.16, 0.05, 12]} /><meshStandardMaterial color="#e8e4da" roughness={0.4} /></mesh>
+        ))}
+        {/* Petra behind the counter (her street figure hides while
+            you're in here — Eastmere.tsx) */}
+        <group position={[-1.5, 0, -4.6]}><primitive object={petraInterior.group} /></group>
+        {/* the menu board on the east wall, priced as the counter prices it */}
+        <mesh position={[DN0.w / 2 - 0.2, 1.95, -1]} rotation={[0, -Math.PI / 2, 0]}>
+          <planeGeometry args={[4.4, 1.65]} />
+          <meshStandardMaterial map={menuTex} roughness={0.9} />
+        </mesh>
+        {/* booths down the east wall: table + two benches each */}
+        {[-3.5, 0, 3.5].map((bz) => (
+          <group key={bz} position={[6.2, 0, bz]}>
+            <mesh position={[0, 0.74, 0]} castShadow><boxGeometry args={[1.15, 0.06, 1.7]} /><meshStandardMaterial color="#e8e0d0" roughness={0.4} /></mesh>
+            <mesh position={[0, 0.37, 0]}><boxGeometry args={[0.09, 0.74, 0.09]} /><primitive object={METAL} attach="material" /></mesh>
+            {[-1, 1].map((side) => (
+              <group key={side} position={[side * 1.05, 0, 0]}>
+                <mesh position={[0, 0.46, 0]} castShadow><boxGeometry args={[0.55, 0.09, 1.7]} /><meshStandardMaterial color="#7a3b2e" roughness={0.85} /></mesh>
+                <mesh position={[side * 0.26, 0.82, 0]}><boxGeometry args={[0.07, 0.8, 1.7]} /><meshStandardMaterial color="#7a3b2e" roughness={0.85} /></mesh>
+                <mesh position={[0, 0.22, 0]}><boxGeometry args={[0.5, 0.44, 1.6]} /><meshStandardMaterial color="#5d2f24" roughness={0.9} /></mesh>
+              </group>
+            ))}
+          </group>
+        ))}
+        {/* two regulars in the middle booth, mid-conversation */}
+        <group position={[5.15, 0, 0]} rotation={[0, Math.PI / 2, 0]}><primitive object={dinerGuests[0].group} /></group>
+        <group position={[7.25, 0, 0]} rotation={[0, -Math.PI / 2, 0]}><primitive object={dinerGuests[1].group} /></group>
+        {/* the jukebox by the door — teal/amber glass, lit whether
+            or not it's playing (its state is in the prompt) */}
+        <group position={[-6.6, 0, 3.6]}>
+          <mesh position={[0, 0.62, 0]} castShadow><boxGeometry args={[0.95, 1.24, 0.55]} /><meshStandardMaterial color="#7a3b2e" roughness={0.55} /></mesh>
+          <mesh position={[0, 1.3, 0]}><boxGeometry args={[1.0, 0.14, 0.58]} /><meshStandardMaterial color="#5d2f24" roughness={0.55} /></mesh>
+          <mesh position={[0, 0.88, 0.29]}><boxGeometry args={[0.62, 0.5, 0.03]} /><meshStandardMaterial color="#ffb340" emissive="#ffb340" emissiveIntensity={0.55} /></mesh>
+          <mesh position={[0, 0.42, 0.29]}><boxGeometry args={[0.7, 0.3, 0.03]} /><meshStandardMaterial color="#2ee6c8" emissive="#2ee6c8" emissiveIntensity={0.4} /></mesh>
+        </group>
+        {/* runner rug + pendant glows + the street window + exit */}
+        <mesh position={[0, 0.03, 2.2]} receiveShadow><boxGeometry args={[9, 0.03, 2]} /><meshStandardMaterial color="#7a3b2e" roughness={0.95} /></mesh>
+        {[-4, 0, 4].map((x) => (
+          <mesh key={x} position={[x, 2.72, -1]}><sphereGeometry args={[0.11, 10, 8]} /><meshStandardMaterial color="#ffe9a8" emissive="#ffca7a" emissiveIntensity={1.5} /></mesh>
+        ))}
+        <mesh position={[0, 2, DN0.d / 2 - 0.16]}><boxGeometry args={[9, 1.3, 0.03]} /><meshStandardMaterial color="#ffd9a0" emissive="#ffca7a" emissiveIntensity={0.35} transparent opacity={0.85} /></mesh>
+        <mesh position={[0, 1.4, DN0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#2b1c10" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
+      </group>
+
+      {/* ================= Phase 39: THE WESTBROOK SILO OFFICE ======
+          The lookout room at the top of the grain silo: desk on
+          the north wall (the harbour-log point, rel −1.8,−3.0),
+          the harbour chart beside it, the bay in a painted east
+          window (the Loft idiom). No NPC — the log is the point. */}
+      <RoomShell cx={SL0.cx} cz={SL0.cz} w={SL0.w} d={SL0.d} h={3.2} wall={WALL_SL} floor={FLOOR_SL} ceiling />
+      <group position={[SL0.cx, 0, SL0.cz]}>
+        <pointLight position={[0, 2.7, -1]} intensity={18} distance={14} decay={1.7} color="#ffd9a0" />
+        <mesh position={[0, 2.5, SL0.d / 2 - 0.2]} rotation={[0, Math.PI, 0]}>
+          <planeGeometry args={[4.8, 0.9]} />
+          <meshStandardMaterial map={siloSign} emissive="#ffffff" emissiveMap={siloSign} emissiveIntensity={0.7} />
+        </mesh>
+        {/* the desk + the harbour log itself (red ledger + loose pages) */}
+        <group position={[-1.8, 0, -3.9]}>
+          <mesh position={[0, 0.45, 0]} castShadow><boxGeometry args={[2.6, 0.9, 0.9]} /><primitive object={WOOD} attach="material" /></mesh>
+          <mesh position={[0, 0.93, 0]}><boxGeometry args={[2.7, 0.05, 1]} /><meshStandardMaterial color="#54382a" roughness={0.6} /></mesh>
+          <mesh position={[-0.35, 0.99, 0]} rotation={[0, 0.25, 0]}><boxGeometry args={[0.52, 0.06, 0.36]} /><meshStandardMaterial color="#8c2f26" roughness={0.55} /></mesh>
+          <mesh position={[-0.33, 1.03, 0.01]} rotation={[0, 0.25, 0]}><boxGeometry args={[0.46, 0.015, 0.3]} /><meshStandardMaterial color="#e8e2d4" roughness={0.9} /></mesh>
+          <mesh position={[0.7, 0.99, 0.1]} rotation={[0, -0.4, 0]}><boxGeometry args={[0.4, 0.02, 0.28]} /><meshStandardMaterial color="#e8e2d4" roughness={0.9} /></mesh>
+          <mesh position={[1.05, 1.06, -0.15]}><sphereGeometry args={[0.07, 10, 8]} /><meshStandardMaterial color="#ffe9a8" emissive="#ffca7a" emissiveIntensity={1.4} /></mesh>
+        </group>
+        {/* the office chair, pushed back from the desk */}
+        <group position={[-1.8, 0, -2.75]} rotation={[0, Math.PI, 0]}>
+          <mesh position={[0, 0.46, 0]} castShadow><boxGeometry args={[0.55, 0.07, 0.5]} /><meshStandardMaterial color="#39424e" roughness={0.7} /></mesh>
+          <mesh position={[0, 0.85, -0.24]}><boxGeometry args={[0.55, 0.75, 0.07]} /><meshStandardMaterial color="#39424e" roughness={0.7} /></mesh>
+          <mesh position={[0, 0.23, 0]}><cylinderGeometry args={[0.05, 0.05, 0.46, 8]} /><primitive object={METAL} attach="material" /></mesh>
+        </group>
+        {/* the harbour chart on the north wall */}
+        <mesh position={[2.2, 1.95, -SL0.d / 2 + 0.2]}>
+          <planeGeometry args={[4.6, 2.3]} />
+          <meshStandardMaterial map={chartTex} roughness={0.9} />
+        </mesh>
+        {/* the east window: the bay, painted — frame, two bars, and
+            the glowing pane (emissive lifts it after dark, the
+            Loft's window treatment) */}
+        <group position={[SL0.w / 2 - 0.17, 0, 0.5]}>
+          <mesh position={[0, 1.8, 0]} rotation={[0, -Math.PI / 2, 0]}>
+            <planeGeometry args={[3.4, 2.2]} />
+            <meshStandardMaterial map={bayTex} emissive="#ffffff" emissiveMap={bayTex} emissiveIntensity={0.45} roughness={0.4} />
+          </mesh>
+          <mesh position={[-0.02, 1.8, -1.76]}><boxGeometry args={[0.07, 2.36, 0.12]} /><meshStandardMaterial color="#3a3f45" roughness={0.7} /></mesh>
+          <mesh position={[-0.02, 1.8, 1.76]}><boxGeometry args={[0.07, 2.36, 0.12]} /><meshStandardMaterial color="#3a3f45" roughness={0.7} /></mesh>
+          <mesh position={[-0.02, 2.94, 0]}><boxGeometry args={[0.07, 0.12, 3.64]} /><meshStandardMaterial color="#3a3f45" roughness={0.7} /></mesh>
+          <mesh position={[-0.02, 0.66, 0]}><boxGeometry args={[0.07, 0.12, 3.64]} /><meshStandardMaterial color="#3a3f45" roughness={0.7} /></mesh>
+          <mesh position={[-0.02, 1.8, 0]}><boxGeometry args={[0.07, 2.36, 0.09]} /><meshStandardMaterial color="#3a3f45" roughness={0.7} /></mesh>
+        </group>
+        {/* filing cabinet + grain sacks + a rug over the concrete */}
+        <group position={[5.2, 0, -4.9]}>
+          <mesh position={[0, 0.85, 0]} castShadow><boxGeometry args={[1, 1.7, 0.55]} /><meshStandardMaterial color="#5a6068" metalness={0.45} roughness={0.5} /></mesh>
+          {[0.45, 0.85, 1.25].map((y) => (
+            <mesh key={y} position={[0, y, 0.29]}><boxGeometry args={[0.8, 0.03, 0.02]} /><meshStandardMaterial color="#39424e" metalness={0.5} roughness={0.4} /></mesh>
+          ))}
+        </group>
+        {([[5.9, 3.9], [5.1, 4.3]] as const).map(([x, z], i) => (
+          <mesh key={i} position={[x, 0.32, z]} castShadow><boxGeometry args={[0.85, 0.64, 0.85]} /><meshStandardMaterial color={i ? "#8a6f4d" : "#a3764f"} roughness={0.95} /></mesh>
+        ))}
+        <mesh position={[0, 0.03, 0.8]} receiveShadow><boxGeometry args={[5.5, 0.03, 3.6]} /><meshStandardMaterial color="#37505a" roughness={0.95} /></mesh>
+        <mesh position={[0, 1.4, SL0.d / 2 - 0.12]}><boxGeometry args={[1.7, 2.8, 0.08]} /><meshStandardMaterial color="#232a31" emissive="#ffca7a" emissiveIntensity={0.3} /></mesh>
       </group>
     </group>
   );

@@ -99,9 +99,27 @@ function signTexture(text: string, fg: string, bg: string): THREE.Texture {
 
 interface WalkerState { rig: HumanoidRig; x: number; z: number; heading: number; phase: number; bi: number; dir: 1 | -1 }
 
+// ---- Phase 27: PETRA VANE — the diner's owner, standing at her
+// front hatch. The Ledger Line's giver lives in the world where her
+// arc lives (she is offered by phone, but she EXISTS here, name
+// label and all, like the Phase 21 staff presence). Grey ponytail,
+// apron-brown top; she idles at the hatch and watches the street.
+const PETRA_POS = { x: 54.5, z: -254.2 };
+function petraLabelTexture(): THREE.CanvasTexture {
+  const c = document.createElement("canvas"); c.width = 256; c.height = 64;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "rgba(10,16,20,0.72)"; g.fillRect(0, 0, 256, 64);
+  g.fillStyle = "#ffe9c9"; g.font = "bold 25px sans-serif"; g.textAlign = "center";
+  g.fillText("Petra Vane", 128, 28);
+  g.fillStyle = "#9fd8d2"; g.font = "17px sans-serif";
+  g.fillText("Eastmere Diner", 128, 52);
+  return new THREE.CanvasTexture(c);
+}
+
 export default function EastmereWorld({ night }: { night: number }) {
   const facade = useMemo(facadeTexture, []);
   const dinerSign = useMemo(() => signTexture("EASTMERE DINER", "#ffcf7d", "#17323e"), []);
+  const dinerHours = useMemo(() => signTexture("OPEN 06:00 – 23:00", "#e8ecef", "#3d2f1d"), []);
   const welcomeSign = useMemo(() => signTexture("EASTMERE", "#ffcf7d", "#17323e"), []);
   const lookoutSign = useMemo(() => signTexture("GULL ROCK LOOKOUT", "#e8ecef", "#3d2f1d"), []);
   const glow = useMemo(glowTexture, []);
@@ -111,10 +129,26 @@ export default function EastmereWorld({ night }: { night: number }) {
     x: w.beats[0][0], z: w.beats[0][1], heading: 0, phase: Math.random() * 6, bi: 0, dir: 1 as const,
   })), []);
   const stateRef = useRef(walkers);
+  const petra = useMemo(() => {
+    const rig = buildHumanoid({ top: "#8c5a2b", bottom: "#2e3138", skin: "#b07a52", hair: "#c9c9c9", topStyle: "tee", gender: "f", hairStyle: "ponytail" });
+    rig.group.position.set(PETRA_POS.x, 0, PETRA_POS.z);
+    return { rig, phase: Math.random() * 6 };
+  }, []);
+  const petraLabel = useMemo(petraLabelTexture, []);
+  const petraLabelRef = useRef<THREE.Sprite | null>(null);
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05);
     const px = G.followPos.x, pz = G.followPos.z;
+    // Phase 39: while the player is inside the diner interior,
+    // Petra is behind its counter (Interiors.tsx renders the same
+    // rig there) — her street figure + label hide, so she is
+    // never in two places at once. Written BEFORE the far-away
+    // rest below: from inside the pocket, Eastmere is always
+    // "far away", so a check after the return would never run.
+    const petraInside = G.interior === "diner";
+    petra.rig.group.visible = !petraInside;
+    if (petraInside && petraLabelRef.current) petraLabelRef.current.visible = false;
     if (Math.abs(px - 83) > 170 || Math.abs(pz + 246) > 170) return; // far away: rest
     const t = performance.now() / 1000;
     for (let i = 0; i < stateRef.current.length; i++) {
@@ -141,6 +175,15 @@ export default function EastmereWorld({ night }: { night: number }) {
       s.rig.group.position.set(s.x, 0, s.z);
       s.rig.group.rotation.y = s.heading;
       animateHumanoid(s.rig, s.phase, dist >= 0.4 ? 0.65 : 0, t);
+    }
+    // Petra idles at her hatch (breathing/sway only); her name label
+    // shows within 42 m, the staff-presence convention.
+    animateHumanoid(petra.rig, petra.phase, 0, t);
+    const pl = petraLabelRef.current;
+    if (pl) {
+      const near = Math.hypot(PETRA_POS.x - px, PETRA_POS.z - pz) < 42;
+      pl.visible = near && !petraInside;
+      if (near) pl.position.set(PETRA_POS.x, 2.15, PETRA_POS.z);
     }
   });
 
@@ -176,6 +219,14 @@ export default function EastmereWorld({ night }: { night: number }) {
         <mesh position={[0, 2.5, 0]} castShadow receiveShadow><boxGeometry args={[7, 5, 5]} /><meshStandardMaterial color="#7d8f96" roughness={0.85} /></mesh>
         <mesh position={[0, 3.6, 2.56]}><planeGeometry args={[6.4, 1.1]} /><meshStandardMaterial map={dinerSign} emissive="#ffffff" emissiveMap={dinerSign} emissiveIntensity={0.2 + night * 0.8} /></mesh>
         <mesh position={[0, 2.55, 3.1]}><boxGeometry args={[7.4, 0.15, 1.6]} /><meshStandardMaterial color="#c97b2d" roughness={0.8} /></mesh>
+        {/* Phase 39: the street door into the pocket interior —
+            a teal door plate on the south face under the awning,
+            a step, and the hours board (06:00–23:00, enforced in
+            Interiors.tsx at DINER_EXT_DOOR) */}
+        <mesh position={[0, 1.05, 2.53]}><boxGeometry args={[1.15, 2.1, 0.08]} /><meshStandardMaterial color="#2e4a44" roughness={0.6} /></mesh>
+        <mesh position={[0.42, 1.05, 2.58]}><sphereGeometry args={[0.045, 8, 6]} /><meshStandardMaterial color="#c8a24a" metalness={0.7} roughness={0.3} /></mesh>
+        <mesh position={[0, 0.06, 2.95]}><boxGeometry args={[1.7, 0.12, 0.9]} /><meshStandardMaterial color="#9aa3a8" roughness={1} /></mesh>
+        <mesh position={[1.95, 1.55, 2.53]}><planeGeometry args={[1.9, 0.36]} /><meshStandardMaterial map={dinerHours} emissive="#ffffff" emissiveMap={dinerHours} emissiveIntensity={0.1 + night * 0.45} /></mesh>
       </group>
       {/* Eastmere Light — the lighthouse on the back-street corner */}
       <group position={[114, 0, -290]}>
@@ -217,6 +268,10 @@ export default function EastmereWorld({ night }: { night: number }) {
       ))}
       {/* ambient walkers */}
       {walkers.map((s, i) => <primitive key={i} object={s.rig.group} />)}
+      <primitive object={petra.rig.group} />
+      <sprite ref={petraLabelRef} position={[PETRA_POS.x, 2.15, PETRA_POS.z]} scale={[2.6, 0.65, 1]}>
+        <spriteMaterial map={petraLabel} transparent depthWrite={false} />
+      </sprite>
     </group>
   );
 }

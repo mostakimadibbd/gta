@@ -13,10 +13,12 @@ import { glowTexture, tyreTexture, shatteredTexture, carDirtTexture } from "../t
 import { G } from "../game/store";
 import { gates, tier } from "../game/quality";
 
-export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto";
+export type CarKind = "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto" | "tempest" | "mule" | "ambulance" | "firetruck" | "sovereign";
 
 const GLASS = new THREE.MeshStandardMaterial({ color: "#141f28", metalness: 0.5, roughness: 0.08, envMapIntensity: 1.3 });
 const CHROME = new THREE.MeshStandardMaterial({ color: "#d7dce2", metalness: 0.95, roughness: 0.16, envMapIntensity: 1.4 });
+// Phase 48: Sovereign gold — the Crown car's fixed livery metal.
+const GOLD = new THREE.MeshStandardMaterial({ color: "#c9a227", metalness: 0.9, roughness: 0.28, envMapIntensity: 1.3 });
 const BUMPER = new THREE.MeshStandardMaterial({ color: "#22262b", metalness: 0.4, roughness: 0.5 });
 const TYRE = new THREE.MeshStandardMaterial({ color: "#8a8a8e", map: tyreTexture(), roughness: 0.94 });
 const RIM = new THREE.MeshStandardMaterial({ color: "#c9ced6", metalness: 0.85, roughness: 0.3 });
@@ -168,6 +170,11 @@ const CABIN_POS: Record<string, { y: number; z: number; w: number }> = {
   gt: { y: 0.95, z: -0.35, w: 1.5 }, tow: { y: 1.18, z: 0.85, w: 1.6 },
   // Phase 18
   kestrel: { y: 0.82, z: -0.35, w: 1.42 }, bronto: { y: 1.4, z: 0.9, w: 1.65 },
+  // Phase 28
+  tempest: { y: 0.84, z: -0.45, w: 1.48 }, mule: { y: 1.3, z: 0.9, w: 1.62 },
+  sovereign: { y: 0.86, z: -0.45, w: 1.5 },
+  // Phase 32: service fleet (van cab geometry for both)
+  ambulance: { y: 1.0, z: 1.15, w: 1.65 }, firetruck: { y: 1.18, z: 0.85, w: 1.6 },
 };
 /** Dirt/scratch shell (Visual V3): opacity follows live damage. */
 const SHELL: Record<string, [number, number, number, number]> = {
@@ -179,6 +186,11 @@ const SHELL: Record<string, [number, number, number, number]> = {
   wedge: [2.3, 0.5, 4.5, 0.42], hyper: [2.25, 0.5, 4.4, 0.42], gt: [2.05, 0.55, 4.6, 0.55], tow: [2.15, 0.77, 4.15, 0.68],
   // Phase 18
   kestrel: [2.08, 0.48, 3.95, 0.48], bronto: [2.2, 0.9, 4.4, 0.82],
+  // Phase 28
+  tempest: [2.12, 0.5, 4.35, 0.5], mule: [2.2, 0.92, 4.2, 0.86],
+  sovereign: [2.16, 0.5, 4.4, 0.5],
+  // Phase 32: service fleet
+  ambulance: [2.15, 1.17, 4.25, 0.92], firetruck: [2.2, 1.05, 4.4, 0.82],
 };
 function DirtShell({ kind, liveDamage }: { kind: string; liveDamage?: () => number }) {
   const mat = useMemo(() => new THREE.MeshStandardMaterial({ map: carDirtTexture(), transparent: true, opacity: 0, roughness: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }), []);
@@ -424,10 +436,16 @@ export function PlaneBody({ color, carIndex }: { color: string; carIndex?: numbe
   const paint = useMemo(() => paintMaterial(color, 0.3, 0.3), [color]);
   const prop = useRef<THREE.Group>(null);
   const spin = useRef(0);
+  // Phase 28: the prop BLUR DISC — a translucent disc at the prop
+  // plane whose opacity follows engine speed: invisible at idle,
+  // a full shimmering disc at cruise, so the spinning blades read
+  // as a blur instead of two strobing sticks.
+  const discMat = useMemo(() => new THREE.MeshBasicMaterial({ color: "#d7dee3", transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }), []);
   useFrame((_, delta) => {
     const spd = carIndex !== undefined && G.cars[carIndex] ? Math.abs(G.cars[carIndex].state.speed) : 0;
     spin.current += delta * (2 + spd * 6);
     if (prop.current) prop.current.rotation.z = spin.current;
+    discMat.opacity = THREE.MathUtils.clamp((spd - 2) / 30, 0, 1) * 0.34;
   });
   return (
     <group>
@@ -447,6 +465,11 @@ export function PlaneBody({ color, carIndex }: { color: string; carIndex?: numbe
         <mesh rotation={[0, 0, 0]}><boxGeometry args={[0.16, 2.5, 0.05]} /><primitive object={DARKTRIM} attach="material" /></mesh>
         <mesh><sphereGeometry args={[0.17, 10, 8]} /><primitive object={CHROME} attach="material" /></mesh>
       </group>
+      {/* Phase 28: prop blur disc (opacity driven in useFrame) */}
+      <mesh position={[0, 1.15, 3.36]}>
+        <circleGeometry args={[1.27, 24]} />
+        <primitive object={discMat} attach="material" />
+      </mesh>
       {/* fixed gear: two mains + tail wheel, with struts */}
       {([-0.85, 0.85] as const).map((x, i) => (
         <group key={i}>
@@ -662,6 +685,28 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
         <LightsBumpers w={2.2} len={4.4} y={0.84} />
         <Mirrors w={2.2} y={1.52} z={1.5} />
       </>); wheels = wheelSet(2.2, 4.4, 0.52, 0.36); break;
+    case "mule":
+      // Phase 28: SABLE MULE — the farm's cheap workhorse: a tall,
+      // narrow-cab pickup on oversize knobbly rubber, riding high.
+      // Bull bar, a snorkel up the cab's right pillar, mud flaps and
+      // a working bed (hay bale + feed sacks). Slow on tarmac, the
+      // best dirt grip of any pickup in the range (Vehicle.tsx).
+      body = (<>
+        <RB args={[2.12, 0.8, 4.2]} radius={0.08} mat={paint} pos={[0, 0.86, 0]} />
+        <RB args={[1.82, 0.56, 1.3]} radius={0.1} mat={glassMat} pos={[0, 1.5, 0.9]} />
+        {/* open bed: hay bale + feed sacks */}
+        <mesh position={[-0.45, 1.06, -1.25]} rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[0.42, 0.42, 0.95, 12]} /><meshStandardMaterial color="#c9a959" roughness={0.95} /></mesh>
+        <RB args={[0.62, 0.4, 0.7]} radius={0.09} mat={DARKTRIM} pos={[0.5, 1.0, -1.3]} />
+        {/* bull bar + snorkel + mud flaps */}
+        <mesh position={[0, 0.78, 2.16]}><boxGeometry args={[1.8, 0.55, 0.09]} /><primitive object={BUMPER} attach="material" /></mesh>
+        <mesh position={[0.98, 1.45, 1.35]}><cylinderGeometry args={[0.05, 0.05, 1.15, 8]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <mesh position={[0.98, 2.05, 1.35]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.05, 0.05, 0.3, 8]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        {[-1, 1].map((s) => (
+          <mesh key={s} position={[s * 1.02, 0.42, -1.55]}><boxGeometry args={[0.06, 0.5, 0.34]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        ))}
+        <LightsBumpers w={2.12} len={4.2} y={0.9} />
+        <Mirrors w={2.12} y={1.52} z={1.5} />
+      </>); wheels = wheelSet(2.12, 4.2, 0.5, 0.34); break;
     case "van":
       body = (<>
         <RB args={[2.1, 1.12, 4.2]} radius={0.12} mat={paint} pos={[0, 0.92, 0]} />
@@ -670,6 +715,61 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
         <LightsBumpers w={2.1} len={4.2} y={0.66} />
         <Mirrors w={2.1} y={1.3} z={1.9} />
       </>); wheels = wheelSet(2.1, 4.2, 0.4, 0.28); break;
+    case "ambulance":
+      // Phase 32: SABLE MEDIC VAN — the van shell in service white:
+      // a red waist stripe, red crosses on both flanks and the rear,
+      // and the lightbar the ServiceJobs beacons sit on while a call
+      // is live (the flashing itself is ServiceJobs' mesh, the same
+      // split as the traffic service vans in GameSystems).
+      body = (<>
+        <RB args={[2.1, 1.12, 4.2]} radius={0.12} mat={paint} pos={[0, 0.92, 0]} />
+        <RB args={[1.9, 0.24, 1.15]} radius={0.09} mat={paint} pos={[0, 1.32, 1.55]} rot={[0.13, 0, 0]} />
+        <mesh position={[0, 1.12, 1.95]}><boxGeometry args={[1.85, 0.55, 0.3]} /><primitive object={glassMat} attach="material" /></mesh>
+        {/* red waist stripe + flank crosses */}
+        <mesh position={[0, 0.78, 0]}><boxGeometry args={[2.13, 0.22, 4.22]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+        {[-1, 1].map((s) => (
+          <group key={s} position={[s * 1.06, 1.18, -0.5]}>
+            <mesh><boxGeometry args={[0.03, 0.62, 0.2]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+            <mesh><boxGeometry args={[0.03, 0.2, 0.62]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+          </group>
+        ))}
+        {/* rear cross (the doors you load the patient through) */}
+        <mesh position={[0, 1.1, -2.11]}><boxGeometry args={[0.2, 0.62, 0.03]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+        <mesh position={[0, 1.1, -2.11]}><boxGeometry args={[0.62, 0.2, 0.03]} /><meshStandardMaterial color="#c22e2e" roughness={0.5} /></mesh>
+        {/* lightbar base (beacons flash from ServiceJobs on a call) */}
+        <mesh position={[0, 1.56, 0.9]}><boxGeometry args={[1.15, 0.09, 0.42]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <LightsBumpers w={2.1} len={4.2} y={0.66} />
+        <Mirrors w={2.1} y={1.3} z={1.9} />
+      </>); wheels = wheelSet(2.1, 4.2, 0.4, 0.28); break;
+    case "firetruck":
+      // Phase 32: SABLE FIRE TENDER — a working truck, not a van in
+      // red: short cab, a tall equipment body behind it with roller
+      // shutters, hose reels on the flanks, a roof ladder and the
+      // lightbar. It carries the water the firefighter job meters.
+      body = (<>
+        {/* cab */}
+        <RB args={[2.15, 0.78, 1.5]} radius={0.09} mat={paint} pos={[0, 0.72, 1.4]} />
+        <RB args={[1.9, 0.55, 1.15]} radius={0.11} mat={glassMat} pos={[0, 1.32, 1.35]} />
+        {/* equipment body */}
+        <RB args={[2.2, 1.3, 2.7]} radius={0.07} mat={paint} pos={[0, 1.0, -0.8]} />
+        {/* roller shutters on both flanks */}
+        {[-1, 1].map((s) => (
+          <group key={s} position={[s * 1.11, 1.05, -0.8]}>
+            <mesh><boxGeometry args={[0.04, 0.95, 2.2]} /><meshStandardMaterial color="#8f979e" roughness={0.45} metalness={0.55} /></mesh>
+            {[0.72, 0.38, 0.04, -0.3].map((y) => <mesh key={y} position={[0, y, 0]}><boxGeometry args={[0.05, 0.05, 2.2]} /><meshStandardMaterial color="#5c646a" roughness={0.6} metalness={0.4} /></mesh>)}
+            {/* hose reel low on the flank */}
+            <mesh position={[s * 0.03, -0.52, 0.75]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[0.3, 0.3, 0.09, 14]} /><meshStandardMaterial color="#31435c" roughness={0.6} /></mesh>
+          </group>
+        ))}
+        {/* roof ladder + lightbar */}
+        <mesh position={[0, 1.74, -0.8]}><boxGeometry args={[0.55, 0.07, 2.9]} /><meshStandardMaterial color="#c8ccd2" metalness={0.7} roughness={0.35} /></mesh>
+        {[-1.15, -0.4, 0.4, 1.15].map((z) => <mesh key={z} position={[0, 1.72, z]}><boxGeometry args={[0.6, 0.05, 0.08]} /><meshStandardMaterial color="#9aa0a6" metalness={0.6} roughness={0.4} /></mesh>)}
+        <mesh position={[0, 1.68, 1.35]}><boxGeometry args={[1.15, 0.09, 0.42]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        {/* white cab brow stripe */}
+        <mesh position={[0, 1.06, 2.16]}><boxGeometry args={[2.16, 0.18, 0.04]} /><meshStandardMaterial color="#eef1f4" roughness={0.5} /></mesh>
+        <LightsBumpers w={2.15} len={4.4} y={0.7} />
+        <Mirrors w={2.15} y={1.34} z={1.95} />
+      </>); wheels = wheelSet(2.2, 4.4, 0.46, 0.32); break;
     case "hatch":
       body = (<>
         <RB args={[1.9, 0.6, 3.15]} radius={0.1} mat={paint} pos={[0, 0.62, 0]} />
@@ -701,6 +801,58 @@ export default function CarBody({ kind, color, police, steerRef, liveDamage, bro
         <LightsBumpers w={2.08} len={3.95} y={0.52} />
         <Mirrors w={2.08} y={0.95} z={0.35} />
       </>); wheels = wheelSet(2.08, 3.95, 0.36, 0.26, 0.4, 0.34); break;
+    case "tempest":
+      // Phase 28: VANTARA TEMPEST — the flagship GT coupe: longer and
+      // lower than the Marlowe GT, cabin set further back, a ducktail
+      // deck with a full-width light bar, side intakes behind the
+      // doors and fat rear rubber. Rear-drive, built to slide.
+      body = (<>
+        <RB args={[2.12, 0.46, 4.35]} radius={0.15} mat={paint} pos={[0, 0.52, 0]} />
+        <RB args={[1.98, 0.15, 2.2]} radius={0.06} mat={paint} pos={[0, 0.76, 1.0]} rot={[0.05, 0, 0]} />{/* the long bonnet */}
+        <RB args={[1.64, 0.44, 1.55]} radius={0.17} mat={glassMat} pos={[0, 0.94, -0.5]} />
+        <RB args={[1.9, 0.13, 0.85]} radius={0.06} mat={paint} pos={[0, 0.74, -1.85]} rot={[-0.12, 0, 0]} />{/* ducktail deck */}
+        {/* side intakes behind the doors + a chrome waist spear */}
+        <mesh position={[-1.07, 0.58, -0.95]}><boxGeometry args={[0.04, 0.2, 0.55]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <mesh position={[1.07, 0.58, -0.95]}><boxGeometry args={[0.04, 0.2, 0.55]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <mesh position={[0, 0.68, 0]}><boxGeometry args={[2.14, 0.05, 4.0]} /><primitive object={CHROME} attach="material" /></mesh>
+        {/* quad exhausts under the light bar */}
+        {[-0.62, -0.42, 0.42, 0.62].map((ex) => (
+          <mesh key={ex} position={[ex, 0.3, -2.2]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.045, 0.045, 0.16, 8]} /><primitive object={CHROME} attach="material" />
+          </mesh>
+        ))}
+        <LightsBumpers w={2.12} len={4.35} y={0.56} />
+        <Mirrors w={2.12} y={1.0} z={0.1} />
+      </>); wheels = wheelSet(2.12, 4.35, 0.37, 0.28, 0.41, 0.36); break;
+    case "sovereign":
+      // Phase 48: VANTARA SOVEREIGN — the Harbour Crown's one-of-one
+      // grand tourer, modelled on the Tempest's lines and wearing
+      // its fixed TWO-TONE livery: the car's own paint (deep
+      // harbour teal at delivery) under a GOLD roof panel, gold
+      // waist spear and gold deck band — the gold is livery, not
+      // paint, so a respray changes the teal and never the crown.
+      body = (<>
+        <RB args={[2.16, 0.46, 4.4]} radius={0.15} mat={paint} pos={[0, 0.52, 0]} />
+        <RB args={[2.02, 0.15, 2.25]} radius={0.06} mat={paint} pos={[0, 0.76, 1.02]} rot={[0.05, 0, 0]} />{/* the long bonnet */}
+        <RB args={[1.66, 0.44, 1.58]} radius={0.17} mat={glassMat} pos={[0, 0.94, -0.5]} />
+        {/* the gold roof panel over the cabin glass */}
+        <RB args={[1.7, 0.1, 1.62]} radius={0.05} mat={GOLD} pos={[0, 1.18, -0.5]} />
+        <RB args={[1.94, 0.13, 0.88]} radius={0.06} mat={paint} pos={[0, 0.74, -1.88]} rot={[-0.12, 0, 0]} />{/* ducktail deck */}
+        {/* gold waist spear + gold deck band — the livery's signature */}
+        <mesh position={[0, 0.68, 0]}><boxGeometry args={[2.18, 0.06, 4.05]} /><primitive object={GOLD} attach="material" /></mesh>
+        <mesh position={[0, 0.86, -2.18]}><boxGeometry args={[1.9, 0.09, 0.06]} /><primitive object={GOLD} attach="material" /></mesh>
+        {/* side intakes behind the doors */}
+        <mesh position={[-1.09, 0.58, -0.95]}><boxGeometry args={[0.04, 0.2, 0.55]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        <mesh position={[1.09, 0.58, -0.95]}><boxGeometry args={[0.04, 0.2, 0.55]} /><primitive object={DARKTRIM} attach="material" /></mesh>
+        {/* quad exhausts under the light bar */}
+        {[-0.64, -0.43, 0.43, 0.64].map((ex) => (
+          <mesh key={ex} position={[ex, 0.3, -2.24]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.045, 0.045, 0.16, 8]} /><primitive object={GOLD} attach="material" />
+          </mesh>
+        ))}
+        <LightsBumpers w={2.16} len={4.4} y={0.56} />
+        <Mirrors w={2.16} y={1.0} z={0.1} />
+      </>); wheels = wheelSet(2.16, 4.4, 0.38, 0.28, 0.42, 0.37); break;
     case "taxi":
       body = (<>
         <RB args={[2.0, 0.58, 3.7]} radius={0.1} mat={paint} pos={[0, 0.6, 0]} />

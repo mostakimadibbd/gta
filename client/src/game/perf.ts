@@ -24,7 +24,8 @@ export const perf = {
 // display is a ~5K-class drawing buffer; the composer, SSR G-buffer,
 // SSAO and the planar-water mirror all scale off it, so the whole
 // stack multiplied. The ladder now tops out at 1.5: High = 1.5,
-// Medium = 1.35, Low = 1.25. The governor still walks DPR down FIRST
+// Medium = 1.35, Low = 1.25 (Phase 45: Low's cap is 1.0 — see
+// tierDprCap below). The governor still walks DPR down FIRST
 // (autoDrop only gates the TIER lever below — manualTier never
 // disables DPR adaptation), so a manual High stays smooth by
 // shedding pixels before anything else. ----
@@ -32,7 +33,14 @@ export const perf = {
 // governor may now shed resolution to native 1.0 before any tier drop
 // is considered (caps per tier unchanged).
 export const DPR_LADDER = [1.0, 1.1, 1.25, 1.35, 1.5];
-export const tierDprCap = (t: QualityTier) => (t === "high" ? 1.5 : t === "medium" ? 1.35 : 1.25);
+// Phase 45: the Low cap drops from 1.25 to 1.0 — as a preset for
+// weak phones, Low now renders at native resolution at most (a
+// 1.25 cap costs ~56% more fragments than 1.0 for no gameplay
+// gain). The governor already treats the tier cap as a hard
+// ceiling (PerfGovernor clamps its ladder index to it), so the
+// preset and the governor cannot fight: the governor only ever
+// walks DOWN from the cap.
+export const tierDprCap = (t: QualityTier) => (t === "high" ? 1.5 : t === "medium" ? 1.35 : 1.0);
 
 /** Manual tier choice (pause Graphics / phone Settings): respect it —
  * the governor stops auto-dropping the TIER for the rest of the
@@ -127,9 +135,32 @@ export const SIM_MAX_SUBSTEPS = 3;
  *  · viewDistance — scales the streaming activation radii (traffic
  *    dormancy 165/140u, ped hold 170u) and the fog distances:
  *    Near ×0.65 streaming / ×0.78 fog, Normal ×1, Far ×1.45 / ×1.3. */
-export const trafficDensityShare = () => (G.settings.trafficDensity === "low" ? 0.5 : 1);
-export const pedDensityFactor = () =>
-  G.settings.pedDensity === "low" ? 0.5 : G.settings.pedDensity === "high" ? 1.35 : 1;
+// Phase 45: the Low quality preset ALSO caps these levers — on
+// Low, ambient traffic activates at most 50% and the crowd factor
+// at most ×0.5 whatever the density levers say (the preset is a
+// ceiling, exactly like the DPR cap; a player who wants more
+// traffic on a weak phone raises the tier, not the lever). On
+// Medium/High the formulas are the pre-Phase-45 ones verbatim.
+export const trafficDensityShare = () => {
+  const lever = G.settings.trafficDensity === "low" ? 0.5 : 1;
+  return G.settings.quality === "low" ? Math.min(lever, 0.5) : lever;
+};
+export const pedDensityFactor = () => {
+  const lever = G.settings.pedDensity === "low" ? 0.5 : G.settings.pedDensity === "high" ? 1.35 : 1;
+  return G.settings.quality === "low" ? Math.min(lever, 0.5) : lever;
+};
+/** Phase 46 audit: the rush-hour RESERVE's park/unpark decision
+ * (GameSystems) is a second consumer of the traffic lever that
+ * Phase 45's ceiling didn't reach — it read G.settings directly,
+ * so on Low with the lever on High the reserve cars inside the
+ * active share never parked off-peak, against the preset's
+ * "ceiling whatever the levers say" rule. The active-count ceiling
+ * itself was never bypassed (the density gate dormants beyond-
+ * share cars earlier in the same step), but the reserve behaviour
+ * now honours the same ceiling through here: on Low the reserve
+ * parks off-peak like Normal. Medium/High are unchanged. */
+export const trafficReserveAlwaysOut = () =>
+  G.settings.trafficDensity === "high" && G.settings.quality !== "low";
 export const viewStreamScale = () =>
   G.settings.viewDistance === "near" ? 0.65 : G.settings.viewDistance === "far" ? 1.45 : 1;
 export const viewFogScale = () =>

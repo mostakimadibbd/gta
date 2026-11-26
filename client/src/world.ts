@@ -48,7 +48,7 @@ export const BUS_STOPS: { x: number; z: number }[] = [
   { x: 27.7, z: -30 }, { x: -67.7, z: 14 }, { x: 34, z: 63.5 }, // Phase 25: the Docks stop stood inside the (31,71) building; 63.5 is the z=60 kerb in front of its face
 ];
 /** Cars the Northgate dealership sells (delivered to your garage). */
-export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv" | "wedge" | "hyper" | "gt" | "kestrel" | "bronto"; color: string; price: number }[] = [
+export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv" | "wedge" | "hyper" | "gt" | "kestrel" | "bronto" | "tempest" | "mule"; color: string; price: number }[] = [
   { kind: "coupe", color: "#3f7fae", price: 4200 },
   { kind: "supercar", color: "#c22e2e", price: 9800 },
   { kind: "suv", color: "#2e4a5a", price: 3600 },
@@ -61,6 +61,12 @@ export const DEALER_CARS: { kind: "coupe" | "supercar" | "suv" | "wedge" | "hype
   // also stands at the farm (CAR_SPAWNS 32) for countryside work. ----
   { kind: "kestrel", color: "#c47b1e", price: 18000 },
   { kind: "bronto", color: "#5c6650", price: 9500 },
+  // ---- Phase 28: the Tempest sits above the Kestrel RS (faster,
+  // pricier, still below the wedge/hyper flagships); the Mule is
+  // the cheapest work truck on the list — and stands at the farm
+  // (CAR_SPAWNS 34) like the Bronto. ----
+  { kind: "tempest", color: "#274b5e", price: 26000 },
+  { kind: "mule", color: "#7a6a4f", price: 3200 },
 ];
 /** Northgate mansion row (west edge, gated) — visuals in World.tsx. */
 export const NORTH_MANSIONS: { x: number; z: number; color: string; roof: string }[] = [
@@ -100,6 +106,18 @@ export interface StreamedDistrict {
 export const STREAMED_DISTRICTS: StreamedDistrict[] = [
   // Eastmere: east of Northgate across the z=−248 causeway.
   { id: "eastmere", name: "Eastmere", x0: 44, x1: 122, z0: -300, z1: -192, gate: { x: 34, z: -248, heading: Math.PI / 2 }, loaded: false, blockers: [], roadX: [], roadZ: [] },
+  // Westbrook (Phase 26): west of the Ferry Quarter across the
+  // harbour, where the z=20 road meets the west shore (mainland land
+  // ends at x=−126). The gate sits on that shore road; the district
+  // itself is open water until its chunk loads.
+  { id: "westbrook", name: "Westbrook", x0: -196, x1: -130, z0: -28, z1: 70, gate: { x: -118, z: 20, heading: -Math.PI / 2 }, loaded: false, blockers: [], roadX: [], roadZ: [] },
+  // Northreach (Phase 31): north of Northgate, continuing the
+  // x=−20 road column across a short bridge from Northgate's north
+  // shore (z=−296) to a clifftop headland. The gate sits on
+  // Northgate land at the bridge mouth (the Eastmere/Westbrook
+  // pattern — a restore point must stand on loaded land); the
+  // district itself is open water until its chunk loads.
+  { id: "northreach", name: "Northreach", x0: -72, x1: 32, z0: -368, z1: -304, gate: { x: -20, z: -294, heading: Math.PI }, loaded: false, blockers: [], roadX: [], roadZ: [] },
 ];
 export function registerStreamedDistrict(id: string, data: { blockers: StreamedDistrict["blockers"]; roadX: number[]; roadZ: number[] }): void {
   const d = STREAMED_DISTRICTS.find((s) => s.id === id);
@@ -345,6 +363,14 @@ for (const [wx, wFix] of [[48, 0], [84, 0], [96, 7]] as [number, number][]) { //
 [[47, 235], [97, 253], [65, 275], [88, 293]].forEach(([tx, tz], i) => {
   buildings.push({ x: tx, z: tz, width: clampDim(tx, 11, CORAL_ROAD_X), depth: clampDim(tz, 11, CORAL_ROAD_Z), height: 36 + ((i * 5) % 13), color: "#3d7296", roof: "#274b5e", district: "Coral Shores", glass: true });
 });
+// Phase 37: THE BENCH — a plain promenade bench on the Coral
+// waterfront at (72, 200.3), in the gap between the waterfront
+// houses, facing north across the bay toward the city and the Bay
+// Bridge (deck at x=60). It is the Quiet Harbour finale's meeting
+// point; once that arc completes, a brass plaque appears on it
+// (components/QuietHarbour.tsx renders the plaque from
+// M.side.quiet — the bench itself is permanent world furniture).
+props.push({ x: 72, z: 200.3, kind: "bench", rot: Math.PI });
 // Coral street lamps along its roads
 for (const c of CORAL_ROAD_X) for (let t = 206; t <= 318; t += 24) lamps.push([c + 7, 0, t], [c - 7, 0, t]);
 for (const c of CORAL_ROAD_Z) for (let t = 34; t <= 108; t += 24) lamps.push([t, 0, c + 7], [t, 0, c - 7]);
@@ -499,6 +525,29 @@ export const CAR_MODELS: Record<CarSpawn["kind"], { name: string; topSpeed: numb
   // (Vehicle applies the bonus on the surface path). ----
   kestrel: { name: "Sable Kestrel RS", topSpeed: 216, handling: 86 },
   bronto: { name: "Bronto Hauler", topSpeed: 126, handling: 50 },
+  // ---- Phase 28 originals: the Tempest is Vantara's flagship GT —
+  // a step above the Kestrel RS in speed and price (it joins the
+  // wedge/hyper post-step push club in Vehicle.tsx), rear-drive and
+  // drift-happy. The Mule is the farm's cheap workhorse: the best
+  // dirt grip of any pickup, geared slow for the road. ----
+  tempest: { name: "Vantara Tempest", topSpeed: 232, handling: 84 },
+  // Phase 48: the VANTARA SOVEREIGN — the Harbour Crown finale's
+  // legendary reward. One of one: never sold (no DEALER_CARS
+  // entry), never a world spawn, never traffic — it exists only
+  // as an owned car delivered through the garage (game/crown.ts).
+  // Top-tier in the existing stat system, honestly under the
+  // hyper's 288/92: the Tempest's grand-touring elder, not a
+  // hypercar.
+  sovereign: { name: "Vantara Sovereign", topSpeed: 268, handling: 91 },
+  mule: { name: "Sable Mule", topSpeed: 118, handling: 46 },
+  // ---- Phase 32: the service fleet — never sold, never traffic,
+  // never stored. The ambulance and the fire truck exist only as
+  // job vehicles (game/jobs.ts spawns them on the rental discipline
+  // for a paramedic / firefighter shift). Display stats describe
+  // the capped road pace Vehicle.tsx enforces, not the shared
+  // physics ceiling. ----
+  ambulance: { name: "Sable Medic Van", topSpeed: 150, handling: 52 },
+  firetruck: { name: "Sable Fire Tender", topSpeed: 118, handling: 40 },
 };
 // ---- Phase 2: hillside scenic overlook (final mood-board image) ----
 export const OVERLOOK = { x: -102, z: -114 };
@@ -512,8 +561,10 @@ export const STATIC_BLOCKERS: { x: number; z: number; hw: number; hd: number }[]
   { x: 88, z: 216.5, hw: 5, hd: 3.4 },   // Coral Pawn shop (Phase 25: same row move)
   // ---- Phase 7 frontages (World.tsx Phase7Frontages) ----
   { x: -64, z: 109.1, hw: 6.1, hd: 4.1 },  // Harbour Patrol HQ (police interior door) (Phase 25: strip move)
+  { x: -80, z: 109.1, hw: 5.5, hd: 4.1 },  // Phase 32: Sable Fire Station (Docks strip, between the hospital lot and HQ — same slab geometry as its neighbours; door point on the z=103.2 line)
   { x: 88, z: 109.1, hw: 6.1, hd: 4.1 },   // Sable Clinic (clinic interior door) (Phase 25: strip move)
   { x: 8, z: 109.1, hw: 5, hd: 4.1 },      // Phase 13: Café Coral (Docks strip, cafe interior door) (Phase 25: strip move)
+  { x: 60, z: 109.1, hw: 5, hd: 4.1 },     // Phase 30: the Docks warehouse unit (buyable rental — Unit 7, Sable Lets) — same strip geometry as its neighbours; door point on the z=103.2 line
   { x: 64, z: 216.5, hw: 5, hd: 3.4 },     // Marina Table restaurant (Coral) (Phase 25: same row move)
   { x: 36, z: 216.5, hw: 4, hd: 3.4 },     // Coral Shores Apartment block (Phase 25: same row move)
   { x: -43.25, z: -220.72, hw: 4.25, hd: 0.7 }, // Northgate Car Wash hall front — Phase 25: the hall straddled the z=−216 lane and could not deepen north (the showroom is there); it is now a slim front in the gap between the lane sweep and the showroom face (the drive-through arch stays on the kerb)
@@ -624,6 +675,7 @@ export const GARAGE_EXT_DOOR = { x: -25, z: 103.2 }; // prompt point, street sid
 export const CLUB_EXT_DOOR = { x: 44, z: 110.2 };    // prompt point, beach side
 // ---- Phase 7 exterior doors (frontages rendered in World.tsx) ----
 export const POLICE_EXT_DOOR = { x: -64, z: 103.2 };     // Harbour Patrol HQ, Docks strip (Phase 25: strip move)
+export const FIRE_EXT_DOOR = { x: -80, z: 103.2 };       // Phase 32: Sable Fire Station, Docks strip (firefighter shift point)
 export const CLINIC_EXT_DOOR = { x: 88, z: 103.2 };      // Sable Clinic, Docks strip east (Phase 25: strip move)
 export const RESTAURANT_EXT_DOOR = { x: 64, z: 211.7 };  // Marina Table, Coral waterfront (Phase 25: promenade gap)
 export const APARTMENT_DOOR = { x: 36, z: 211.7 };       // Coral Shores Apartment (buyable) (Phase 25: promenade gap)
@@ -646,6 +698,16 @@ export const CLOTHING_EXT_DOOR = { x: 18, z: 30.5 }; // Thread & Tide, Market Ro
  * Phase 25 moved the farmhouse with the corner-envelope fix). */
 export const FARMHOUSE_EXT_DOOR = { x: -92, z: -104.7 };
 export const LOFT_EXT_DOOR = { x: -68, z: -195.2 };
+// ---- Phase 39 exterior doors, both in STREAMED districts (the
+// door points are plain coordinates; Interiors.tsx gates them on
+// the district's chunk being loaded). The diner doorstep stands
+// on the kerb south of the Eastmere diner block (building at
+// (60, −258), hd 2.5 → south face z=−255.5; the road runs at
+// z=−248). The silo doorstep stands on the apron south of the
+// Westbrook grain silo (blocker (−188, 58), hd 4 → south edge
+// z=62; the land runs to z=66). ----
+export const DINER_EXT_DOOR = { x: 60, z: -254.4 };
+export const SILO_EXT_DOOR = { x: -188, z: 62.6 };
 
 // ---- Phase 7 world sweep: toll booth on the Coral causeway (bridge
 // deck at x = 60; the booth sits in the corridor, the barrier arm is a
@@ -737,7 +799,7 @@ export const MANSION_DRIVE = { x: MANSION.x + 4.4, z: MANSION.z + 5.2, hw: 3.6, 
 // ---- Phase 3: enterable interiors live in an offset pocket (z ≈ -175),
 // far outside the city grid. Player movement clamps to the room while
 // G.interior is set, so city collision never applies there.
-export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing" | "farmhouse";
+export type InteriorKind = "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing" | "farmhouse" | "diner" | "silo";
 export interface InteriorDef { cx: number; cz: number; w: number; d: number; spawnIn: [number, number]; exitDoor: [number, number]; }
 export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   garage: { cx: 0, cz: -175, w: 18, d: 13, spawnIn: [0, -171.2], exitDoor: [0, -169.4] },
@@ -761,6 +823,16 @@ export const INTERIORS: Record<InteriorKind, InteriorDef> = {
   // ---- Phase 16: the Sable Downs farmhouse (pocket 12) — kitchen /
   // living room + the farmhand's bunk (free sleep, no purchase) ----
   farmhouse: { cx: 426, cz: -175, w: 16, d: 12, spawnIn: [426, -171.6], exitDoor: [426, -170] },
+  // ---- Phase 39: the Eastmere Diner (pocket 13) + the Westbrook
+  // silo office (pocket 14). Both pockets live HERE, in the base
+  // bundle, like every interior — the registry is one table and
+  // the rooms are a few boxes each; what stays lazy is the
+  // districts' world geometry. Their street doors are gated on
+  // the district chunk being loaded (Interiors.tsx), which is
+  // also the only state in which the player can stand at them:
+  // an unloaded district is open water. ----
+  diner: { cx: 462, cz: -175, w: 16, d: 12, spawnIn: [462, -171.2], exitDoor: [462, -169.9] },
+  silo: { cx: 498, cz: -175, w: 14, d: 12, spawnIn: [498, -171.6], exitDoor: [498, -170] },
 };
 
 export function isBlocked(x: number, z: number, radius: number): boolean {
@@ -813,7 +885,7 @@ export function nearestIntersection(x: number, z: number): [number, number] {
 }
 
 // ---- Drivable parked cars (original model names, Harborfall range) ----
-export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto"; owned: boolean; }
+export interface CarSpawn { id: number; x: number; z: number; heading: number; color: string; model: string; kind: "sedan" | "hatch" | "pickup" | "van" | "coupe" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto" | "tempest" | "mule" | "ambulance" | "firetruck" | "sovereign"; owned: boolean; }
 export const CAR_SPAWNS: CarSpawn[] = [
   { id: 0, x: 24, z: 102.5, heading: Math.PI / 2, color: "#1f7a72", model: "Sable Sprinter", kind: "sedan", owned: true },   // Rayan's own car at the pier (Phase 25: was half inside Café Coral's wall — the Phase 13 café blocker grew over this Phase 1 spot; now parallel-parked on the Docks kerb east of the café)
   { id: 1, x: -17, z: -40, heading: Math.PI / 2, color: "#d99a3d", model: "Harbor Hauler", kind: "pickup", owned: false },
@@ -857,4 +929,10 @@ export const CAR_SPAWNS: CarSpawn[] = [
   // countryside's own truck (also on the dealer list). NOT the Farm
   // Work vehicle: that job is bound to the id-31 pickup's bed.
   { id: 32, x: -93, z: -90, heading: -0.5, color: "#5c6650", model: "Bronto Hauler", kind: "bronto", owned: false }, // Phase 25: was parked across both lanes of the x=−100 road; now on the grass verge by the Downs ring
+  // ---- Phase 28: one Tempest on the Sable Motors display row (the
+  // wedge and the Marlowe GT already stand there) — player/rare
+  // parked only, it never joins traffic. Plus the farm's Mule,
+  // parked on the grass south of the farmhouse. ----
+  { id: 33, x: -52, z: -238, heading: Math.PI / 2, color: "#274b5e", model: "Vantara Tempest", kind: "tempest", owned: false }, // dealership display Tempest
+  { id: 34, x: -98, z: -96, heading: 0.7, color: "#7a6a4f", model: "Sable Mule", kind: "mule", owned: false }, // the farm Mule, south of the farmhouse
 ];

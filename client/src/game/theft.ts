@@ -65,14 +65,20 @@ export function witnessedByBystander(x: number, z: number, radius: number): bool
   return false;
 }
 
-/** Sell the whole stash at a fence point (pawn shop / Lina). */
-export function sellStash(where: string) {
-  const total = stashTotal();
-  if (total <= 0) { toast("Your stash is empty — nothing to sell."); return; }
+/** Sell the whole stash at a fence point (pawn shop / Lina).
+ * Phase 47: the optional bonus flag is the Coral market curios
+ * stall's +20% — priced off the same stashTotal() the pawn counter
+ * uses, applied at the moment of sale (the caller re-checks the
+ * market is still live). The default keeps every existing fence
+ * point's price and wording byte-identical. */
+export function sellStash(where: string, bonusFrac = 0) {
+  const base = stashTotal();
+  if (base <= 0) { toast("Your stash is empty — nothing to sell."); return; }
+  const total = Math.round(base * (1 + bonusFrac));
   const count = G.inventory.length;
   G.cash += total; G.lifetimeEarned += total;
   G.inventory = []; persistInventory();
   sfx.register();
-  toast(`Sold ${count} item${count > 1 ? "s" : ""} at ${where} — +$${total}`);
+  toast(`Sold ${count} item${count > 1 ? "s" : ""} at ${where} — +$${total}${bonusFrac > 0 ? ` (incl. +${Math.round(bonusFrac * 100)}% market bonus)` : ""}`);
   pushPhoneMsg("SableBank", `Pawn sale +$${total} — ${where}. New balance $${G.cash}.`);
 }

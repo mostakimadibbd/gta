@@ -13,6 +13,24 @@ corrupt harbour boss's debt ledger.
 > It is not affiliated with Rockstar Games and contains no GTA assets,
 > names, map, story or audio.
 
+> **v3.0 — Complete Edition.** The start screen carries the stamp, and
+> this is the full version: the six-chapter story plus every side arc
+> (Lina's Line, Voss's File, the Harbour Heist, After the Fall, the
+> Meridian Pair, the Harbour Wire, the Ledger Line, the Quiet Harbour)
+> and the endgame empire chain, **The Harbour Crown**. Three streamed
+> districts (Eastmere, Westbrook, Northreach) beyond the city proper,
+> 14 hand-built interiors, a working economy of businesses, rentals,
+> loans and investments with daily events, evidence-and-heat policing
+> with a Fixer, service jobs (paramedic, firefighter), a drift
+> championship, harbour wildlife, photo postcards, day events (a boat
+> regatta, a street market), a dynamic procedural score, assists &
+> accessibility settings, and optional session multiplayer with names,
+> chat and room codes. The final blueprint ledger, recounted line by
+> line for this release: **104 ✅ · 8 🟡 · 0 ⬜ over 112 topics** —
+> every 🟡 carries its honest reason in `docs/BLUEPRINT.md`, and
+> `docs/RELEASE_3_0.md` is the release note. Everything is procedural;
+> see **Honest limits** below for exactly what that means.
+
 ## Play it
 
 - **Web (Vercel):** open the deployed link — no install, works on phone too.
@@ -43,7 +61,10 @@ corrupt harbour boss's debt ledger.
 - **Personal themes** — 5 full-game themes (below), saved automatically.
 - **Audio / SFX + opening theme** — all WebAudio-synthesised, no audio files. The start screen plays **"Port Sable Sunset"**, an original opening theme composed for Harborfall (sunset synth-jazz: warm pads, sub bass, soft drums, sax-style lead — written for this game, not copied from any other game's music); it fades out when you press Play. In-game SFX: engine hum tied to speed, police siren wail while wanted, crash impact + thud, car horn (**B** on keyboard, HORN button on touch), door, jump/land, tyre skid, wanted-star sting, dialogue blips, UI clicks, pickup/cash chimes, mission-complete jingle, BUSTED sting and fail tone. **N** mutes everything, theme included.
 - **Multiplayer (optional)** — WebSocket rooms via the Python server;
-  remote players render in your city. Single-player needs no server.
+  remote players render in your city, wearing the display name set in
+  Phone → Settings. Room chat (game panel) and room codes: players in
+  the same code share a room, and a join with no code lands in the
+  shared default room, "sable". Single-player needs no server.
 - **Phase 6 — "Proper Game"** — a third district, **Northgate** (causeway
   north: mansion row, hotel, Sable Motors dealership, Sable Arms, a
   two-deck parking garage you can drive up), **Sable Island** (lighthouse,
@@ -330,6 +351,552 @@ corrupt harbour boss's debt ledger.
   The round opens with an audit of Phase 22 (one fix: the courier
   board's restart now actually restarts a running chain, as
   documented). Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜**.
+- **Phase 27 — "The Ledger Line"** — A new 3-part side arc across
+  the streamed districts, from **Petra Vane**, keeper of the
+  Eastmere Diner (new named NPC — she stands at her diner hatch in
+  Eastmere, and she's in your Phone contacts). Solano's old
+  smuggling ledger is moving again: **tail** a courier van out of
+  Westbrook (it waits at the silo quay until you're in position,
+  then runs the causeway to a Ferry Quarter warehouse),
+  **photograph** the diner's delivery book and beat a rival crew's
+  countdown to the Northgate Loft, then choose the book's fate —
+  **burn it** with Petra ($900, Eastmere + Westbrook reputation up,
+  a quiet headline) or **publish it** with Ines at the Harbour Wire
+  ($700, a Wire special edition, Market Row reputation up). The
+  choice is final per save slot; a failed attempt re-offers the
+  same branch. Starting a district mission **loads its district
+  first** — if the chunk can't load, Petra refuses cleanly rather
+  than starting you into water. The round opens with an audit of
+  Phase 26 (three fixes: the district-load toast could re-fire on
+  every retry while you waited at a gate; a depenetrated car whose
+  only clear spot touched another car could stay in a wall forever
+  — it now resolves against buildings and cars jointly, with a
+  documented last resort; and the multiplayer server's world bounds
+  clipped boats rounding Westbrook and Coral Shores — now per-side
+  bounds with open-sea margin, suite still 32/32). Ledger
+  unchanged: **86 ✅ · 7 🟡 · 0 ⬜** (the side-storyline line grows).
+- **Phase 50 — "v3.0 Finale"** — **The version stamp,
+  the credits, and an honest recount.** Every surface
+  now reads 3.0.0 (client, desktop shell, the Python
+  service, the start-screen stamp). Phone → Settings
+  gains an **About & credits** section: the cast, the
+  tech, and the honest print in short form. Phase 49's
+  three fixes were re-verified at their sites (the
+  leaderboard name, the Sovereign reconcile, and the
+  physics export list — diffed name-by-name against
+  the loader: 23 for 23), and one leftover was closed:
+  three save keys the New Game+ census kept but never
+  named (your stash, weapon mods and throwables) are
+  named in it now. The blueprint ledger was then
+  **recounted line by line**: the running tally had
+  folded years of growth lines into parent topics and
+  under-counted the partial lines by one — the ledger
+  as written is **104 ✅ · 8 🟡 · 0 ⬜ over 112
+  topics**, and no line's state changed in the
+  counting. `docs/RELEASE_3_0.md` is the release note.
+- **Phase 49 — "Regression Marathon"** — **The whole
+  game, audited at once.** Every phase since 26 was
+  checked against every other: all 65 save keys
+  (each one slot-scoped, safely loaded, and given an
+  explicit New Game+ decision), every job and event
+  against every interruption (busted, wasted, day
+  change, slot switch), every money number traced to
+  its single source, and every cash payment proven
+  to fire exactly once. Three real bugs were found
+  and fixed: leaderboard posts now use your actual
+  multiplayer name instead of always saying "Rayan
+  Kade"; the one-of-one Vantara Sovereign can no
+  longer be silently lost if it's delivered while
+  your garage is full; and the physics build script
+  once again exports everything the game asks the
+  C++ core for. The C++ core passes its smoke suite
+  49/49 and matches its TypeScript mirror exactly;
+  the server suite passes 48/48; client and server
+  world bounds agree to the unit.
+- **Phase 48 — "The Harbour Crown"** — **The endgame:
+  the harbour itself is the prize.** Solano's money
+  never died — it incorporated as **Meridian
+  Holdings**, and it's buying Port Sable back one
+  deed at a time. Ines Marlo's four-part finale chain
+  opens only to players who finished the story AND
+  built an empire (2 businesses + 1 rental — Ines
+  states the gate, with your counts, until you have):
+  shadow the bagman from Westbrook's Breakwater Point
+  to two photographed handoffs in Eastmere and run the
+  film to the newsroom against the clock; copy a
+  container manifest at the Docks on an 8-second
+  channel while Voss's pull caps the patrol at 3★;
+  then **the Auction** — buy Meridian's stake out for
+  $40,000 wired to escrow on the spot (a permanent
+  +10% dividend on every business, inside the same
+  figures the Bank shows) or expose them (a Wire
+  series across three mornings, a $15,000
+  whistleblower reward, the whole harbour's respect);
+  and finally run the deeds by boat up the east
+  channel to the observatory archive and the receipt
+  to Voss at 4★. The reward is the **Vantara
+  Sovereign** — a one-of-one grand tourer in deep
+  teal with a fixed gold livery, delivered to your
+  garage for good — and the 👑 Harbour Crown title in
+  your Stats. (The Phase 47 audit also fixed a real
+  one: Lina's bench could charge a market voucher
+  price a fraction of a second stale across midnight —
+  the click now re-reads the deal live, so the price
+  charged is always the live one.)
+- **Phase 47 — "Two More World Events"** — **Some days
+  the harbour puts on a show.** A daily roll inside
+  the day change (never both, about three days in
+  ten each) makes a day a **Regatta day** — a buoy
+  course in the bay: sail through the teal gate to
+  start a timed run round six amber buoys, best time
+  in Phone → Stats → Records, $250 for beating 1:00
+  once that day (a time trial against the clock —
+  there are no AI racers) — or a **Market day** in
+  Coral Shores: three canopy stalls and a crowd on
+  the promenade, with a food stall, one car upgrade
+  at 25% off spent at Lina's bench (shown price =
+  charged price), and a curios stall that fences
+  your stash at +20%. The Wire and your phone
+  announce the day each morning; sleep and it's all
+  gone. The Phase 46 audit found no defects — the
+  ambient score's pause, tension and mute behaviour
+  all check out as documented.
+- **Phase 46 — "Dynamic Music"** — **A score under the
+  city.** Free-roam gains a quiet procedural ambient
+  score (game/score.ts, all WebAudio synthesis, no
+  files): a pad bed in the opening theme's own chord
+  family, a sparse pluck layer that fades in with
+  nightfall and out at dawn, and a low pulse that
+  enters at 3★ — the pad shifting to the key's minor
+  side at the next bar line — and quickens at 5★.
+  Layers fade over ~2 s, never cut. It's the lowest-
+  priority music in the game: a playing Sable Tunes
+  track outranks it, Club Solace and the diner jukebox
+  outrank it, the start screen stays the theme's, and
+  the N mute covers it like everything else. Settings
+  → Music → **Ambient score** turns it off (off = the
+  Phase 45 sound exactly). It is layered loops keyed
+  to game state — not "adaptive AI music", and the
+  docs say so. Opens with an audit of Phase 45 that
+  found **one defect**: the rush-hour reserve's
+  parking decision read the traffic lever directly,
+  past the Low preset's ceiling — on Low with density
+  on High the reserve cars circulated all night
+  instead of parking (the car count itself was never
+  over the cap). It now goes through game/perf.ts
+  like every other density reader. Initial download
+  holds at ≈630 kB gzip. Ledger unchanged:
+  **87 ✅ · 7 🟡 · 0 ⬜**.
+- **Phase 45 — "Performance Round 2"** — **A measured diet.**
+  The poster key-art panels (~318 kB of base64 JPEG, shown
+  only on the start screen) no longer ride the initial
+  bundle — they load as their own chunk behind the splash
+  screen and fade in when they land, cutting the initial
+  download from ≈866 kB to ≈629 kB gzip (−27%). The
+  **Low tier is now a real weak-phone preset**: shadows
+  off entirely (the city looks flatter — that's the trade,
+  and the Settings notes say so), resolution capped at
+  native 1.0, ambient traffic and crowds capped at half
+  whatever the density levers say, and harbour wildlife
+  updating at half rate; the resolution governor never
+  goes above your tier's cap, so the preset and the
+  governor can't fight. Medium and High are untouched.
+  No frame-rate is promised for any device — the HUD's
+  FPS counter on your own phone is the verdict. Opens
+  with an audit of Phase 44 that found **one defect**:
+  Drive assist Full's camera auto-centre also ran behind
+  boats and the plane, against its documented
+  road-vehicles-only scope — behind the plane it chased
+  the tail through every banked turn. It now carries the
+  same exclusion as the steering smoothing. Ledger
+  unchanged: **87 ✅ · 7 🟡 · 0 ⬜**.
+- **Phase 44 — "Assists & Accessibility"** — **Four new
+  settings** in Phone → Settings → **Assists & accessibility**,
+  every one defaulting to Off — the game plays exactly as it
+  did until you opt in. **Drive assist** (Light/Full) smooths
+  steering at speed for cars and bikes, applied to the merged
+  input so keyboard, gamepad, touch stick and gyro all get it;
+  Full also eases the chase camera back behind your car once
+  you stop orbiting (any drag or stick input takes it back
+  instantly). It changes no top speed, no grip, and **not
+  drift scoring** — the drift feed reads your raw input.
+  **Aim assist** (Soft/Strong) is magnetism while free-aiming:
+  your shot leans part-way toward the nearest person inside a
+  small cone — never a lock-on, never through a wall, and hip
+  fire stays unassisted. **Colourblind-safe HUD** recolours
+  only the HUD and map markers from a colourblind-safe
+  palette (police and wanted stars sky blue, targets yellow,
+  you and your cars white, money and Bank event badges in
+  safe green/vermillion beside the same +/− signs) — the city
+  itself doesn't change. **Reduced flash** softens lightning
+  and muzzle flashes at their existing effect sites (there is
+  no explosion flash in the game to soften — none was
+  invented). Subtitle size S/M/L already lives under
+  Subtitles (Phase 5) and is unchanged. The round opens with
+  an audit of Phase 43 that found **zero defects** — the
+  double-press, overlap, gallery-eviction, pod-publication,
+  wall-listener and NG+ checks all verified in code. Ledger:
+  **87 ✅ · 7 🟡 · 0 ⬜** (one new line — Assists &
+  accessibility).
+- **Phase 43 — "Photo Challenges"** — **The Sable Postcards.**
+  The Wire's picture desk will buy **eight postcards**, one of
+  each: a dolphin mid-breach, the police helicopter's shift at
+  4★+, a storm over the harbour, the bay bridge and Breakwater
+  Point in golden light, Club Solace's neon, the PORT SABLE
+  sign after dark, and Northreach's dome. Shoot them in Photo
+  Mode — a shot that fits an open postcard is **bought on the
+  spot** ($100–$150), stamped in your Gallery, and its framed
+  print fills a slot on the **Postcard Wall** at the Northgate
+  Loft. Detection is stated honestly, in the app and here:
+  there is **no image recognition** — at the shutter press the
+  game checks what it actually knows (where the camera stood
+  and pointed, the hour, the weather, your wanted level, the
+  pod's live positions), and every postcard's entry in the
+  Gallery prints its real check. Progress is per save slot and
+  survives New Game+. The round opens with an audit of
+  Phase 42 that found **two defects**: Elias's "Dolphins —
+  good sign" bark and the catch roll were testing the pod
+  against **two different cast points** (your line's actual
+  landing point vs the spot's nominal one), so the promise
+  and the payout could disagree on a short cast — they now
+  read the same point; and the New Game+ reset never cleared
+  the supply run's day stamp (inert, but the last exit path
+  that bypassed the shared reset — it uses it now). Ledger
+  unchanged: **86 ✅ · 7 🟡 · 0 ⬜** (the Camera line grows).
+- **Phase 42 — "Harbour Wildlife"** — **The bay is alive.** A
+  pod of **five dolphins** porpoises a loop around Sable Island
+  and along the mainland shore — breaching arcs, splash rings,
+  and one real behaviour: take a boat out and get within nine
+  metres of one and it **dives** for a few seconds. **Perched
+  gulls** now sit on mooring posts at the pier, the island dock
+  and the waterline; walk up and they **scatter** into a holding
+  circle, then resettle once you've moved off. And the pod is
+  worth money to a patient angler: fish while the dolphins work
+  within forty metres of your cast and the **rare catch chance
+  doubles** — Elias will tell you why ("Dolphins — good sign.").
+  Stated plainly: the pod swims a scripted ambient route, not
+  an ecosystem simulation, and the placement audit now walks
+  the route itself (open water throughout, clear of the
+  island, the bridge and the moored ships). The round opens
+  with an audit of Phase 41 that found **two defects**: the
+  tow job's start gate was a hand-rolled checklist from before
+  the shared job census existed, so a tow job could start on
+  top of a live supply run (it now uses the same census as
+  every other job); and a supply run could outlive its day —
+  if the new morning rolled a fresh snag for the same
+  business, yesterday's run quietly retargeted to it instead
+  of ending (runs now carry the day they started on). Ledger
+  unchanged: **86 ✅ · 7 🟡 · 0 ⬜** (the birds/immersion and
+  fish lines grow).
+- **Phase 41 — "Business Events"** — **Your businesses wake up
+  with the city.** Every morning, inside the same guarded tick
+  that pays them, each business you own rolls for a one-day
+  event: a **rush day** (takings +50%), a **quiet day** (−30%),
+  a **supply snag** (takings halved — unless you run the
+  **supply errand**: stock from a depot back to the business's
+  door, no pay because it's your own stock, full day restored),
+  a **city inspection** (pass quietly, or fail at a flat 15%
+  and pay a $120–$300 fine, floored at what your pockets hold),
+  or a **staff star day** (one named hand's bonus counts
+  double). The morning word comes from your own people — your
+  lead hand, the inspector, the star themselves — the
+  **SableBank app shows a badge per business**, and every cent
+  flows through the one net figure, so what the Bank shows in
+  the morning is exactly what tomorrow's tick pays (proven by
+  a headless arithmetic check through the real tick, 23/23).
+  A rush day sometimes makes the Harbour Wire. The round opens
+  with an audit of Phase 40 that found **three small defects**
+  of one class — the wheelie gesture hadn't been extended to
+  the brake light, the driving-skill slide trim, or the skid
+  smoke/sound, so a held wheelie lit the brake, trimmed its
+  own steering and smoked like a drift; all three now honour
+  the gesture. Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜** (the
+  businesses and daily-tick lines grow).
+- **Phase 40 — "Bike Handling"** — **The two bikes get a feel
+  pass.** Both now **lean into corners** in proportion to speed ×
+  steering — the motorcycle's bank deepens into a shared pose and
+  the bicycle leans for the first time (it cornered bolt-upright
+  before) — and the **rider leans with the machine**, so bike and
+  rider move as one body. The motorcycle gains a **wheelie**:
+  hold Space (the DRIFT button on mobile) with the throttle open
+  at low-mid speed and the front rises — pitch only, no free
+  speed — but hold it past the balance point for more than a
+  moment and you **loop out**: a gentle fall, speed scrubbed,
+  rider unharmed. The bicycle gains a **bunny hop** on a tap of
+  the same key — a visual hop that clears nothing. The round's
+  census also fixed two silent fallbacks of the class Phase 28
+  hunted: the motorcycle was wheel-sampled on the sedan's
+  footprint and drift-scored on a default factor; both entries
+  are explicit now. Courier stays bicycle-only, exactly as
+  designed, and its position-based drops are untouched. The
+  round opens with an audit of Phase 39 that found **zero
+  defects** (door gating, interior exits, Petra's hide, the
+  jukebox/club music holds, the harbour log, diner hours and
+  the chat limiter all verified in code). Ledger unchanged:
+  **86 ✅ · 7 🟡 · 0 ⬜** (the motorcycles line grows).
+- **Phase 39 — "Two More Interiors"** — **Two new rooms, both in
+  the streamed districts (interiors 13 + 14).** The **Eastmere
+  Diner** is enterable at last: Petra behind her own counter (her
+  street figure steps away while you're inside — never two
+  Petras), a 3-item menu (chowder $14, coffee $6, the Fisherman's
+  plate $22 — tap to browse, hold to order), booths with
+  regulars, and a **jukebox** that plays Daylight Causeway on the
+  same room-hold machinery as Club Solace. Doors **06:00–23:00**;
+  at closing Petra calls it once and the kitchen stops — nobody
+  is thrown out. The **Westbrook silo office** sits atop the
+  grain silo (the door fade is the lift, and the sign says so):
+  desk, a painted harbour chart, the bay in a painted window,
+  and the **harbour log** — read it for the Wire's latest
+  headlines and your standing in every district, off the real
+  game data. Always open, no NPC. Both doors work only once
+  their district has streamed in — which is also the only moment
+  you can stand at them. The round opens with an audit of
+  Phase 38 that found and fixed one real defect: the multiplayer
+  chat rate limit reset whenever a client re-joined or hopped
+  rooms, so it only bound players who didn't try to evade it —
+  the anchor now follows the player id across rooms (two new
+  tests; the Python suite is 48). Ledger unchanged: **86 ✅ ·
+  7 🟡 · 0 ⬜** (the enterable-buildings line grows: 12 → 14
+  pocket interiors, still 🟡 — each room is hand-built).
+- **Phase 37 — "The Quiet Harbour"** — **Post-story arc II: the
+  city after Solano.** Three quiet, character-driven missions
+  (phone-offered once the story is done, tracked in the Story
+  app): walk the town beach with Old Elias's errand and lift
+  Solano's three old mooring markers; give **Lina Park a day
+  off** — a no-pressure drive to Northreach's observatory and
+  the Point beyond it, conversation all the way, gated on the
+  district actually loading (if it won't, she postpones); and
+  sit on a **new Coral Shores bench** with Elias and Tamim —
+  free, working, and in no hurry — for the story's closing
+  conversation and a $250 gift he insists on. The arc's real
+  reward is permanent: a **brass plaque** on that bench —
+  *"For the ones who stayed."* — rendered in the world for the
+  rest of the save (NG+ takes it away with the arc). The round's
+  audit also fixed a Phase 36 visual defect: lightning's random
+  strikes could spear through a roof to ground level; endpoints
+  are footprint-tested now, in the base city and the streamed
+  districts alike. Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜**
+  (the side-storyline line grows).
+- **Phase 36 — "Weather Depth"** — **The sky commits.** The
+  weather machine now rolls its next state in advance: the phone's
+  weather page (harbourweather.ps) shows a **"Turning to"**
+  forecast beside its next-change timer — the machine's real
+  committed future, not a guess — and the HUD weather chip flashes
+  an amber arrow with the incoming weather's icon in the last
+  moments before the turn. Pressing Y re-rolls the forecast along
+  with the weather. Storms deepen: **lightning strikes land
+  somewhere real now** — on the tallest roof nearby or on the sea
+  (spectacle only; lightning has never hurt anyone in Port Sable)
+  — boats ride a **weather chop** that roughens the swell as rain
+  and storm build, and the Sparrow shudders with **storm
+  turbulence** on its airframe (presentation only — its flight
+  path, and the Sparrow Run's par, are untouched). **Roads dry
+  slowly**: streets soak in seconds and take ~2.5 minutes to dry,
+  and the gloss, the puddles and your tyres' wet grip all follow
+  the road's actual wetness instead of the last raindrop. And in
+  **Autumn**, amber leaves blow across the streets on the same
+  wind the palms feel (the seasons already moved the sun and the
+  day length — that part isn't new). The round's audit fixed a
+  Sable Tunes honesty bug: the elapsed clock kept counting while
+  Club Solace held your track — suspended silence is no longer
+  reported as listening time. Ledger unchanged: **86 ✅ · 7 🟡 ·
+  0 ⬜** (the dynamic-weather line grows).
+- **Phase 35 — "Phone Media"** — **Sable Tunes + a grown-up
+  Gallery.** The phone's Music app is now a real music player
+  (game/tunes.ts): four original WebAudio compositions as
+  selectable tracks — the opening theme "Port Sable Sunset", the
+  Club Solace 116 BPM loop, and two loops composed this phase,
+  "Daylight Causeway" (96 BPM daytime cruise groove) and "Neon
+  Meridian" (84 BPM night-drive synth) — with play/pause,
+  prev/next, and honest readouts (elapsed time + position inside
+  the fixed loop; a loop has no total length, so there is no fake
+  progress bar). Club Solace keeps priority: entering suspends
+  your track and the room loop takes over, leaving resumes it;
+  your selection persists per slot, and the N mute remains the
+  game's one audio switch (there is no volume setting to ride —
+  the app says so). The **Gallery** now keeps the last 12 shots
+  (oldest replaced), labels each new capture with its district —
+  streamed districts included — and opens any shot full-screen in
+  the app with its district, date and a delete button; the phone
+  copy stays a 320 px JPEG by design (the full-res PNG still
+  downloads at capture). The round's audit closed a Slide Series
+  leak: a drift chain opened *before* the GO count could bank
+  inside the run — the slate is now wiped at GO, so every banked
+  point in a run is earned inside it. Ledger unchanged:
+  **86 ✅ · 7 🟡 · 0 ⬜** (the smartphone lines grow).
+- **Phase 34 — "Drift Championship + Local Bests"** — **The Sable
+  Slide Series**: a 3-round drift championship built on the Sable
+  Cup's structure. Arm a round in Phone → Jobs, drive to its amber
+  ring, and thread the course's gates in order before the clock
+  dies — while banking the round's drift target (Docks Yard 500,
+  Bay Infield 800, Northgate Interchange 1,000). The Series counts
+  only banked chains, straight off the drift system, so a collision
+  still loses the open chain before it can score. Pass all three
+  (in order — each round unlocks the next) for $3,000, a Harbour
+  Wire headline, the champion's title, and **Slide Gold**, a
+  champion-only swatch in Lina's existing respray palette. Phone →
+  Stats also gains a **Records** board: best drift chain, Slide
+  round bests, all five race bests, derby best and best catch in
+  one place. (Drift scores are deliberately NOT posted to the
+  Python leaderboard — it ranks race *times*, and a points total
+  isn't a time; race bests already sync.) The round's audit caught
+  a garage-shaped hole in Phase 33's service-unit guards: the job
+  ambulance/tender could be filed into the garage (panel, take-out
+  swap, even the villa-drive auto-save) and come back out as an
+  *owned* car — every store/restore path is guarded now, including
+  saves the earlier builds already wrote. Ledger unchanged:
+  **86 ✅ · 7 🟡 · 0 ⬜** (the activities line grows).
+- **Phase 33 — "Combat Depth"** — **Cover, a new gun, and nerve.**
+  **Cover-lite**: crouch against a wall or a car with a firearm in
+  hand and you're IN COVER (the chip says so) — tucked lower, harder
+  for the patrol to keep eyes on, slower to grab. Aim out of it and
+  you're PEEKING: exposed at the normal crouch range until you stop
+  aiming. Stated plainly in the docs: Port Sable's police arrest
+  rather than shoot, so cover works on the sight and bust maths —
+  no fake "enemy accuracy" was invented. **The Kestrel Carbine**:
+  Sable Arms' own mid-tier automatic ($950) — longer reach and a
+  heavier hit than the SMG, its own model, voice and teal tracer,
+  two fittings on the mod bench (suppressor, match grip + long
+  barrel), its own ammo pool (ammo is per-weapon in this build),
+  and one pickup waiting on the mansion drive. **Suppression-lite**:
+  near misses and sustained fire break bystander nerve — crowds
+  scatter through the ordinary flee reaction, faster the longer
+  you keep shooting, quieter with a suppressor fitted. The round's
+  audit fixed three Phase 32 leftovers: a mid-shift reload could
+  resurrect the job ambulance as an orphan car (it can't now), the
+  tow job could book your own tender as its "breakdown" (excluded),
+  and a burned-out fire could leave the next one unfinishable on a
+  short tank (the refill gate now covers that path too). Ledger
+  unchanged: **86 ✅ · 7 🟡 · 0 ⬜** (the combat lines grow).
+- **Phase 32 — "Service Jobs"** — **Work the harbour's emergency
+  shifts.** The dispatch sim has sent NPC ambulances and fire
+  tenders across Port Sable since Phase 7 — now you drive them.
+  **Paramedic** (start at the hospital door): the job ambulance
+  waits on the hospital lot; reach the patient on the clock (a
+  lying figure at a real roadside spot), treat them on foot
+  (hold E), and bring them back to the hospital bay — $110 a
+  patient plus a time bonus and a no-damage bonus, three patients
+  a shift with the legs getting longer. **Firefighter** (start at
+  the NEW **Sable Fire Station** on the Docks strip): park the
+  tender close, hose the fire down on foot while it visibly
+  shrinks — and mind the tank: a fire drinks 55 of its 100, so
+  the refill at a marked hydrant (or back at the station) between
+  the shift's two fires is real, not theatre. Both units are new
+  vehicle kinds on the rental discipline (yours for the shift,
+  never ownable), sirens and flashing beacons included — and the
+  siren never draws the patrol: the jobs are wanted-neutral, and
+  traffic eases kerb-ward for you through the same path it uses
+  for a horn. Busted, wasted, wrecked or walked-away all end the
+  shift honestly, and Dispatch — Ren talks you through all of it.
+  The round's audit also fixed a freeze the census caught:
+  stepping out of a car on the **parking-garage deck** left you
+  unable to walk (the on-foot stand test only knew the bridge's
+  shape up there) — the deck and its ramp are floors again.
+  Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜** (the jobs lines grow).
+- **Phase 31 — "Northreach"** — **A third streamed district.**
+  North of Northgate, the x=−20 road crosses a short bridge to
+  **Northreach**: a quiet clifftop headland with a stone chapel,
+  an observatory dome, a tea house, cottages and the Northreach
+  Point viewpoint — shipped as its own lazy chunk (2.9 kB gzip)
+  on the shared district loader, traffic-free like Eastmere and
+  Westbrook, with the same save guard (a car left inside
+  restores at the gate while the chunk is unloaded). The round's
+  audit found two real defects. **Sleeping double-paid the
+  morning tick**: a sleep landing looks exactly like the 06:00
+  day-wrap to the frame detector, so businesses, rent and loan
+  interest all settled twice for one night — sleep now stamps
+  the day it settles and the wrap check skips it. And the
+  **driven-car clamp was still the Phase 24 map box**, which has
+  silently walled your car out of Westbrook since it shipped
+  (Eastmere fit the box by luck) — the car and plane clamps now
+  grow over any loaded district you're entering, so Westbrook
+  is drive-in at last and Northreach is too. The server's world
+  bounds and the map's frame both grew north honestly with the
+  new land. Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜** (the map
+  line grows — streamed districts now count 3).
+- **Phase 30 — "Property Income"** — **Become a landlord.** Three
+  rental properties join the homes: a **Coral Shores flat**
+  ($18,000 → $140/day), a **Northgate townhouse** ($32,000 →
+  $260/day) and a **Docks warehouse unit** ($45,000 → $390/day —
+  a new building on the Docks strip, and Sable Lets only leases
+  it to business owners). Rent lands on the **same morning tick**
+  as your businesses, and the SableBank app shows a **Daily rent**
+  line from the same function that pays it — shown = paid.
+  Tenants have luck: mostly quiet, sometimes **late** (half rent),
+  sometimes **golden** (full rent + a warmer district), sometimes
+  a **repair bill** ($60–$180) — paid from cash when you can
+  cover it, otherwise it waits as **DUE** in the bank app and
+  that unit's rent pauses until you pay it at the door (cash
+  never goes below $0). Every event arrives as a message from
+  **Ana Ruiz of Sable Lets**, your property manager — call her
+  for a live read of the portfolio. **Sell back at 80%** at the
+  door or in the bank (a due bill comes out of the proceeds);
+  NG+ keeps the portfolio. No management mini-game — messages
+  and money only, and the docs say so. The round opens with an
+  audit of Phase 29 that found and fixed two real defects: a
+  busted player double-clicking Respawn inside one HUD poll
+  could be fined twice and have their evidence halved twice
+  (respawn is now exactly-once), and evidence could decay while
+  the arrest escort walked you to the car in fog (custody now
+  counts as seen). A 34-assertion headless test pins the rent
+  arithmetic to the dollar. Ledger unchanged: **86 ✅ · 7 🟡 ·
+  0 ⬜** (the economy lines grow).
+- **Phase 29 — "Police & Crime Depth"** — **The patrol keeps a
+  file on you now.** Every crime they learn about adds **evidence**
+  (running a ped down +20, gunfire/robbery +15, assault +10, car
+  theft +8, theft +6, a witnessed crash +5, reckless driving +4;
+  the file caps at 100). At 25/50/75 evidence the next reported
+  crime starts you at a **1★/2★/3★ wanted floor** — the report is
+  matched to your file — and the patrol **searches longer** before
+  each star falls (11 s + 0.08 s per point). Lay low, clean and
+  unseen, and the file thins (1 pt per 4 s); a **fresh look** — a
+  wardrobe change, a new Thread & Tide outfit, a Sable Cuts cut or
+  trim — thins it 4× as fast for 2 minutes. Get busted or wasted
+  and half of it is served. A teal **👁 chip** beside the stars
+  shows the count while the file is open, and Phone → Stats shows
+  the number, your floor and the full rules. New contact: **Marek
+  Doss, the Fixer** (after Ch.2) — for max($250, $150 + $6 per
+  evidence point + $200 per star) he burns the whole file and
+  clears your stars, once a day — but **never while they're
+  looking at you**. One honesty note, in the open: nobody in Port
+  Sable recognises your clothes or haircut — witnesses and patrol
+  key on the act, never the outfit — so a fresh look thins the
+  file and does nothing else; no disguise reset is claimed. The
+  round opens with an audit of Phase 28 (no defects: both new
+  cars verified in every kind-keyed table and save path, the boat
+  clamp against the fishing/derby anchors, the stall chip's
+  hysteresis, the placement audit still CLEAR). Ledger unchanged:
+  **86 ✅ · 7 🟡 · 0 ⬜** (the police & wanted lines grow).
+- **Phase 28 — "Vehicles"** — Two new original cars, fully wired
+  (dealer, garage, mods, drift, races, fleet saves): the **Vantara
+  Tempest** ($26,000) — Vantara's flagship GT coupe, a step above
+  the Kestrel RS, rear-drive with the range's top drift factor,
+  one standing on the Sable Motors display row; and the **Sable
+  Mule** ($3,200) — the farm's cheap workhorse with the best dirt
+  grip of any pickup and a farm truck's road pace, parked by the
+  farmhouse. (Traffic note, stated plainly: the traffic system is
+  grid-bound with no district gating, so the Mule is dealer +
+  farm-parked only — it does not pose as Downs-only traffic.)
+  **Boats feel like boats**: the helm gets heavier with speed, the
+  bow rises as the hull planes and settles as way comes off, the
+  wake builds with the throttle, and a storm now pushes a hull
+  onshore (position only — a fishing session anchored to a still
+  hull is untouched). **The Sparrow gets a stall with a face**: a
+  pulsing STALL chip, a visibly dropping nose below flying speed,
+  landing gear that compresses on touchdown, and a prop blur disc
+  that spins up with the engine. Flight numbers are unchanged —
+  the Sparrow Run's 2:00 par stands as reachable as ever. The
+  round opens with an audit of Phase 27 (five fixes: a streamed
+  load's success never cleared its loading flag, so a gated
+  mission start could wait out a full 10 s for a chunk that had
+  already landed; the tail courier could outlive its mission via
+  NG+ and be inherited by a later tail; a failed photo mission
+  left its camera arm standing for the retry; the multiplayer
+  server's east bound clipped a swimmer at the client's own
+  offshore limit by 1 unit — now 178, suite still 32/32; and
+  boats, the one unclamped vehicle class, could sail off the
+  server's chart — they now stop at the chart edge and say so).
+  Ledger unchanged: **86 ✅ · 7 🟡 · 0 ⬜** (the vehicle lines grow).
 - **Phase 24 — "Sea Life"** — **You can fish from boats now**: sit
   in any still boat (your speedboat, a borrowed skiff, even the
   marina rental) and cast over the side. The boat is the spot —
@@ -388,7 +955,7 @@ saved in `localStorage` and applies identically on web and desktop.
 |---|---|
 | WASD / Arrow keys | Move · drive + steer |
 | Shift | Sprint (on foot) |
-| Space | Jump (foot) · handbrake/drift (car) |
+| Space | Jump (foot) · handbrake/drift (car) · hold with W on the motorcycle at low-mid speed = wheelie (hold too long past the balance point and you loop out) · tap on the bicycle = bunny hop |
 | E / F | Enter/exit car · advance dialogue · board/step off the Sable Line tram at a station · board/step off the Cityliner bus at a stop |
 | Enter | Confirm dialogue |
 | Esc / P | Pause |
@@ -462,10 +1029,13 @@ rate) and a **continuous adaptive tier** (sustained low FPS drops one
 tier with a toast) — picking a tier yourself turns the auto-drop off
 for the session. A **Show FPS** readout lives in the same two places.
 Override any time in **Pause → Graphics** or **Phone → Settings**.
-Low = no post-processing, 1024px shadows, procedural textures only.
+Low = the weak-phone preset (Phase 45): no post-processing, no
+shadows at all, resolution capped at native 1.0, ambient traffic
+and crowds capped at half, wildlife at half rate, procedural
+textures only.
 Medium = film grade (bloom, grain, vignette, radial chromatic
 aberration, SMAA), real CC0 photo textures at 512px, shader water.
-High = + SSAO, stronger bloom, CC0 at full size, softer shadows.
+High = + SSAO, stronger bloom, CC0 at 768px, softer shadows.
 The composer renders at canvas size, so it follows the dynamic-
 resolution ladder; dropping to Low unmounts it entirely.
 
@@ -568,6 +1138,21 @@ npm run build                             # production build -> client/dist
 python3 -m venv /tmp/hf-venv && /tmp/hf-venv/bin/pip install -r server/requirements.txt
 cd server && /tmp/hf-venv/bin/python -m uvicorn main:app --port 8765
 # then run the client with: VITE_MULTIPLAYER_SERVER_URL=ws://localhost:8765/ws npm run dev
+# Joining: the game auto-joins the room code in the game panel (press
+# the panel open, "Multiplayer room code"). Friends type the SAME code
+# to share a room; different codes are fully separate worlds. The code
+# is remembered per save profile, and the built-in default is "sable"
+# — the server's shared default room, so two fresh installs meet there
+# by doing nothing. Set your display name in Phone → Settings first;
+# chat from the panel's Room chat box (200 chars, ~1 line / 1.5 s,
+# enforced by the server).
+
+# Server tests (pytest suite in server/tests/ — endpoints, the
+# WebSocket join/relay flow, malformed-message handling, the
+# anti-teleport gate, and Phase 38's names/chat/room codes;
+# hermetic, no network or secrets needed)
+/tmp/hf-venv/bin/pip install pytest httpx
+cd server && /tmp/hf-venv/bin/python -m pytest   # 48 tests
 
 # WASM physics (optional — TS fallback is built in)
 ./scripts/build-physics.sh --deploy       # needs Emscripten; writes client/public/physics/

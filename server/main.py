@@ -13,13 +13,58 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("harborfall-server")
 
-app = FastAPI(title="Harborfall Multiplayer API", version="2.0.0")
+app = FastAPI(title="Harborfall Multiplayer API", version="3.0.0")
 ROOMS: dict[str, dict[str, WebSocket]] = {}
 PLAYER_STATES: dict[str, dict[str, dict[str, Any]]] = {}
+PLAYER_NAMES: dict[str, dict[str, str]] = {}
 CLIENTS: dict[WebSocket, tuple[str, str]] = {}
 LAST_STATE: dict[tuple[str, str], tuple[float, list[float]]] = {}
+# Phase 38: per-player chat rate limit anchor (accepted chats only —
+# a rejected-fast chat must not extend its own lockout).
+# Phase 39: keyed by PLAYER ID across rooms, and never cleared on
+# join/leave. Phase 38 keyed it (room, player) and cleared it on
+# join, so the limit reset every time a client re-sent join —
+# which it may do freely on the same socket — or hopped rooms:
+# the anti-spam limit was decorative against exactly the client
+# it existed for. Entries are pruned lazily once expired (see
+# the chat handler), so the dict stays bounded without a sweeper.
+LAST_CHAT: dict[str, float] = {}
+# Phase 38: a join that names no room lands here. Until this phase a
+# roomless join minted a random room, so two old clients that both
+# omitted the room could never meet; "sable" (the city's own name)
+# is the shared default room. create_room still mints a fresh room —
+# that is its whole job (see handle_message).
+DEFAULT_ROOM = "sable"
 MAX_SPEED_UNITS_PER_SEC = 40.0  # generous arcade cap (car max ~24 u/s + margin)
-WORLD_LIMIT = 150.0
+# World extents (client/src/world.ts, recomputed Phase 27, extended
+# Phase 31): charted LAND spans x -196 (Westbrook's west shore)
+# .. +126 (the Port Sable strip, |x| <= WORLD_BOUND + 8) and
+# z -368 (Northreach's north shore, Phase 31) .. +324 (Coral
+# Shores' south shore). The Phase 26 symmetric limits
+# (|x| <= 210, |z| <= 340) covered the land but clipped the water
+# right off two shores: a boat rounding Westbrook's west point rides
+# at x ~ -205..-215, and one hugging Coral's south shore at
+# z ~ 339+. Boats are water-only and the shoreline is the game's
+# only hard edge, so the bounds are per-side: every land extent plus
+# a uniform 48 units of open sea. Beyond that is off-chart water —
+# state from there is not relayed (the speed check below remains
+# the real anti-teleport gate).
+# Phase 28 audit: the client's own envelopes were re-measured
+# against these bounds — cars clamp to |x| <= 130, z -302..330 and
+# the plane to |x| <= 135, z -305..335 (both inside), boats are
+# clamped to the chart itself in Vehicle.tsx (Phase 28), but the
+# on-foot SWIM limit is |x| < 175 (Player.tsx "sane offshore
+# limit"), which poked 1 unit past WORLD_X_MAX=174 on the east:
+# a swimmer at the client's own legal limit was rejected here.
+# X_MAX is now 178 — the swim limit plus the usual margin.
+WORLD_X_MIN, WORLD_X_MAX = -244.0, 178.0
+# Phase 31: Z_MIN -348 -> -416 — Northreach pushed charted land to
+# z=-368, and the uniform 48u sea margin moves with it (a boat
+# rounding Northreach rides at z ~ -390..-410). The client's own
+# envelopes were re-measured against the new bound: boats clamp to
+# z >= -412 (Vehicle.tsx, the chart inset by 4), the swim limit to
+# z > -388, cars/plane stay inside their district-grown boxes.
+WORLD_Z_MIN, WORLD_Z_MAX = -416.0, 372.0
 
 
 def state_plausible(room_id: str, player_id: str, state: dict[str, Any]) -> bool:
@@ -28,6 +73,13 @@ def state_plausible(room_id: str, player_id: str, state: dict[str, Any]) -> bool
     Keeps an honest-but-fast sanity gate: legitimate arcade movement always
     passes; a client jumping hundreds of units between 50 ms updates is
     dropped (state not stored/relayed) rather than trusted.
+
+    The anchor (LAST_STATE) only advances on ACCEPTED states: a
+    rejected teleport must not move it, or the next small hop from the
+    rejected position would launder the jump (Phase 26 fix — the
+    anchor previously updated before the speed check). (Re)joining a
+    room resets the anchor, so a legitimate respawn is never measured
+    against a stale spot (see join_room / remove_client).
     """
     import time
 
@@ -35,21 +87,52 @@ def state_plausible(room_id: str, player_id: str, state: dict[str, Any]) -> bool
     if not _valid_vector(position):
         return False
     x, _y, z = position
-    if abs(x) > WORLD_LIMIT or abs(z) > WORLD_LIMIT:
+    if not (WORLD_X_MIN <= x <= WORLD_X_MAX) or not (WORLD_Z_MIN <= z <= WORLD_Z_MAX):
         return False
     key = (room_id, player_id)
     now = time.monotonic()
     last = LAST_STATE.get(key)
-    LAST_STATE[key] = (now, list(position))
     if last is None:
+        LAST_STATE[key] = (now, list(position))
         return True
     last_time, last_pos = last
     dt = max(now - last_time, 0.001)
     dist = math.hypot(x - last_pos[0], z - last_pos[2])
     # Small grace distance for spawn/respawn jumps.
-    return dist <= MAX_SPEED_UNITS_PER_SEC * dt + 6.0
+    if dist > MAX_SPEED_UNITS_PER_SEC * dt + 6.0:
+        return False
+    LAST_STATE[key] = (now, list(position))
+    return True
 MAX_MESSAGE_SIZE = 64 * 1024
 MAX_PLAYERS_PER_ROOM = 32
+# Phase 38: display names + text chat limits. Names are presentation
+# only — identity is still the playerId; a name can be shared, spoofed
+# or changed, and nothing gameplay-side may key off it.
+MAX_NAME_LENGTH = 24
+CHAT_MAX_LENGTH = 200
+CHAT_MIN_INTERVAL = 1.5  # seconds between accepted chats per player
+
+
+def sanitize_name(value: Any) -> str:
+    """A display name safe to relay: strings only, control characters
+    stripped, whitespace trimmed, capped, with an honest fallback.
+    Anything else (missing, non-string, all-control-chars) becomes
+    "Player" — the name an old-protocol client gets too."""
+    if not isinstance(value, str):
+        return "Player"
+    cleaned = "".join(ch for ch in value if ord(ch) >= 32 and ord(ch) != 127).strip()
+    return cleaned[:MAX_NAME_LENGTH] or "Player"
+
+
+def sanitize_room_code(value: Any) -> str:
+    """A room code is a room id chosen by players: control characters
+    stripped, whitespace trimmed. Deliberately NOT truncated — the
+    caller's existing length check rejects an over-long code with the
+    same error a Phase 26 client already understands. Empty -> ""
+    (the caller substitutes the default/generated room)."""
+    if not isinstance(value, str):
+        return ""
+    return "".join(ch for ch in value if ord(ch) >= 32 and ord(ch) != 127).strip()
 
 
 @app.get("/")
@@ -103,14 +186,21 @@ async def remove_client(connection: WebSocket) -> None:
     states = PLAYER_STATES.get(room_id)
     if states is not None:
         states.pop(player_id, None)
+    names = PLAYER_NAMES.get(room_id)
+    if names is not None:
+        names.pop(player_id, None)
+    LAST_STATE.pop((room_id, player_id), None)  # Phase 26: no stale teleport anchor
+    # Phase 39: LAST_CHAT is deliberately NOT popped here — the
+    # chat rate limit follows the player id (see its declaration).
     if room:
         await broadcast(room_id, {"type": "player_left", "playerId": player_id})
     else:
         ROOMS.pop(room_id, None)
         PLAYER_STATES.pop(room_id, None)
+        PLAYER_NAMES.pop(room_id, None)
 
 
-async def join_room(connection: WebSocket, room_id: str, player_id: str) -> None:
+async def join_room(connection: WebSocket, room_id: str, player_id: str, name: str = "Player") -> None:
     old_membership = CLIENTS.get(connection)
     if old_membership is not None:
         await remove_client(connection)
@@ -123,20 +213,27 @@ async def join_room(connection: WebSocket, room_id: str, player_id: str) -> None
         await send_json(connection, {"type": "error", "message": "This room is full."})
         return
 
+    # Phase 26: a (re)join starts a fresh anti-teleport anchor — the
+    # first state after joining is a spawn, wherever it is.
+    LAST_STATE.pop((room_id, player_id), None)
+    # Phase 39: no fresh chat clock on (re)join — that reset was
+    # the rate-limit evasion (see LAST_CHAT).
     states = PLAYER_STATES.setdefault(room_id, {})
+    names = PLAYER_NAMES.setdefault(room_id, {})
     snapshot = [
-        {"playerId": existing_id, "state": states.get(existing_id)}
+        {"playerId": existing_id, "name": names.get(existing_id, "Player"), "state": states.get(existing_id)}
         for existing_id in room
         if existing_id != player_id
     ]
     room[player_id] = connection
+    names[player_id] = name
     CLIENTS[connection] = (room_id, player_id)
     await send_json(
         connection,
-        {"type": "joined", "roomId": room_id, "playerId": player_id, "players": snapshot},
+        {"type": "joined", "roomId": room_id, "playerId": player_id, "name": name, "players": snapshot},
     )
-    await broadcast(room_id, {"type": "player_joined", "playerId": player_id}, exclude=connection)
-    logger.info("Player %s joined room %s", player_id, room_id)
+    await broadcast(room_id, {"type": "player_joined", "playerId": player_id, "name": name}, exclude=connection)
+    logger.info("Player %s (%s) joined room %s", player_id, name, room_id)
 
 
 def _valid_vector(value: Any) -> bool:
@@ -179,14 +276,71 @@ async def handle_message(connection: WebSocket, raw_message: str) -> None:
 
     message_type = payload.get("type")
     if message_type in ("create_room", "join"):
-        room_id = str(payload.get("roomId") or uuid.uuid4().hex[:8]).strip()
+        # Phase 38: the room may arrive as the Phase 26 "roomId" or as
+        # the new "room" code (the MP panel's room-code field sends
+        # both, same value; the code wins if they ever differ). A
+        # "join" naming no room lands in the DEFAULT_ROOM; a
+        # "create_room" naming no room still mints a fresh one —
+        # creating a private room is its explicit purpose, and the
+        # Phase 26 test pins that behaviour.
+        raw_room = payload.get("room")
+        if raw_room is None:
+            raw_room = payload.get("roomId")
+        room_id = sanitize_room_code(raw_room)
+        if not room_id:
+            room_id = uuid.uuid4().hex[:8] if message_type == "create_room" else DEFAULT_ROOM
         player_id = str(payload.get("playerId") or uuid.uuid4()).strip()
-        if not room_id or len(room_id) > 48 or not player_id or len(player_id) > 64:
+        if len(room_id) > 48 or not player_id or len(player_id) > 64:
             await send_json(connection, {"type": "error", "message": "Room or player ID is invalid."})
             return
-        await join_room(connection, room_id, player_id)
+        await join_room(connection, room_id, player_id, sanitize_name(payload.get("name")))
     elif message_type == "leave":
         await remove_client(connection)
+    elif message_type == "chat":
+        # Phase 38: room text chat — a dedicated message type (the
+        # older event-relay "chat" event is untouched and still
+        # works). Validated like everything else here: membership
+        # first, then shape, then length, then the rate limit. The
+        # relay carries the sender's sanitised display name and goes
+        # to room peers only — never the sender, never other rooms.
+        membership = CLIENTS.get(connection)
+        if membership is None:
+            await send_json(connection, {"type": "error", "message": "Join a room before sending chat."})
+            return
+        text = payload.get("text")
+        if not isinstance(text, str):
+            await send_json(connection, {"type": "error", "message": "Chat message must be text."})
+            return
+        text = "".join(ch for ch in text if ord(ch) >= 32 and ord(ch) != 127).strip()
+        if not text:
+            await send_json(connection, {"type": "error", "message": "Chat message is empty."})
+            return
+        if len(text) > CHAT_MAX_LENGTH:
+            await send_json(connection, {"type": "error", "message": f"Chat message is too long ({CHAT_MAX_LENGTH} characters max)."})
+            return
+        room_id, player_id = membership
+        import time
+
+        now = time.monotonic()
+        # Phase 39: the limiter is keyed by player id and survives
+        # joins, leaves and room hops (see LAST_CHAT) — rejoining
+        # cannot reset it. Expired anchors are pruned lazily here,
+        # the only place the dict is written, so it cannot grow
+        # without bound across a long-lived server.
+        if len(LAST_CHAT) > 512:
+            for pid in [p for p, t in LAST_CHAT.items() if now - t >= CHAT_MIN_INTERVAL]:
+                LAST_CHAT.pop(pid, None)
+        last = LAST_CHAT.get(player_id)
+        if last is not None and now - last < CHAT_MIN_INTERVAL:
+            await send_json(connection, {"type": "error", "message": "You're chatting too fast — give it a moment."})
+            return
+        LAST_CHAT[player_id] = now
+        name = PLAYER_NAMES.get(room_id, {}).get(player_id, "Player")
+        await broadcast(
+            room_id,
+            {"type": "chat", "playerId": player_id, "name": name, "text": text},
+            exclude=connection,
+        )
     elif message_type == "state":
         membership = CLIENTS.get(connection)
         if membership is None:

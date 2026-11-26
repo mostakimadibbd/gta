@@ -306,6 +306,50 @@ body,
   overflow-wrap: anywhere;
 }
 
+/* Phase 38: room chat — the panel box + the fading in-game overlay
+   (last 6 lines; per-line opacity is age-driven inline). */
+.chat-box {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid #ffffff20;
+  display: grid;
+  gap: 8px;
+}
+
+.chat-box small {
+  color: #bdc9ce;
+  font-size: 11px;
+}
+
+.chat-overlay {
+  position: fixed;
+  left: 14px;
+  bottom: 132px;
+  z-index: 30;
+  max-width: min(430px, 72vw);
+  display: grid;
+  gap: 3px;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.chat-overlay p {
+  margin: 0;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(8, 15, 20, 0.66);
+  color: #eef3f0;
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  transition: opacity 1s linear;
+}
+
+.chat-overlay b {
+  color: #f0b35e;
+}
+
 .roster {
   padding-top: 9px;
   border-top: 1px solid #ffffff20;
@@ -836,6 +880,8 @@ body,
 .phone-car { display: flex; align-items: center; gap: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-radius: 13px; padding: 9px 11px; }
 .phone-car small { display: block; color: #9fb3ad; font-size: 11px; margin-top: 1px; }
 .phone-page input[type="range"] { width: 110px; accent-color: #f0b35e; }
+/* Phase 38: Settings → Multiplayer display-name field */
+.phone-text-input { width: 130px; padding: 5px 9px; border: 1px solid rgba(255,255,255,0.18); border-radius: 8px; background: rgba(255,255,255,0.06); color: #eef4f2; font-size: 12.5px; }
 
 /* gyro toggle (touch) */
 .touch-gyro { position: absolute; top: 104px; right: 12px; min-width: 42px; height: 30px; padding: 0 9px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.3); background: rgba(10,14,16,0.72); color: #dfe3dc; font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; }
@@ -899,12 +945,45 @@ body,
   padding: 4px 10px; font-size: 11px; margin-top: 0;
 }
 .weather-chip svg { opacity: 0.85; flex: none; }
+/* Phase 36: the imminent-turn glyph inside the weather chip (amber = turning) */
+.weather-next { color: #ffb340; font-weight: 600; letter-spacing: 0.02em; }
 /* Phase 22: rush-hour chip on the HUD clock line (amber, harbour palette) */
 .rush-chip {
   display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
   background: rgba(64, 42, 8, 0.78); border: 1px solid rgba(255, 179, 64, 0.45);
   backdrop-filter: blur(10px); color: #ffcf87; border-radius: 999px;
   padding: 4px 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; margin-top: 4px;
+}
+/* Phase 28: the Sparrow's stall warning — same chip family, alarm
+   amber-red, pulsing while the nose drops */
+.stall-chip {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  background: rgba(74, 16, 10, 0.82); border: 1px solid rgba(255, 92, 56, 0.6);
+  backdrop-filter: blur(10px); color: #ffb59d; border-radius: 999px;
+  padding: 4px 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; margin-top: 4px;
+  animation: stall-pulse 0.7s ease-in-out infinite alternate;
+}
+@keyframes stall-pulse { from { opacity: 0.75; } to { opacity: 1; } }
+/* Phase 33: combat-cover chip — harbour teal while tucked in; the
+   PEEKING state flips amber (exposed: sight + bust relief suspended) */
+.cover-chip {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  background: rgba(8, 30, 32, 0.82); border: 1px solid rgba(94, 200, 190, 0.55);
+  backdrop-filter: blur(10px); color: #bfe8e2; border-radius: 999px;
+  padding: 4px 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; margin-top: 4px;
+  animation: hf-rise 160ms var(--ease);
+}
+.cover-chip.peek {
+  background: rgba(64, 42, 8, 0.82); border-color: rgba(255, 179, 64, 0.55); color: #ffcf87;
+}
+/* Phase 29: patrol evidence ("heat") chip beside the wanted stars —
+   harbour teal, tabular count, only rendered while the file is open */
+.heat-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(8, 22, 24, 0.82); border: 1px solid rgba(94, 200, 190, 0.45);
+  backdrop-filter: blur(10px); color: #bfe8e2; border-radius: 999px;
+  padding: 3px 9px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  animation: hf-rise 160ms var(--ease);
 }
 /* minimap: thin ring + glass backing disc */
 .minimap-disc {

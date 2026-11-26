@@ -3,8 +3,13 @@
 // gate the renderers consult. App / World / GameSystems / textures read from
 // here (via G.settings.quality) so the tier can never drift between systems.
 //
-//   Low    — composer OFF, 1024 shadows, no normal maps, flat water sheet,
-//            procedural canvas textures only (CC0 off), standard car paint.
+//   Low    — the weak-phone preset (Phase 45 made it a real preset):
+//            composer OFF, shadows OFF entirely (GameSystems reads the
+//            tier at the sun's castShadow write), DPR capped at 1.0,
+//            ambient traffic/crowd density capped by the tier (see
+//            game/perf.ts), wildlife ambient updates at half rate, no
+//            normal maps, flat water sheet, procedural canvas textures
+//            only (CC0 off), standard car paint.
 //   Medium — composer (Bloom/SMAA/Vignette/Noise + Phase 10 radial
 //            chromatic aberration), 2048 follow shadows,
 //            normal maps on, CC0 textures at 512, water shader, clearcoat.
@@ -107,6 +112,10 @@ export function sampleIfHighRaised() {
 export const gates = {
   composer: (t: QualityTier) => t !== "low",
   ssao: (t: QualityTier) => t === "high",
+  // Phase 45: on Low this size is never allocated — the preset turns
+  // the sun's castShadow off outright (GameSystems), so no shadow
+  // map renders at all. The 1024 figure stays as the documented
+  // fallback size should that ever change.
   shadowMapSize: (t: QualityTier) => (t === "low" ? 1024 : 2048),
   shadowRadius: (t: QualityTier) => (t === "high" ? 4 : 1),
   normalMaps: (t: QualityTier) => t !== "low",

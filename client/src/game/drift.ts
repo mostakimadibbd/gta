@@ -30,6 +30,19 @@ export const DRIFT_FACTOR: Record<string, number> = {
   muscle: 1.25, coupe: 1.25, supercar: 1.25, gt: 1.25, kestrel: 1.3,
   wedge: 1.1, hyper: 1.1, pickup: 0.9, bronto: 0.9,
   sedan: 0.85, hatch: 0.85, suv: 0.85, classic: 0.85, van: 0.8, taxi: 0.85, tow: 0.6,
+  // Phase 32: the service fleet — working vehicles, not drift cars
+  ambulance: 0.8, firetruck: 0.6,
+  // Phase 28: the Tempest is rear-drive and built to slide (top
+  // factor, with the Kestrel RS); the Mule is a work truck — it
+  // will slide on dirt, but it doesn't score like a sports car.
+  tempest: 1.3, mule: 0.85,
+  sovereign: 1.3, // Phase 48: the Sovereign shares the Tempest family's drift manners
+  // Phase 40: the motorcycle was MISSING here too — it feeds this
+  // scorer through the car step like any car, and silently took
+  // the 0.85 fallback. A light, rear-drive bike slides willingly:
+  // 1.1, stated rather than inherited. (The bicycle never reaches
+  // this table — its own kinematic branch feeds no drift input.)
+  motorcycle: 1.1,
 };
 
 export const DRIFT = {
@@ -47,6 +60,12 @@ export const DRIFT = {
   cleanT: 0,
   /** a segment has run since the last bank/loss (chain is open) */
   open: false,
+  /** Phase 34: bank notifications for the Sable Slide Series — a
+   * monotone sequence + the points of the most recent bank. The
+   * series loop polls the sequence; bank() stays the only writer,
+   * so a run can never count points the drift system didn't pay. */
+  bankSeq: 0,
+  lastBank: 0,
 };
 
 export interface DriftSample {
@@ -64,6 +83,7 @@ export interface DriftSample {
 function bank() {
   const pts = Math.floor(DRIFT.score);
   const cash = Math.floor(pts / 12);
+  if (pts > 0) { DRIFT.bankSeq += 1; DRIFT.lastBank = pts; } // Phase 34: the Slide Series counts banks off this sequence
   if (pts > 0) {
     if (cash > 0) { G.cash += cash; G.lifetimeEarned += cash; }
     jobStats.driftBanked += pts;

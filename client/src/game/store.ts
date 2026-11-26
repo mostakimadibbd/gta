@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { sfx } from "./audio";
 import { CAR_SPAWNS, CAR_MODELS, PIER_SPAWN, MANSION, districtAt, streamedGateFor } from "../world";
 import { depenetrateCar } from "./depenetrate"; // Phase 25: spawn/restore guard
+import { addEvidence, applyEvidenceFloor, halveEvidence } from "./heat"; // Phase 29: evidence & heat
 import type { CarSpawn } from "../world";
 import type { VehicleState } from "../physics/GamePhysics";
 
@@ -13,7 +14,7 @@ export interface NpcCar extends VehicleState {
   roll?: number; pitchVel?: number; rollVel?: number; // Phase 10: C++ vehicle_body state (traffic cheap version)
   svc?: "ambulance" | "fire"; // Phase 7: emergency-service traffic variants
   // ---- Phase 6: per-car kind + traffic-light / rush-hour / bus state ----
-  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean;
+  kind?: "sedan" | "hatch" | "coupe" | "pickup" | "van" | "supercar" | "muscle" | "suv" | "classic" | "motorcycle" | "bus" | "taxi" | "bicycle" | "boat" | "wedge" | "hyper" | "gt" | "tow" | "skiff" | "plane" | "kestrel" | "bronto" | "tempest" | "mule" | "ambulance" | "firetruck" | "sovereign"; fixed?: number; reckless?: boolean; blockedT?: number; dormant?: boolean; // Phase 32: the union admits the service kinds (traffic never spawns them — TRAFFIC_KINDS is unchanged — but CarKind must stay assignable). Phase 48: "sovereign" joins the same way (owned-only, delivered by game/crown.ts).
   rushOnly?: boolean; parked?: boolean; parkX?: number; parkZ?: number; parkHeading?: number;
   densRank?: number; densTotal?: number; // Phase 16: ambient-pool rank for the traffic-density lever (initWorld)
   busRoute?: boolean; wp?: number; stopT?: number;
@@ -67,7 +68,7 @@ export interface PlayerCar {
   // and the C++ vehicle_body heave channel (pitch/roll reuse the fields above)
   dent?: [number, number, number, number]; bodyHeave?: number; bodyHeaveVel?: number;
 }
-export type WeaponKind = "pistol" | "smg" | "shotgun" | "bat" | "bottle";
+export type WeaponKind = "pistol" | "smg" | "shotgun" | "bat" | "bottle" | "carbine"; // Phase 33: carbine joins the table
 export interface MissionResult { ok: boolean; title: string; reward: number; items: number; timeLeft: number; reason: string; at: number; }
 export interface PendingCrime { kind: CrimeKind; due: number; }
 export const nowS = () => (typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000);
@@ -90,6 +91,15 @@ export const G = {
   cash: 250,
   tokens: 0,
   speedKph: 0,
+  // Phase 28: the Sparrow's stall warning (set by Vehicle's flight
+  // branch, read by the HUD snapshot) — airborne and below flying
+  // speed, the nose is about to drop.
+  stallWarn: false,
+  // Phase 29: runtime mirror of GameSystems' police line-of-sight
+  // result (set beside playerSeen every step) — the Fixer's bribe
+  // refusal ("not while they're looking at you") reads it from the
+  // phone handler, which has no access to the component ref.
+  copSeen: false,
   status: "" as "" | "busted" | "wasted",
   statusTimer: 0,
   dialogueActive: false,
@@ -106,6 +116,13 @@ export const G = {
   weather: "Clear" as WeatherKind,
   weatherIn: 110, // seconds until the weather state machine rolls again
   rainAmt: 0, // 0..1 lerped visual intensity
+  // Phase 36: ROAD WETNESS — how soaked the streets are, as opposed
+  // to how hard it is raining right now. It soaks up toward rainAmt
+  // while it rains and then DRIES SLOWLY (~2.5 min from soaked to
+  // dry) once the rain stops, instead of snapping dry the moment
+  // the weather turns. Road gloss, puddles and the wet-grip factor
+  // read this; rain particles, sky and water read rainAmt.
+  roadWet: 0, // 0..1
   fogAmt: 0,
   lightning: 0, // 0..1 flash envelope (storms)
   // ---- Phase 2: witnesses / bank / toast ----
@@ -120,7 +137,7 @@ export const G = {
   timeS: 0, // elapsed game clock (set by GameSystems every frame)
   firstPerson: false,
   swimming: false,
-  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing" | "farmhouse",
+  interior: "" as "" | "garage" | "club" | "police" | "clinic" | "restaurant" | "hangar" | "showroom" | "cafe" | "gym" | "loft" | "clothing" | "farmhouse" | "diner" | "silo",
   // ---- Phase 7: wind, sitting, replay requests, camera flash, boosts ----
   wind: 0.5, // 0..1 slow gust value — palm sway, boat bob, HUD/phone label
   sitting: false, // player parked on a bench / chair (Player pose + lock)
@@ -151,8 +168,8 @@ export const G = {
   exhausted: false, // latched at 0 until stamina recovers past 20
   skills: { driving: 0, shooting: 0, stamina: 0, strength: 0 }, // 0..100, persisted (strength: Phase 8 gym)
   skillShootAcc: 0, // shots fired toward the next Shooting point
-  weaponOwned: { pistol: false, smg: false, shotgun: false, bat: false, bottle: false } as Record<WeaponKind, boolean>,
-  weaponAmmo: { pistol: 0, smg: 0, shotgun: 0, bat: 0, bottle: 0 } as Record<WeaponKind, number>,
+  weaponOwned: { pistol: false, smg: false, shotgun: false, bat: false, bottle: false, carbine: false } as Record<WeaponKind, boolean>,
+  weaponAmmo: { pistol: 0, smg: 0, shotgun: 0, bat: 0, bottle: 0, carbine: 0 } as Record<WeaponKind, number>,
   // ---- Phase 9: free-aim (hold RMB / gamepad LT on foot) + 6th star ----
   aiming: false, // over-shoulder aim mode: slower move, camera-ray fire
   starHeat: 0, // serious crimes committed WHILE at 5★; 3 of them call in the Harbour Guard (6★)
@@ -160,11 +177,25 @@ export const G = {
   // crimes witnessed in a district raise it; it decays on the daily tick.
   // High rep: witnesses report faster and locals start recognising you. ----
   zoneRep: {} as Record<string, number>,
+  // ---- Phase 39: the Westbrook silo office's HARBOUR LOG —
+  // Interiors fills this from the live Wire feed + zoneRep when
+  // the desk log is read and fires "harborfall:harbour-log";
+  // App renders it as a dismissible panel. Session-only UI
+  // state, never persisted (the sources are the persisted data).
+  harbourLog: null as null | { headlines: { title: string; body: string }[]; districts: { name: string; rep: number }[] },
   eatingUntil: 0, // hand-to-mouth pose window (vendor food)
   drinkUntil: 0, // Phase 23: Club Solace drink — warm vignette window (G.timeS, cosmetic only)
   playerSprinting: false, // set by Player each frame (stamina drain input)
   bikePedalling: false, // set by Vehicle each frame (stamina drain input)
   inCover: false, // crouched against a wall/car (police sight + bust relief)
+  // Phase 33: COMBAT cover — inCover with a firearm in hand, on foot,
+  // not swimming. Drives the HUD chip, the deeper crouch pose, and
+  // the PEEK rule (aiming out of it suspends the sight/bust relief:
+  // you are exposed while you fire). Computed beside inCover in
+  // GameSystems' vitals block. NOTE: this build's police close to
+  // arrest — they do not shoot — so cover's teeth are the sight and
+  // bust maths; there is no NPC accuracy roll for it to modify.
+  inCombatCover: false,
   fadeAt: 0, // nowS() of the last interior-door fade request (App overlay)
   eventNow: null as null | { kind: string; x: number; z: number; tipped?: boolean }, // live random event (B2)
   punchT: -9, // nowS() of the last punch (drives the arm-swing animation)
@@ -216,6 +247,44 @@ export const G = {
     trafficDensity: "normal" as "low" | "normal" | "high",
     pedDensity: "normal" as "low" | "normal" | "high",
     viewDistance: "normal" as "near" | "normal" | "far",
+    // ---- Phase 38: multiplayer display name — floats over your
+    // character for room peers and signs your chat lines. The server
+    // sanitises it on join (24 chars max, control characters
+    // stripped, "Player" fallback); identity is never the name.
+    // Lives in settings, so it persists per save slot like the rest
+    // of this object; old saves pick up "Rayan" via the merge. ----
+    mpName: "Rayan",
+    // ---- Phase 44: ASSISTS & ACCESSIBILITY (Phone → Settings →
+    // Assists & accessibility). Every default here IS the pre-Phase-44
+    // behaviour, so an existing save plays identically until the
+    // player opts in; old saves pick the fields up via the merge.
+    // driveAssist smooths the MERGED steering input (keys / stick /
+    // touch / gyro) for road vehicles only — physics numbers, top
+    // speeds, the drift-scoring feed (which reads the RAW input) and
+    // the wheelie gesture are untouched; "full" also eases the chase
+    // camera back behind the car when the player isn't orbiting.
+    // aimAssist is aim MAGNETISM while free-aiming (soft pull of the
+    // shot direction toward the nearest visible ped in a small cone)
+    // — never lock-on, never through walls. colorblindHud swaps the
+    // HUD's meaning-carrying colours for an Okabe–Ito palette via
+    // game/hudpalette.ts (HUD only — the world does not change).
+    // reducedFlash caps the lightning strike's peak and softens the
+    // muzzle flash / impact sparks at their existing effect sites. ----
+    driveAssist: "off" as "off" | "light" | "full",
+    aimAssist: "off" as "off" | "soft" | "strong",
+    colorblindHud: false,
+    reducedFlash: false,
+    // ---- Phase 46: AMBIENT SCORE (Phone → Settings → Music) —
+    // the layered procedural free-roam score (game/score.ts):
+    // a pad bed in the theme's chord family, a night pluck layer
+    // and a wanted pulse layer. It is the LOWEST-priority music
+    // citizen: a playing Sable Tunes track outranks it, a room
+    // hold (Club Solace / diner jukebox) outranks it, and the N
+    // mute silences it with everything else. Default ON — it is
+    // new music, not a behaviour change; Off restores exactly the
+    // Phase 45 audio behaviour. Old saves pick it up via the
+    // settings merge. ----
+    ambientScore: true,
   },
   shakeAmp: 0, // current camera-shake amplitude (gated by settings.shake)
   bark: null as null | { who: string; text: string; at: number }, // ambient subtitle line (Phase 5)
@@ -234,6 +303,16 @@ export function loadSavedCar(): SavedCar | null {
   return null;
 }
 export function persistSavedCar(c: SavedCar | null) {
+  // Phase 34 audit: the Phase 32 service units (job ambulance / fire
+  // tender) are shift vehicles on the rental discipline — never the
+  // player's car to file away. The villa-drive auto-save in
+  // GameSystems parks ANY driven car here, and the boot restore
+  // below rebuilds the saved car as OWNED, so an unguarded write let
+  // a mid-shift unit become a permanent owned Medic Van / tender on
+  // the next session (Phase 33 guarded the LAST-CAR snapshot against
+  // exactly this; the garage-car key was missed). Refuse the write
+  // at the single write point.
+  if (c && (c.kind === "ambulance" || c.kind === "firetruck")) return;
   try { if (c) localStorage.setItem("harborfall-garage-car", JSON.stringify(c)); else localStorage.removeItem("harborfall-garage-car"); } catch { /* ignore */ }
 }
 // ---- Phase 4 persistence: stash, stored cars, settings ----
@@ -243,7 +322,7 @@ export function persistSettings() { try { localStorage.setItem("harborfall-setti
 export function persistSkills() { try { localStorage.setItem("harborfall-skills", JSON.stringify(G.skills)); } catch { /* ignore */ } }
 /** Keep the legacy `armed`/`ammo` HUD mirrors in step with the weapon inventory. */
 export function syncWeaponMirrors() {
-  G.armed = G.weaponOwned.pistol || G.weaponOwned.smg || G.weaponOwned.shotgun;
+  G.armed = G.weaponOwned.pistol || G.weaponOwned.smg || G.weaponOwned.shotgun || G.weaponOwned.carbine;
   G.ammo = G.weaponSel === "fist" || G.weaponSel === "bat" ? 0 : G.weaponAmmo[G.weaponSel];
 }
 /** Phase 8: persist the per-district reputation map. */
@@ -257,7 +336,7 @@ export const stashTotal = () => G.inventory.reduce((a, i) => a + i.value, 0);
 const loadKey = (fn: () => void) => { try { fn(); } catch { /* one bad key never blocks the rest */ } };
 loadKey(() => { const skills = localStorage.getItem("harborfall-skills"); if (skills) G.skills = { ...G.skills, ...(JSON.parse(skills) as Partial<typeof G.skills>) }; });
 loadKey(() => { const stash = localStorage.getItem("harborfall-stash"); if (stash) G.inventory = JSON.parse(stash) as StashItem[]; });
-loadKey(() => { const stored = localStorage.getItem("harborfall-stored-cars"); if (stored) G.storedCars = (JSON.parse(stored) as StoredCar[]).slice(0, 6); });
+loadKey(() => { const stored = localStorage.getItem("harborfall-stored-cars"); if (stored) G.storedCars = (JSON.parse(stored) as StoredCar[]).filter((s) => s && s.kind !== "ambulance" && s.kind !== "firetruck").slice(0, 6); }); // Phase 34 audit: service units are never storable — drop any a Phase 32/33 build filed via the unguarded garage paths
 loadKey(() => { const st = localStorage.getItem("harborfall-settings"); if (st) G.settings = { ...G.settings, ...(JSON.parse(st) as Partial<typeof G.settings>) }; });
 try {
   // ---- Phase 14 ONE-TIME MIGRATION (reflSafeV): the Phase 11–13 build
@@ -275,7 +354,13 @@ loadKey(() => { const rep = localStorage.getItem("harborfall-rep"); if (rep) G.z
 try {
   G.ownsMansion = localStorage.getItem("harborfall-mansion") === "1";
   const saved = loadSavedCar();
-  if (saved) {
+  // Phase 34 audit: a garage-car snapshot of a service unit (written
+  // by a Phase 32/33 build through the then-unguarded villa-drive
+  // auto-save) must not restore as an owned car either — clear the
+  // key so it cannot linger, exactly as the last-car load refuses
+  // service kinds (Phase 33).
+  if (saved && (saved.kind === "ambulance" || saved.kind === "firetruck")) persistSavedCar(null);
+  if (saved && saved.kind !== "ambulance" && saved.kind !== "firetruck") {
     // Phase 25: same streamed-district gate guard as applyCarSave
     const gate = streamedGateFor(saved.x, saved.z);
     if (gate) { saved.x = gate.x; saved.z = gate.z; saved.heading = gate.heading; }
@@ -352,6 +437,15 @@ export function clampMods(car: { tuneLvl?: number; brakeLvl?: number }) {
 }
 
 export function noteLastCar(car: PlayerCar) {
+  // Phase 33 audit: the Phase 32 service units (the job ambulance
+  // and fire tender) are shift vehicles on the rental discipline —
+  // never the player's "last car". Snapshotting one wrote a dynamic
+  // last-car entry that a mid-shift reload then resurrected as an
+  // orphan unit (J resets to idle on load; the car did not), and
+  // taking that orphan rolled a steal like any street car. A service
+  // unit is simply never noted — the player's own last car, noted
+  // when they were last at its wheel, stays the snapshot.
+  if (car.kind === "ambulance" || car.kind === "firetruck") return;
   if (car.storedAway || car.damage >= 100) { clearLastCar(); return; }
   const spawnId = car.id >= 0 && car.id < CAR_SPAWNS.length && CAR_SPAWNS[car.id].kind === car.kind ? car.id : -1;
   LASTCAR.save = {
@@ -427,7 +521,10 @@ try {
   const raw = localStorage.getItem("harborfall-lastcar");
   if (raw) {
     const s = JSON.parse(raw) as LastCarSave;
-    if (s && s.damage < 100) {
+    // Phase 33 audit: a snapshot of a Phase 32 service unit written
+    // by an earlier build is not a last car either (see noteLastCar)
+    // — never resurrect one as an orphan dynamic car.
+    if (s && s.damage < 100 && s.kind !== "ambulance" && s.kind !== "firetruck") {
       LASTCAR.save = s;
       LASTCAR.carIndex = applyCarSave(s);
     }
@@ -458,6 +555,11 @@ loadKey(() => {
 function applyCrime(kind: CrimeKind) {
   if (G.crimeCooldown > 0 && kind !== "ped" && kind !== "shoot") return;
   G.crimeCooldown = 4;
+  // Phase 29: a crime that becomes known leaves EVIDENCE — this is
+  // the one choke point every known crime passes through (instant
+  // kinds directly, quiet crimes when the witness report lands), so
+  // the file grows exactly when the patrol learns something.
+  addEvidence(kind);
   const before = G.wanted;
   // Phase 9: the 6th star is earned, not given — serious crimes (gunfire,
   // robbery, running a ped down) committed WHILE already at 5★ build
@@ -474,6 +576,9 @@ function applyCrime(kind: CrimeKind) {
   if (kind === "shoot") G.wanted = Math.min(6, Math.max(G.wanted + 1, 2)); // gunfire: 2★ minimum
   else if (kind === "robbery") G.wanted = Math.min(6, Math.max(G.wanted + 1, 2)); // shop alarm: 2★ minimum
   else G.wanted = Math.min(6, G.wanted + (kind === "ped" ? 2 : 1));
+  // Phase 29: …but never below the floor your evidence file sets —
+  // the report is matched to the file (floor = min(3, evidence/25)).
+  applyEvidenceFloor();
   if (G.wanted > before && G.wanted <= 5) sfx.star();
   G.wantedCooldown = 0;
   if (kind === "ped") G.health = Math.max(0, G.health - 4);
@@ -558,6 +663,7 @@ export function resetAfterArrest(fine: number) {
   G.finesPaid += Math.min(fine, G.cash);
   G.cash = Math.max(0, G.cash - fine);
   if (G.inventory.length) { G.inventory = []; persistInventory(); toast("Busted — your stash was confiscated"); }
+  halveEvidence(); // Phase 29: you did some time — half the file is served
   G.wanted = 0; G.starHeat = 0; G.bustTimer = 0; G.health = Math.max(60, G.health);
   G.driving = false; G.activeCarId = -1;
   respawnPoint();
@@ -566,6 +672,7 @@ export function resetAfterArrest(fine: number) {
 export function resetAfterWasted() {
   G.finesPaid += Math.min(100, G.cash);
   G.cash = Math.max(0, G.cash - 100);
+  halveEvidence(); // Phase 29: the hospital stay serves half the file too
   G.wanted = 0; G.starHeat = 0; G.health = 100; G.driving = false; G.activeCarId = -1;
   respawnPoint();
   for (const c of G.cops) c.active = false;

@@ -7,6 +7,7 @@ import type { HumanoidOptions } from "../humanoid";
 import { DRIFT } from "./drift";
 import { G } from "./store";
 import { J } from "./jobs";
+import { dolphinsNear } from "./wildlife";
 
 // ================================================================ FISHING
 export interface FishSpot { name: string; x: number; z: number; castX: number; castZ: number; island?: boolean; offshore?: boolean; }
@@ -47,13 +48,27 @@ export const creelValue = () => F.creel.reduce((a, c) => a + c.value, 0);
 
 /** Roll a catch for a spot: night/day gates + the rare koi at ~3%.
  * Phase 24: offshore defs (the Sable Tuna) only enter the pool at
- * an offshore spot; offshore water weights rich like island water. */
+ * an offshore spot; offshore water weights rich like island water.
+ * Phase 42: DOLPHINS — the rarity roll is a real roll, so the pod
+ * can honestly lean on it: while the pod works within 40u of the
+ * cast point (game/wildlife.ts POD), the rare-koi chance doubles
+ * (3% → 6%) and the pool weights rich like island water — the big
+ * fish follow the pod. Elias says as much when you cast (Phase8). */
 export function rollCatch(spot: FishSpot, hour: number): CaughtFish {
   const night = hour >= 19 || hour < 6;
-  if (Math.random() < 0.03) return makeFish(FISH_TABLE[4]);
+  // Phase 43 audit fix: the bonus reads the ACTUAL cast point
+  // (F.castX/F.castZ — where the line landed, reach-scaled at cast
+  // release), not the spot's nominal full-reach cast point. Phase 42
+  // shipped the bark (Phase8.tsx) reading F.castX/F.castZ while this
+  // roll read spot.castX/spot.castZ, so on any cast short of full
+  // power the two could disagree by up to ~15u at the Pier: Elias
+  // could promise a bonus the roll never granted, or the roll could
+  // quietly grant one he never called. One point, both readers.
+  const dolphinBonus = dolphinsNear(F.castX, F.castZ);
+  if (Math.random() < (dolphinBonus ? 0.06 : 0.03)) return makeFish(FISH_TABLE[4]);
   const pool = FISH_TABLE.filter((f) => !f.rare && (spot.offshore || !f.offshore) && (f.when === "any" || (f.when === "night") === night));
   // island water runs richer: weight the table toward the pricey end
-  const idx = Math.min(pool.length - 1, Math.floor(Math.pow(Math.random(), spot.island || spot.offshore ? 0.6 : 1) * pool.length));
+  const idx = Math.min(pool.length - 1, Math.floor(Math.pow(Math.random(), spot.island || spot.offshore || dolphinBonus ? 0.6 : 1) * pool.length));
   return makeFish(pool[idx]);
 }
 

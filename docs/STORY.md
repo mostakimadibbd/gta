@@ -118,6 +118,54 @@ Tamim's name comes off the last page, and the Harbour Wire runs the
 story for days. Elias's closing line is the harbour's whole philosophy:
 *"The harbour provides, Kade. Tonight, so did you."*
 
+### The Harbour Crown — the endgame chain (post-story; call Ines Marlo) · Phase 48
+The finale arc, for players who finished Chapter 6 **and** built the
+empire the chain is about: at least **2 businesses** and **1 rental
+property**. Ines states the gate — with the counts — when it isn't
+met; there is no silent refusal. Solano is gone, but his money never
+died: it incorporated. **Meridian Holdings** — a front company
+wearing the harbour's own name (the Meridian run, the Meridian Pair)
+— is buying Port Sable back one deed at a time.
+
+1. **Paper Trail** ($700) — shadow Meridian's bagman across two
+   streamed districts: be at Breakwater Point in Westbrook for the
+   tide boat's manifest, photograph his two Eastmere handoffs (the
+   chandlery, then the Light steps) with the real camera, then run
+   the film to the Harbour Wire newsroom in 3 minutes while his
+   people roll after it.
+2. **Cold Storage** ($900) — at the Docks stack yard, hold position
+   at the marked container for 8 seconds to copy its manifest core.
+   The seal's quiet alarm trips the patrol — but Voss is leaning on
+   the port authority, so the mission caps the response at 3★.
+   Escape to the Ferry Quarter safehouse, heat lost first.
+3. **The Auction** ($2,000 / $15,000) — the last Solano harbour
+   stake is auctioned at the seized mansion on the Northgate row.
+   The Ch.5-style choice, locked at decision in its own persisted
+   flag pair: **BUY OUT** Meridian's stake — $40,000 wired to
+   escrow at the moment you commit (only offered if you have it;
+   non-refundable), and every business you own pays a permanent
+   **+10% harbour dividend** through the same net function the Bank
+   displays — or **EXPOSE** them: the Wire prints the manifest and
+   the photographs across **three daily editions**, a one-time
+   **$15,000** whistleblower reward lands with the payout, and
+   reputation rises in **every district**. Both branches complete
+   the chain.
+4. **Harbour Crown** ($1,500) — the deeds themselves still sit in a
+   Meridian drawer, and an injunction lands at dawn. Take the deed
+   box from the Sable Marina office, run it **by boat** up the east
+   channel to the observatory archive's cliff jetty in Northreach,
+   then carry the archive receipt to Det. Voss at Patrol HQ in
+   person — against the clock and a tipped-off patrol at 4★.
+
+Reward: the **Vantara Sovereign** — a one-of-one grand tourer in
+deep harbour teal with a fixed gold livery, the stake's own
+showpiece — delivered to the player's garage as an owned car
+(survives reload and NG+ like every owned car; the delivery is
+recorded so it can never be minted twice), plus the **Harbour
+Crown** title on the phone's Stats page. The auction party — the
+auctioneer, Meridian's bidder, a harbour bidder — stands at the
+mansion frontage while Part 3 is live.
+
 ## Ending
 The shipment is seized and the ledger published. Solano's empire is
 arrested in public; Tamim walks free into the dusk. Rayan keeps the car,

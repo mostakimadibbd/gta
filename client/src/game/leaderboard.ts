@@ -5,12 +5,19 @@
 // no-ops — the single-player game never depends on the server.
 import { jobStats } from "./jobs";
 import { ECO, dailyIncomeTotal } from "./economy";
+import { G } from "./store";
 
 const BASE = ((import.meta.env.VITE_MULTIPLAYER_SERVER_URL as string | undefined) ?? "").replace(/\/$/, "");
 export const servicesOnline = () => BASE.length > 0;
 
+/** The name service posts carry. Phase 49 marathon fix: this used
+ * to read a "harborfall-mp-name" key that NOTHING in the game ever
+ * wrote, so every leaderboard/economy post went out as the default
+ * no matter what the player set. The one name the player owns is
+ * the Phase 38 Settings field (G.settings.mpName — the same string
+ * the WS join sends), so read it from there. */
 function playerName(): string {
-  try { return localStorage.getItem("harborfall-mp-name") ?? "Rayan Kade"; } catch { return "Rayan Kade"; }
+  return G.settings.mpName || "Rayan";
 }
 
 async function post(path: string, body: Record<string, unknown>): Promise<void> {

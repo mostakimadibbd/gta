@@ -9,7 +9,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { G, toast, bark, persistSkills, persistZoneRep } from "../game/store";
 import { isBind } from "../game/keybinds";
-import { J, jobStats, persistJobStats } from "../game/jobs";
+import { J, jobStats, persistJobStats, isServiceCar, jobBusy } from "../game/jobs";
 import { ECO } from "../game/economy";
 import { INV, tickInvest, persistInvest } from "../game/invest";
 import { postEconomy } from "../game/leaderboard";
@@ -22,6 +22,8 @@ import {
   CLOTHING_ITEMS, CLOTHING_SHOP, CLOTHING_COUNTER, CLOTH, persistClothing,
 } from "../game/phase8";
 import { DERBY } from "../game/derby";
+import { dolphinsNear } from "../game/wildlife"; // Phase 42: the pod near a cast is worth a word from Elias
+import { HEAT, noteFreshLook, FRESH_LOOK_SUFFIX } from "../game/heat"; // Phase 29: buying + wearing a new outfit = fresh look
 
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -53,7 +55,7 @@ export default function Phase8Systems() {
           sfx.click();
         }
         eDownAt.current = -1; eHeld.current = false;
-        if (G.hold?.label.startsWith("Buying")) G.hold = null;
+        if (G.hold?.label.startsWith("Buying") || G.hold?.label.startsWith("Paying") || G.hold?.label.startsWith("Selling")) G.hold = null;
       }
     };
     window.addEventListener("keydown", dn);
@@ -144,6 +146,10 @@ export default function Phase8Systems() {
         F.biteAt = t + 2.4 + (1 - sweet) * 4.2 + Math.random() * 1.6;
         F.phase = "wait";
         sfx.castLine(); sfx.splash();
+        // Phase 42: the pod working this water is a good sign — and
+        // a real one: rollCatch doubles the rare chance and weights
+        // the pool rich while the pod is within 40u of the cast.
+        if (dolphinsNear(F.castX, F.castZ)) bark("Old Elias", "Dolphins — good sign. The big ones follow the pod; your odds just improved.");
       }
     } else if (F.phase === "wait") {
       prompt = "Watch the bobber…";
@@ -267,7 +273,7 @@ export default function Phase8Systems() {
       // of Market Row (07:00–23:00; the Wraps vendor is the 24h exception)
       if (shopsClosed()) {
         prompt = "Thread & Tide — closed (opens 07:00)";
-        if (G.hold?.label.startsWith("Buying")) G.hold = null;
+        if (G.hold?.label.startsWith("Buying") || G.hold?.label.startsWith("Paying") || G.hold?.label.startsWith("Selling")) G.hold = null;
       } else {
       prompt = wearing
         ? `Thread & Tide — you're wearing the ${item.label} (tap E browse)`
@@ -284,11 +290,12 @@ export default function Phase8Systems() {
             CLOTH.current = item;
             if (!CLOTH.owned.includes(item.id)) CLOTH.owned.push(item.id); // Phase 14: the Loft wardrobe stocks it
             persistClothing();
-            toast(`🧥 ${item.label} — yours. It overrides your character-select outfit until you change character or variant there.`);
+            noteFreshLook(); // Phase 29: fresh look — the patrol file thins faster (decay only)
+            toast(`🧥 ${item.label} — yours. It overrides your character-select outfit until you change character or variant there.` + (HEAT.evidence > 0 ? FRESH_LOOK_SUFFIX : ""));
             sfx.register();
           }
         }
-      } else if (G.hold?.label.startsWith("Buying")) G.hold = null;
+      } else if (G.hold?.label.startsWith("Buying") || G.hold?.label.startsWith("Paying") || G.hold?.label.startsWith("Selling")) G.hold = null;
       }
     }
 
@@ -296,10 +303,21 @@ export default function Phase8Systems() {
     const myCar = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId] : null;
     if (J.wantTow) {
       J.wantTow = false;
-      if (J.towPhase === "idle" && J.taxiPhase === "idle" && J.delPhase === "idle" && !J.race) {
+      // Phase 42 audit: this gate was a hand-rolled partial census
+      // (tow/taxi/delivery/race only) that predates jobBusy() — it
+      // never learned about farm, valet, courier, the service
+      // shifts, the Slide Series, or Phase 41's supply-snag errand,
+      // so a tow job could start on top of any of them. jobBusy()
+      // is the single census every other job start consults; the
+      // towPhase check stays because jobBusy() includes it.
+      if (J.towPhase === "idle" && !jobBusy()) {
         const eligible = G.cars
           .map((c, i) => ({ c, i }))
-          .filter(({ c }) => !c.owned && !c.storedAway && !["boat", "bicycle", "bus", "tow"].includes(c.kind))
+          // Phase 33 audit: the Phase 32 service units join the
+          // excluded kinds — this filter predates them, so a live
+          // job ambulance or tender (unowned, dynamic, in G.cars)
+          // was eligible as a tow "breakdown" mid-shift.
+          .filter(({ c }, i) => !c.owned && !c.storedAway && !isServiceCar(i) && !["boat", "bicycle", "bus", "tow", "ambulance", "firetruck"].includes(c.kind))
           .filter(({ c }) => (c.state.x - px) ** 2 + (c.state.z - pz) ** 2 > 35 ** 2)
           .sort((a, b) => ((a.c.state.x - px) ** 2 + (a.c.state.z - pz) ** 2) - ((b.c.state.x - px) ** 2 + (b.c.state.z - pz) ** 2));
         const target = eligible[Math.min(eligible.length - 1, 2)] ?? eligible[0];

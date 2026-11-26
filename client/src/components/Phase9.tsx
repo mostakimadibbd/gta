@@ -23,6 +23,7 @@ import { glowTexture } from "../textures";
 import { sfx } from "../game/audio";
 import { ECO } from "../game/economy";
 import { pushNews } from "../game/feed";
+import { HEAT, noteFreshLook, FRESH_LOOK_SUFFIX } from "../game/heat"; // Phase 29: a cut or trim = fresh look
 import { gameHour, shopsClosed } from "./Interactions";
 import CarBody from "./CarBody";
 import {
@@ -605,12 +606,14 @@ export default function Phase9() {
               else if (beardEntry) {
                 G.cash -= price;
                 setLook({ beardStyle: beardEntry.id || null });
-                toast(beardEntry.id ? `💈 Beard sorted: ${beardEntry.label.toLowerCase()}.` : "💈 Clean-shaven. The razor did its work.");
+                noteFreshLook(); // Phase 29: fresh look — the patrol file thins faster (decay only)
+                toast((beardEntry.id ? `💈 Beard sorted: ${beardEntry.label.toLowerCase()}.` : "💈 Clean-shaven. The razor did its work.") + (HEAT.evidence > 0 ? FRESH_LOOK_SUFFIX : ""));
                 sfx.register();
               } else {
                 G.cash -= price;
                 setLook({ hairStyle: style.id, hairColor: color.hex });
-                toast(`💈 Fresh cut: ${style.label.toLowerCase()}, ${color.label.toLowerCase()}. The harbour approves.`);
+                noteFreshLook(); // Phase 29: fresh look — the patrol file thins faster (decay only)
+                toast(`💈 Fresh cut: ${style.label.toLowerCase()}, ${color.label.toLowerCase()}. The harbour approves.` + (HEAT.evidence > 0 ? FRESH_LOOK_SUFFIX : ""));
                 sfx.register();
               }
             }

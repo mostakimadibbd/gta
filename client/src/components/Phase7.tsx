@@ -22,8 +22,9 @@ import {
   COURIER_PAY_PER_DROP, COURIER_CHAIN_BONUS, COURIER_DROPS, courierLegSeconds,
   rollTaxiType, TAXI_TYPE_HINT, TAXI_TYPE_LABEL, TAXI_BOARD_LINES, CHATTY_LINES,
   NERVOUS_DAMAGE_LINE, NERVOUS_DROPPED_LINE, settleFare,
+  SNAG_DEPOTS, endSnagRun,
 } from "../game/jobs";
-import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, setHomePref, persistEco } from "../game/economy";
+import { BUSINESSES, APARTMENT, ECO, advanceDay, sleepToMorning, SLEEP_TICK, setHomePref, persistEco, RENTAL_PROPERTIES, RENTALS, buyRentalProperty, sellRentalProperty, payDueBill, rentalSellPrice, bizEventToday, markSnagFixed, bizSpeaker } from "../game/economy";
 import { RENT, RENTAL_DOCK, RENTAL_FEE, rentBoat, endRental, rentalCar } from "../game/rentals";
 import { pushNews, rollSocialPost, socialCrimePost } from "../game/feed";
 import { recordCupResult } from "../game/cup";
@@ -98,7 +99,8 @@ export default function Phase7Systems() {
   const exitT = useRef(-1);
   const myPrompt = useRef("");
   const eDownAt = useRef(-1);
-  const buyRef = useRef<{ label: string; run: () => void } | null>(null);
+  const buyRef = useRef<{ label: string; run: () => void; verb?: string } | null>(null); // Phase 30: verb — "Buying" (default) / "Paying" / "Selling" for the hold label
+  const snagPrevStatus = useRef(""); // Phase 41: G.status edge for the supply-run stand-down
   const rentalSerial = useRef(ECO.daySerial); // Phase 19: day-pass expiry watch
   const markerRef = useRef<THREE.Mesh>(null);
   // Phase 16: farm-work crate stack — rides in the farm pickup's bed
@@ -154,10 +156,21 @@ export default function Phase7Systems() {
 
     // ================= daily tick (06:00 wrap) =================
     if (G.dayTime < prevDay.current - 0.5) {
-      advanceDay();
+      // Phase 31 audit: a SLEEP landing is also a backward dayTime
+      // jump, and sleepToMorning already settled that morning
+      // itself — when its stamp matches the current serial, this
+      // "wrap" is the sleep's own landing and must not mint a
+      // second day (double business + rent payout). Destructibles
+      // still reset: a slept night repairs them like a wrapped one.
+      if (SLEEP_TICK.serial !== ECO.daySerial) advanceDay();
       resetDestructibles(); // destructibles are repaired overnight
       destRefs.current.forEach((g) => { if (g) g.visible = true; });
     }
+    // Consume the sleep stamp at every wrap check, matched or not:
+    // it is valid for exactly one check (the first frame after the
+    // sleep is the only one whose prevDay predates the landing), so
+    // a later natural wrap can never be mistaken for a sleep.
+    SLEEP_TICK.serial = -1;
     prevDay.current = G.dayTime;
 
     // ================= MARINA RENTAL WATCH (Phase 19) =================
@@ -296,6 +309,60 @@ export default function Phase7Systems() {
             J.delPhase = "pickup";
             J.delPoint = PICKUP_POINTS[J.delLeg % PICKUP_POINTS.length];
             toast(`📦 Leg done +$${pay} — next pickup lit (${J.delLeg}/3)`);
+          }
+        }
+      }
+    }
+
+    // ================= SUPPLY-SNAG ERRAND (Phase 41) =================
+    // A busted/wasted player drops the run (the ServiceJobs pattern):
+    // the snag itself stays unfixed — the errand can be re-run the
+    // same day from the door or the Bank app.
+    if (G.status && !snagPrevStatus.current && J.snagPhase !== "idle") {
+      endSnagRun();
+      toast("📦 The supply run's off — busted mid-errand. The snag's still open today if you want it.");
+    }
+    snagPrevStatus.current = G.status;
+    if (J.wantSnag) {
+      const bizId = J.wantSnag; J.wantSnag = "";
+      const b = BUSINESSES.find((x) => x.id === bizId);
+      const ev = b ? bizEventToday(b) : undefined;
+      if (b && ev?.kind === "snag" && !ev.fixed && J.snagPhase === "idle" && !jobBusy()) {
+        J.snagBiz = b.id; J.snagPhase = "pickup"; J.snagSerial = ECO.daySerial; // Phase 42: the run is stamped with the day whose snag it serves
+        // a depot at least 40u away (a real drive); if every depot
+        // were close, the farthest would do — none is, today.
+        const far = SNAG_DEPOTS.filter((d) => (d.x - b.x) ** 2 + (d.z - b.z) ** 2 > 40 ** 2);
+        J.snagPoint = pick(far.length ? far : SNAG_DEPOTS);
+        toast(`📦 Supply run — collect stock at ${J.snagPoint.name} (amber marker), then bring it back to the ${b.name}.`);
+        pushPhoneMsg(bizSpeaker(b), `Supply run's yours: stock's waiting at ${J.snagPoint.name}. Bring it back to the ${b.name} and the day's whole again. No pay — it's our own stock — but the street notices a business that looks after itself.`);
+      } else toast("That supply run can't start right now — finish what you're running, and check the snag's still open in SableBank.");
+    }
+    if (J.snagPhase !== "idle") {
+      const b = BUSINESSES.find((x) => x.id === J.snagBiz);
+      const ev = b ? bizEventToday(b) : undefined;
+      // Phase 42 audit: the serial stamp is checked FIRST — without
+      // it, a day turn that rolled a FRESH snag for the same
+      // business left bizEventToday reading "snag, unfixed" and the
+      // run silently retargeted to the new day's snag (yesterday's
+      // stock fixing today's shortage) instead of self-ending.
+      if (!b || J.snagSerial !== ECO.daySerial || !ev || ev.kind !== "snag" || ev.fixed) {
+        // the day turned (or the snag closed) under the run
+        endSnagRun();
+        toast("📦 The supply run's over — that snag belonged to a day that's done.");
+      } else if (car && J.snagPoint) {
+        const d2 = (car.state.x - J.snagPoint.x) ** 2 + (car.state.z - J.snagPoint.z) ** 2;
+        if (d2 < 6.5 ** 2 && speed < 1.5) {
+          if (J.snagPhase === "pickup") {
+            J.snagPhase = "dropoff";
+            J.snagPoint = { name: b.name, x: b.x, z: b.z };
+            sfx.pickup(); toast(`📦 Stock loaded — back to the ${b.name}.`);
+          } else {
+            endSnagRun();
+            if (markSnagFixed(b)) {
+              sfx.complete();
+              toast(`📦 Stock delivered — the ${b.name}'s full takings are restored for today.`);
+              pushPhoneMsg(bizSpeaker(b), `Stock's in — the ${b.name} trades at full strength for the rest of today, and ${b.district} noticed (+2 rep). The SableBank figure's whole again.`);
+            }
           }
         }
       }
@@ -872,7 +939,16 @@ export default function Phase7Systems() {
       // businesses (hold-E buys)
       for (const b of BUSINESSES) {
         if ((px - b.x) ** 2 + (pz - b.z) ** 2 < 3.2 ** 2) {
-          if (ECO.owned.includes(b.id)) prompt = b.id === "marina"
+          // Phase 41: a live, unfixed supply snag outranks the
+          // owned-business info line at its own door.
+          const snagEv = ECO.owned.includes(b.id) ? bizEventToday(b) : undefined;
+          if (snagEv?.kind === "snag" && !snagEv.fixed && J.snagPhase === "idle") {
+            if (!G.driving) {
+              prompt = `Press E — run the supply run for the ${b.name} (stock from a depot — restores today's full takings)`;
+              act = () => { J.wantSnag = b.id; };
+            } else prompt = `📦 ${b.name} — supply snag: takings halved today. Stop here and press E on foot (or use SableBank) to run the supply run.`;
+          }
+          else if (ECO.owned.includes(b.id)) prompt = b.id === "marina"
             ? `🏢 You own the ${b.name} — it pays $${b.income} every morning, and the rental dock down the pier is open (day-pass skiffs).`
             : `🏢 You own the ${b.name} — it pays $${b.income} every morning.`;
           else if (G.cash >= b.price) {
@@ -935,6 +1011,34 @@ export default function Phase7Systems() {
           act = () => { setHomePref("apartment"); sleepToMorning("the Coral Shores Apartment"); };
         }
       }
+      // ---- Phase 30: rental property doors (Sable Lets). Buy,
+      // pay a due repair bill, or sell back at 80% — all hold-E,
+      // the hold being the confirm, exactly as business buys work.
+      // The warehouse's business-owner gate is stated at the door,
+      // not discovered at the till. ----
+      if (!prompt) {
+        for (const p of RENTAL_PROPERTIES) {
+          if ((px - p.x) ** 2 + (pz - p.z) ** 2 >= 2.8 ** 2) continue;
+          const due = RENTALS.due[p.id] ?? 0;
+          if (!RENTALS.owned.includes(p.id)) {
+            if (p.requiresBusiness && ECO.owned.length === 0) {
+              prompt = `${p.name} — $${p.price.toLocaleString()} · Sable Lets leases the warehouse only to business owners. Buy any business first, then come back.`; warn = true;
+            } else if (G.cash >= p.price) {
+              prompt = `Hold E — buy the ${p.name} ($${p.price.toLocaleString()}) · Sable Lets collects $${p.rent}/day rent`;
+              buyRef.current = { label: p.name, run: () => { buyRentalProperty(p.id); } };
+            } else { prompt = `${p.name} — $${p.price.toLocaleString()} to buy (rents at $${p.rent}/day via Sable Lets). You have $${G.cash.toLocaleString()}.`; warn = true; }
+          } else if (due > 0) {
+            if (G.cash >= due) {
+              prompt = `Hold E — pay the ${p.name} repair bill ($${due.toLocaleString()}) · this unit's rent is PAUSED until it's settled`;
+              buyRef.current = { label: `${p.name} repair bill`, verb: "Paying", run: () => { payDueBill(p.id); } };
+            } else { prompt = `${p.name} — a $${due.toLocaleString()} repair bill is DUE and this unit's rent is paused. You have $${G.cash.toLocaleString()} — it's payable here, at the door, when you can.`; warn = true; }
+          } else {
+            prompt = `🏠 Your ${p.name} — Sable Lets collects $${p.rent}/day. Hold E — sell it back for $${rentalSellPrice(p).toLocaleString()} (80% of $${p.price.toLocaleString()}); rent stops today. Also sellable in SableBank.`;
+            buyRef.current = { label: p.name, verb: "Selling", run: () => { sellRentalProperty(p.id); } };
+          }
+          break;
+        }
+      }
       // villa sleep (front terrace point, clear of the gate prompt)
       if (!prompt && G.ownsMansion && (px - MANSION.x) ** 2 + (pz - (MANSION.z + 4)) ** 2 < 3 ** 2) {
         prompt = "Press E — sleep at the villa (morning · full heal · businesses settle)";
@@ -973,16 +1077,18 @@ export default function Phase7Systems() {
         }
       }
     }
-    // hold-E buy processing
+    // hold-E buy processing (Phase 30: the verb generalises the
+    // same hold-to-confirm gesture to paying bills and selling —
+    // the hold IS the confirm, as it is for buying)
     if (buyRef.current && eDownAt.current > 0) {
       const held = performance.now() / 1000 - eDownAt.current;
-      G.hold = { label: `Buying ${buyRef.current.label}…`, progress: Math.min(1, held / 0.9) };
+      G.hold = { label: `${buyRef.current.verb ?? "Buying"} ${buyRef.current.label}…`, progress: Math.min(1, held / 0.9) };
       if (held >= 0.9) {
         const run = buyRef.current.run;
         eDownAt.current = -1; G.hold = null;
         run();
       }
-    } else if (G.hold?.label.startsWith("Buying")) G.hold = null;
+    } else if (G.hold && (G.hold.label.startsWith("Buying") || G.hold.label.startsWith("Paying") || G.hold.label.startsWith("Selling"))) G.hold = null;
 
     if (!G.promptText || G.promptText === myPrompt.current) {
       G.promptText = prompt; G.promptWarn = warn; G.interact = act;

@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useCallback, useEffect, useRef, useState, type ComponentRef, type FormEvent, type ReactNode, type RefObject } from "react";
+import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type FormEvent, type ReactNode, type RefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, Noise, SMAA, BrightnessContrast, HueSaturation, SSAO, ChromaticAberration, SSR } from "@react-three/postprocessing";
@@ -6,7 +6,7 @@ import * as THREE from "three";
 import Collectibles from "./components/Collectibles";
 import GameSystems, { type SysCallbacks } from "./components/GameSystems";
 import TouchControls from "./components/TouchControls";
-import { Multiplayer, type NetworkState, type RemotePlayer } from "./components/Multiplayer";
+import { Multiplayer, type NetworkState, type RemotePlayer, type ChatLine } from "./components/Multiplayer";
 import Player from "./components/Player";
 import Vehicle from "./components/Vehicle";
 import World from "./components/World";
@@ -19,18 +19,33 @@ import { currentSeason } from "./game/season";
 import { M, NGP, startPlay, startPlayAt, recordAttempt, endMission, persist as persistMission, altActive } from "./game/missionState";
 import { STORY_MISSIONS, SIDE_MISSIONS, PAIR_MISSIONS, REPEATABLE, INTRO_PANELS, ENDING_PANEL, nextSideMission, type DialogueLine, type MissionDef } from "./game/missions";
 import { pushNews } from "./game/feed";
+import { HEAT, bribeCost, applyBribe } from "./game/heat"; // Phase 29: evidence & the Fixer
+import { hudCanvasPalette, hudDomPalette } from "./game/hudpalette"; // Phase 44: colourblind-safe HUD palettes
+import { pushPhoneMsg } from "./game/phone";
+import { ECO, RENTAL_PROPERTIES, RENTALS, rentDailyNet } from "./game/economy";
+import { ESCORT } from "./game/escort";
 import Phase7Systems from "./components/Phase7";
 import Phase8Systems from "./components/Phase8";
 import Phase9Systems from "./components/Phase9";
 import Phase17Systems from "./components/Phase17";
+import ServiceJobs from "./components/ServiceJobs";
+import Wildlife from "./components/Wildlife";
+import SlideSeries from "./components/SlideSeries";
+import DayEvents from "./components/DayEvents"; // Phase 47: regatta + market day events
 import BusRide from "./components/BusRide";
 import StaffWorld from "./components/StaffWorld";
+import QuietHarbour from "./components/QuietHarbour";
+import CrownWorld from "./components/CrownWorld"; // Phase 48: the auction set-piece at the mansion
 import { BUS, BUS_STOPS_RIDE } from "./game/bus";
 import Phase9Ui from "./components/Phase9Ui";
 import { jobTarget } from "./game/jobs";
 import { isRushNow } from "./game/rhythm";
 import { currentMiniUi, clearClothingOverride, type MiniUi } from "./game/phase8";
 import { galleryAdd, clearLookOverride } from "./game/phase9";
+import { evaluatePostcardShot, completePostcard, nearestPostcardHint, postcardsDoneCount, postcardSetComplete, POSTCARD_DEFS } from "./game/postcards";
+import { resumeTunes } from "./game/tunes"; // Phase 35: Sable Tunes picks up a saved "playing" track once the title theme stops
+import { scoreStart } from "./game/score"; // Phase 46: the ambient score's scheduler starts at the same Play transition (it gates itself against Tunes/rooms)
+import { reconcileSovereign } from "./game/crown"; // Phase 49: boot reconciliation for the Crown's reward car (see the mount effect)
 import { padCam } from "./game/gamepad";
 import { perf, DPR_LADDER, tierDprCap, autoDropTier, manualTier, showFps, setShowFps, reflectionMode, REFLECTION_LABEL, setReflFx } from "./game/perf";
 import { isBind, BIND_ACTIONS, binds, setBind, resetBinds, codeLabel, type BindAction } from "./game/keybinds";
@@ -38,7 +53,10 @@ import { activeSlot, switchSlot, slotSummary, SLOT_COUNT } from "./game/saveslot
 import { applyCarReflTier } from "./components/CarBody";
 import { THEMES, loadTheme, saveTheme, type GameTheme } from "./themes";
 import { ROAD_COORDS, FUEL_STATIONS, districtAt, isBlocked, routePoints, FARM_ROADS, STREAMED_DISTRICTS } from "./world";
-import { eastmereState, eastmereNeeded, loadEastmere } from "./game/eastmere"; // Phase 25: streamed district loader stub
+import { eastmereState, eastmereNeeded, eastmereInRange, loadEastmere, eastmereLoader } from "./game/eastmere"; // Phase 25: streamed district loader stub
+import { westbrookState, westbrookNeeded, westbrookInRange, loadWestbrook, westbrookLoader } from "./game/westbrook"; // Phase 26: second streamed district stub
+import { northreachState, northreachNeeded, northreachInRange, loadNorthreach, northreachLoader } from "./game/northreach"; // Phase 31: third streamed district stub
+import { ensureDistrictLoaded } from "./game/streamed"; // Phase 27: mission-start district gate
 import { skyEnvTexture, setNormalsEnabled } from "./textures";
 import { gates, initQuality, runFpsSampleOnce, type QualityTier } from "./game/quality";
 import Weather from "./components/Weather";
@@ -56,13 +74,26 @@ import { setCc0Deferred } from "./cc0Textures";
 import { nowS } from "./game/store";
 import { inNorth, onIsland, NORTH_ROAD_X, NORTH_ROAD_Z } from "./world";
 const CharacterSelect = lazy(() => import("./components/CharacterSelect"));
-import { POSTER_PANELS } from "./posterData";
+// Phase 45: the poster key-art panels (~318 kB of base64 JPEG in
+// ./posterData) are a START-SCREEN-only asset that used to ride the
+// initial bundle. They now load through a dynamic import — the same
+// pattern as the CC0 texture data (cc0Textures.ts) — so they arrive
+// as their own chunk behind the splash screen and fade in when
+// ready; the title, shade and Play button never wait on them.
+type PosterPanel = { caption: string; src: string };
+let posterCache: PosterPanel[] | null = null;
+let posterLoad: Promise<PosterPanel[]> | null = null;
+function loadPosterPanels(): Promise<PosterPanel[]> {
+  if (posterCache) return Promise.resolve(posterCache);
+  if (!posterLoad) posterLoad = import("./posterData").then((m) => (posterCache = m.POSTER_PANELS));
+  return posterLoad;
+}
 const Phone = lazy(() => import("./components/Phone"));
 import { loadCharacterChoice, persistCharacterChoice, presetById } from "./game/characters";
 import { gyroYawTrim } from "./game/gyro";
 import { stashTotal, persistSettings, toast as gameToast, syncWeaponMirrors } from "./game/store";
 import { CORAL_ROAD_X, CORAL_ROAD_Z, OVERLOOK, PIER_SPAWN } from "./world";
-import { WEATHER_META, cycleWeather } from "./game/weather";
+import { WEATHER_META, cycleWeather, forecastNext, forecastInGameMinutes } from "./game/weather"; // Phase 36: forecastNext/forecastInGameMinutes feed the HUD's imminent-change glyph
 import { audioTick, initAudio, sfx, startMenuTheme, stopMenuTheme, toggleMute } from "./game/audio";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
@@ -156,7 +187,19 @@ class ComposerBoundary extends Component<{ children: ReactNode }, { dead: boolea
   render() { return this.state.dead || composerKill.dead ? null : this.props.children; }
 }
 
-const initialRoom = import.meta.env.VITE_MULTIPLAYER_ROOM || "downtown";
+// Phase 38: the room code is remembered per save slot (the slot
+// layer prefixes the key), so a player's usual room is pre-filled.
+// Fallback chain: saved code → build-time env → "sable", the
+// server's own default room (Phase 38) — two fresh installs with a
+// server configured now meet in "sable" without typing anything.
+// (Was "downtown" before the server had a default room to match.)
+const initialRoom = (() => {
+  try {
+    const saved = localStorage.getItem("harborfall-mproom");
+    if (saved && saved.trim()) return saved.trim().slice(0, 48);
+  } catch { /* storage unavailable — fall through to the defaults */ }
+  return import.meta.env.VITE_MULTIPLAYER_ROOM || "sable";
+})();
 const tmpV = new THREE.Vector3();
 const tmpOff = new THREE.Vector3(); // Phase 8: gamepad orbit scratch (no per-frame allocation)
 const tmpSph = new THREE.Spherical();
@@ -176,6 +219,19 @@ interface SweepState { t: number; dur: number; cx: number; cz: number; }
 function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THREE.Vector3>; camFar: RefObject<boolean>; fp: RefObject<FpState>; orbit: boolean; sweep: { current: SweepState | null } }) {
   const controls = useRef<ComponentRef<typeof OrbitControls> | null>(null);
   const { camera } = useThree();
+  // Phase 44: DRIVE ASSIST (Full) camera auto-centre bookkeeping —
+  // the last moment the player orbited by hand (OrbitControls
+  // 'start' covers mouse drag, touch drag and wheel; the gamepad
+  // right-stick block below stamps it too). The easing in the frame
+  // loop only runs once this is a few seconds stale.
+  const lastOrbitAt = useRef(-10);
+  useEffect(() => {
+    const c = controls.current;
+    if (!c) return;
+    const onStart = () => { lastOrbitAt.current = performance.now() / 1000; };
+    c.addEventListener("start", onStart);
+    return () => c.removeEventListener("start", onStart);
+  }, []);
   useFrame((_, delta) => {
     if (!target.current) return;
     const cam = camera as THREE.PerspectiveCamera;
@@ -250,10 +306,44 @@ function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THR
     if ((padCam.yaw !== 0 || padCam.pitch !== 0) && !orbit) {
       const yaw = padCam.yaw, pitch = padCam.pitch;
       padCam.yaw = 0; padCam.pitch = 0;
+      lastOrbitAt.current = performance.now() / 1000; // Phase 44: a hand orbit — auto-centre pauses
       tmpSph.setFromVector3(tmpOff.copy(camera.position).sub(controls.current.target));
       tmpSph.theta -= yaw;
       tmpSph.phi = THREE.MathUtils.clamp(tmpSph.phi + pitch, 0.18, 1.45);
       camera.position.copy(controls.current.target).add(tmpOff.setFromSpherical(tmpSph));
+    }
+    // ---- Phase 44: DRIVE ASSIST (Full) — gentle camera auto-centre.
+    // While driving, once the player hasn't orbited for ~2.5 s and
+    // the car is moving, the camera's azimuth eases toward directly
+    // behind the car at a capped 0.55 rad/s — the same spherical-
+    // offset mechanism as the gamepad orbit above, so OrbitControls
+    // stays in charge (its update() below settles the frame) and
+    // any drag / wheel / right-stick input takes precedence the
+    // moment it lands. Pitch and distance are never touched; the
+    // aim, first-person, photo and menu-orbit cameras returned
+    // earlier and never reach this. ----
+    if (G.settings.driveAssist === "full" && G.driving && G.activeCarId >= 0 && !orbit && !G.interior) {
+      const car = G.cars[G.activeCarId];
+      // Phase 45 audit fix: the assist is documented (Settings help +
+      // store.ts) as ROAD vehicles only, and the steering smoothing
+      // in Vehicle.tsx honours that — but this block originally ran
+      // for boats and the plane too. Behind a boat it was merely
+      // off-label; behind the plane it actively fought the player,
+      // because a banking turn swings the heading constantly and the
+      // camera chased the tail through every manoeuvre. Same
+      // exclusion list as the smoothing now applies.
+      const roadVehicle = car.kind !== "boat" && car.kind !== "skiff" && car.kind !== "plane";
+      if (roadVehicle && Math.abs(car.state.speed) > 2.5 && performance.now() / 1000 - lastOrbitAt.current > 2.5) {
+        tmpSph.setFromVector3(tmpOff.copy(camera.position).sub(controls.current.target));
+        const want = Math.atan2(-Math.sin(car.state.heading), -Math.cos(car.state.heading));
+        let dTh = want - tmpSph.theta;
+        dTh = Math.atan2(Math.sin(dTh), Math.cos(dTh)); // shortest arc
+        const stepTh = THREE.MathUtils.clamp(dTh, -0.55 * delta, 0.55 * delta);
+        if (stepTh !== 0) {
+          tmpSph.theta += stepTh;
+          camera.position.copy(controls.current.target).add(tmpOff.setFromSpherical(tmpSph));
+        }
+      }
     }
     controls.current.autoRotate = orbit;
     controls.current.autoRotateSpeed = 0.65;
@@ -301,7 +391,7 @@ function CameraRig({ target, camFar, fp, orbit, sweep }: { target: RefObject<THR
  * gl.setPixelRatio without remounting the canvas. */
 function PerfGovernor({ active }: { active: boolean }) {
   const gl = useThree((s) => s.gl);
-  const acc = useRef({ frames: 0, winT: 0, lastStep: 0, highSince: 0, lowFpsSince: 0, idx: -1, lowWin: 0 }); // lowWin: Phase 25 sustained-low window count
+  const acc = useRef({ frames: 0, winT: 0, lastStep: 0, highSince: 0, lowFpsSince: 0, idx: -1, lowWin: 0, tier: "" }); // lowWin: Phase 25 sustained-low window count
   useFrame((_, delta) => {
     const a = acc.current;
     if (!active) { a.frames = 0; a.winT = 0; a.lowFpsSince = 0; return; }
@@ -311,6 +401,17 @@ function PerfGovernor({ active }: { active: boolean }) {
     const fps = a.frames / a.winT;
     a.frames = 0; a.winT = 0;
     perf.fps = fps;
+    // Phase 26: a quality-tier change — manual pick, adaptive
+    // auto-drop, or the manual-High sample check — resets the
+    // governor's windows, so stale low/high counts gathered under
+    // the old tier can't act on the new one (no fighting the user's
+    // choice), and the ladder restarts at the new tier's cap. The
+    // cap itself was already airtight: idx is clamped to capIdx
+    // every window and only increments while idx < capIdx.
+    if (a.tier !== G.settings.quality) {
+      a.tier = G.settings.quality;
+      a.idx = -1; a.lowWin = 0; a.highSince = 0; a.lowFpsSince = 0; a.lastStep = 0;
+    }
     const now = performance.now() / 1000;
     const cap = tierDprCap(G.settings.quality);
     // ladder index for the current cap (start at the cap, only adapt down/up within it)
@@ -343,7 +444,12 @@ function PerfGovernor({ active }: { active: boolean }) {
   return null;
 }
 
-/** Photo-mode capture: renders one frame then downloads the canvas PNG. */
+/** Photo-mode capture: renders one frame then downloads the canvas PNG.
+ * The explicit gl.render before toDataURL is the standard answer to
+ * the WebGL capture blocker — the drawing buffer is only guaranteed
+ * readable in the same task as a render (the canvas is not created
+ * with preserveDrawingBuffer, which would cost performance on every
+ * frame to serve an occasional photo). */
 function PhotoCapture({ shotRef }: { shotRef: RefObject<number> }) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
@@ -352,6 +458,33 @@ function PhotoCapture({ shotRef }: { shotRef: RefObject<number> }) {
   useFrame(() => {
     if (!shotRef.current || shotRef.current === done.current) return;
     done.current = shotRef.current;
+    // Phase 43: THE SABLE POSTCARDS — evaluate the shutter press
+    // against the postcard book with what the pipeline actually
+    // knows: THIS camera's position + facing, the clock, weather,
+    // wanted level and the pod's live positions (game/postcards.ts
+    // states the checks; there is no image recognition). Separate
+    // from the mission photo machinery by design: G.lastPhotoAt /
+    // photoArm are neither read nor written here beyond what
+    // capturePhoto already stamped.
+    let stamp: string | undefined;
+    {
+      const fwd = new THREE.Vector3();
+      camera.getWorldDirection(fwd);
+      let fx = fwd.x, fz = fwd.z;
+      const fl = Math.hypot(fx, fz);
+      if (fl < 1e-4) { fx = Math.sin(G.playerHeading); fz = Math.cos(G.playerHeading); }
+      else { fx /= fl; fz /= fl; }
+      const matched = evaluatePostcardShot({ x: camera.position.x, z: camera.position.z, fx, fz });
+      if (matched) {
+        const res = completePostcard(matched);
+        stamp = matched.name;
+        persistMission(); // flush the fee into the cash save now
+        sfx.complete();
+        gameToast(res.setComplete
+          ? `📮 “${matched.name}” sold — +$${matched.fee}. THE FULL SET! The Postcard Wall is up at the Loft.`
+          : `📮 Postcard sold to The Wire — “${matched.name}” +$${matched.fee} (${postcardsDoneCount()}/${POSTCARD_DEFS.length})`);
+      }
+    }
     gl.render(scene, camera);
     const url = gl.domElement.toDataURL("image/png");
     const a = document.createElement("a");
@@ -363,16 +496,45 @@ function PhotoCapture({ shotRef }: { shotRef: RefObject<number> }) {
         const c = document.createElement("canvas");
         c.width = 320; c.height = Math.max(1, Math.round(320 * (img.height / img.width)));
         c.getContext("2d")?.drawImage(img, 0, 0, c.width, c.height);
-        galleryAdd(c.toDataURL("image/jpeg", 0.72));
+        // Phase 35: the Gallery labels the shot with the district it
+        // was taken in — districtAt knows the streamed districts too.
+        // Phase 43: a postcard-winning shot is stamped with its name.
+        galleryAdd(c.toDataURL("image/jpeg", 0.72), districtAt(G.playerPos.x, G.playerPos.z), stamp);
       };
       img.src = url;
     } catch { /* gallery is best-effort; the download already happened */ }
   });
   return null;
 }
+/** Phase 43: the Photo Mode hint line — the nearest Sable Postcard
+ * still open, with its condition. It rides inside the photo bar,
+ * which is the whole of Photo Mode's UI: it appears when you enter
+ * Photo Mode and leaves when you exit (H / U / Esc), so the clean
+ * frame is never more than the exit key away. Recomputed whenever
+ * App re-renders (the HUD poll keeps that frequent). */
+function PostcardHint() {
+  if (postcardSetComplete()) return <span>📮 Sable Postcards: full set — the wall at the Loft is complete</span>;
+  const def = nearestPostcardHint();
+  if (!def) return null;
+  return <span>📮 {def.name} — {def.hint} · {postcardsDoneCount()}/{POSTCARD_DEFS.length} sold</span>;
+}
+// Phase 38: remote players carry a display name now — drawn as a
+// floating label on the StaffWorld/QuietHarbour canvas-sprite
+// pattern. Absent against a pre-Phase-38 server (no name is ever
+// sent), in which case the avatar simply stays unlabelled.
+function remoteNameTexture(name: string): THREE.CanvasTexture {
+  const c = document.createElement("canvas"); c.width = 256; c.height = 56;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "rgba(10,16,20,0.72)"; g.fillRect(0, 0, 256, 56);
+  g.fillStyle = "#ffe9c9"; g.font = "bold 26px sans-serif"; g.textAlign = "center";
+  g.fillText(name, 128, 37);
+  return new THREE.CanvasTexture(c);
+}
+
 function RemoteAvatar({ player }: { player: RemotePlayer }) {
   const root = useRef<THREE.Group>(null);
   const state = player.state;
+  const label = useMemo(() => (player.name ? remoteNameTexture(player.name) : null), [player.name]);
   useFrame((_, delta) => {
     if (!root.current || !state) return;
     const position = state.car?.position ?? state.position;
@@ -383,18 +545,23 @@ function RemoteAvatar({ player }: { player: RemotePlayer }) {
   return (
     <group ref={root} position={state.car?.position ?? state.position}>
       {state.car ? (
-        <group><mesh position={[0, 0.62, 0]} castShadow><boxGeometry args={[2, 0.62, 3.5]} /><meshStandardMaterial color="#6e72cc" flatShading /></mesh>
+        <group><mesh position={[0, 0.62, 0]} castShadow><boxGeometry args={[2, 0.62, 3.5]} /><meshStandardMaterial color="#2f8f83" flatShading /></mesh>
         <mesh position={[0, 1.12, -0.12]} castShadow><boxGeometry args={[1.48, 0.55, 1.72]} /><meshStandardMaterial color="#9ed3df" /></mesh></group>
       ) : (
-        <group position={[0, 0.86, 0]}><mesh castShadow><capsuleGeometry args={[0.34, 0.72, 4, 6]} /><meshStandardMaterial color="#6e72cc" flatShading /></mesh>
+        <group position={[0, 0.86, 0]}><mesh castShadow><capsuleGeometry args={[0.34, 0.72, 4, 6]} /><meshStandardMaterial color="#2f8f83" flatShading /></mesh>
         <mesh position={[0, 0.64, 0]} castShadow><icosahedronGeometry args={[0.27, 1]} /><meshStandardMaterial color="#d5a77b" flatShading /></mesh></group>
+      )}
+      {label && (
+        <sprite position={[0, 2.35, 0]} scale={[2.4, 0.53, 1]}>
+          <spriteMaterial map={label} transparent depthWrite={false} />
+        </sprite>
       )}
     </group>
   );
 }
 
-interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; aiming: boolean; rush: boolean; drink: boolean; }
-const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0, aiming: false, rush: false, drink: false };
+interface HudSnap { cash: number; health: number; wanted: number; speed: number; tokens: number; objective: string; dist: number; timer: number; chapter: string; district: string; driving: boolean; bust: number; status: string; storyDone: boolean; weather: string; weatherIcon: string; weatherNextIcon: string; weatherSoon: boolean; fuel: number; damage: number; ammo: number; armed: boolean; prompt: string; promptWarn: boolean; loot: number; lootCount: number; eye: string; holdLabel: string; holdP: number; weapon: string; stamina: number; wind: string; mini: MiniUi | null; fps: number; aiming: boolean; rush: boolean; drink: boolean; stall: boolean; heat: number; cover: string; }
+const initialHud: HudSnap = { cash: G.cash, health: 100, wanted: 0, speed: 0, tokens: 0, objective: "", dist: 0, timer: 0, chapter: "", district: "The Docks", driving: false, bust: 0, status: "", storyDone: false, weather: "Clear", weatherIcon: "☀️", weatherNextIcon: "", weatherSoon: false, fuel: 100, damage: 0, ammo: 0, armed: false, prompt: "", promptWarn: false, loot: 0, lootCount: 0, eye: "", holdLabel: "", holdP: 0, weapon: "fist", stamina: 100, wind: "Breezy", mini: null, fps: 0, aiming: false, rush: false, drink: false, stall: false, heat: 0, cover: "" };
 
 const LOAD_TIPS = [
   "Press E to enter a car — F works too.",
@@ -524,10 +691,24 @@ export default function App() {
   const [networkStatus, setNetworkStatus] = useState("Offline");
   const [roomName, setRoomName] = useState(initialRoom);
   const [activeRoom, setActiveRoom] = useState("");
+  // ---- Phase 38: room chat — the last 6 lines, shown in the
+  // fading overlay while chatOpen (toggled from the panel). Sending
+  // lives in the panel too: there is deliberately NO global chat
+  // key, so typing can never fight the driving keys (the global
+  // keydown handler also ignores input targets outright). ----
+  const [chatLog, setChatLog] = useState<(ChatLine & { at: number; self: boolean })[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatNow, setChatNow] = useState(() => Date.now());
   const [physicsSource, setPhysicsSource] = useState<"typescript" | "wasm">("typescript");
   const [theme, setTheme] = useState<GameTheme>(loadTheme);
+  // Phase 44: colourblind-safe HUD accents (game/hudpalette.ts) —
+  // every field is null with the setting off, so the styles below
+  // fall back to the shipped CSS and the default HUD is unchanged.
+  // Recomputed per render; the 8 Hz HUD poll keeps it fresh.
+  const domPal = hudDomPalette();
   const [started, setStarted] = useState(false);
-  const [eastmereReady, setEastmereReady] = useState(false); // Phase 25: Eastmere chunk mounted
+  const [streamedReady, setStreamedReady] = useState<Record<string, boolean>>({}); // Phase 25/26: streamed district chunks mounted, by id
   const [introIdx, setIntroIdx] = useState(-1);
   const [dialogue, setDialogue] = useState<{ lines: DialogueLine[]; idx: number; after: () => void } | null>(null);
   const [hud, setHud] = useState<HudSnap>(initialHud);
@@ -547,6 +728,15 @@ export default function App() {
   const [charChoice, setCharChoice] = useState(loadCharacterChoice);
   const [charOpen, setCharOpen] = useState(false);
   const [garageZoneId, setGarageZoneId] = useState<string | null>(null);
+  // ---- Phase 39: the silo office HARBOUR LOG panel — Interiors
+  // fills G.harbourLog from the live Wire feed + district rep and
+  // fires the event; the panel is a snapshot of that moment. ----
+  const [harbourLog, setHarbourLog] = useState<typeof G.harbourLog>(null);
+  useEffect(() => {
+    const on = () => setHarbourLog(G.harbourLog);
+    window.addEventListener("harborfall:harbour-log", on);
+    return () => window.removeEventListener("harborfall:harbour-log", on);
+  }, []);
   const [photoMode, setPhotoMode] = useState(false);
   const [postFx, setPostFx] = useState(G.settings.postFx);
   // ---- Phase 14: key-remap capture (Settings) — while a row is
@@ -610,6 +800,22 @@ export default function App() {
   const prevStatusRef = useRef("");
   const [tipIdx, setTipIdx] = useState(0);
   const [posterIdx, setPosterIdx] = useState(0);
+  // Phase 45: poster panels arrive as a lazy chunk (see loadPosterPanels
+  // at the imports); until then the start screen renders its shade +
+  // title over the stage-1 city with no key-art backdrop.
+  const [posterPanels, setPosterPanels] = useState<PosterPanel[]>(posterCache ?? []);
+  useEffect(() => {
+    // Phase 49: boot reconciliation for the Crown's reward car — if
+    // the garage-full delivery filed the Sovereign as the garage-car
+    // snapshot and a drive auto-save overwrote that snapshot before
+    // a reload could restore it, crown.ts re-files it now (silent
+    // whenever the car exists anywhere, which is the normal case).
+    reconcileSovereign();
+    if (posterCache) return;
+    let on = true;
+    loadPosterPanels().then((p) => { if (on) setPosterPanels(p); }).catch(() => { /* backdrop stays plain — the screen still works */ });
+    return () => { on = false; };
+  }, []);
   const [showHow, setShowHow] = useState(false);
   const [nightBucket, setNightBucket] = useState(0);
   const lastToastAt = useRef(0);
@@ -667,17 +873,67 @@ export default function App() {
   const startMission = useCallback((def: MissionDef) => {
     endMission(); M.phase = "intro";
     recordAttempt(def.id); // Phase 7: mission stats (Stats app)
+    // Phase 27: streamed-district missions warm their district chunk
+    // from mission start (the Petra contact gate already guarantees
+    // it for phone starts; this covers Missions-app replays and the
+    // burn branch's Eastmere delivery, chosen in resolveChoice).
+    if (def.id === "ledger1") void loadWestbrook();
+    if (def.id === "ledger2") void loadEastmere();
+    if (def.id === "quiet2") void loadNorthreach(); // Phase 37: the day-off ride ends in Northreach — warm the chunk at accept (the contact gate already required it loaded; replays reach here directly)
+    // Phase 48: the Crown spans the streamed districts too —
+    // crown1 works Westbrook AND Eastmere, crown4 ends in
+    // Northreach. Warm both/all at accept (the Ines gate required
+    // them loaded for phone starts; replays reach here directly).
+    if (def.id === "crown1") { void loadWestbrook(); void loadEastmere(); }
+    if (def.id === "crown4") void loadNorthreach();
     const intro = def.introAlt && altActive(def) ? def.introAlt : def.intro;
     beginDialogue(intro, () => {
       // Phase 5: the Ch.5 choice interrupts between intro and play, once.
       // Phase 9: the post-story pack has its own choice flag (M.packChoice).
-      const chosen = def.id === "s5" ? M.choice : M.packChoice;
-      if (def.choice && !chosen) { setChoiceFor(def); return; }
+      // Phase 27: the Ledger Line finale reads its OWN flag
+      // (M.ledgerChoice) — packChoice belongs to After the Fall.
+      const chosen = def.id === "s5" ? M.choice : def.choiceKey === "ledger" ? M.ledgerChoice : def.choiceKey === "crown" ? M.crownChoice : M.packChoice;
+      if (def.choice && !chosen) {
+        // Phase 48: crown3's BUY OUT is only offered if the player
+        // actually has the $40,000 — a choice you cannot pay is not
+        // a choice. With less in hand, Ines says so plainly and the
+        // panel carries the EXPOSE option alone. (The check runs at
+        // presentation: between here and the click the player is in
+        // dialogue UI and cannot spend, so the offer cannot stale.)
+        if (def.id === "crown3" && G.cash < 40000) {
+          const exposeOnly: MissionDef = { ...def, choice: def.choice ? { options: def.choice.options.filter((o) => o.flag === "crown-expose") } : undefined };
+          beginDialogue([
+            { who: "Ines Marlo", text: `(phone) Before you walk in, Rayan — the buy-out needs $40,000 in hand, wired to escrow the moment you commit. You have $${Math.max(0, Math.floor(G.cash)).toLocaleString()}. The harbour doesn't take promises.` },
+            { who: "Ines Marlo", text: "So tonight there's one honest play: EXPOSE them. The manifest, the photographs, three editions — and the whistleblower reward is real money. Decide with clear eyes." },
+          ], () => setChoiceFor(exposeOnly));
+          return;
+        }
+        setChoiceFor(def); return;
+      }
       startPlay(def); showBanner(`${def.title} — ${def.giver}`, true);
     });
   }, [beginDialogue, showBanner]);
   const resolveChoice = useCallback((def: MissionDef, flag: string, reply: DialogueLine[]) => {
     if (def.id === "s5") M.choice = flag as "voss" | "elias";
+    else if (def.choiceKey === "ledger") {
+      M.ledgerChoice = flag as "ledger-burn" | "ledger-publish";
+      if (flag === "ledger-burn") void loadEastmere(); // the delivery ends at Petra's diner
+    }
+    else if (def.choiceKey === "crown") {
+      // Phase 48: the auction decision. The choice locks here, like
+      // every authored pair. The BUY OUT wires its $40,000 escrow
+      // AT DECISION TIME — non-refundable, exactly as Ines stated —
+      // and M.crownPaid records it, so a failed attempt re-offers
+      // the same branch and can never charge twice. The dividend
+      // itself goes live at completion (crownBuyoutLive requires
+      // choice + done + paid, read inside businessDailyNet).
+      M.crownChoice = flag as "crown-buyout" | "crown-expose";
+      if (flag === "crown-buyout" && !M.crownPaid) {
+        G.cash -= 40000;
+        M.crownPaid = true;
+        pushPhoneMsg("SableBank", "🏢 -$40,000 — Meridian harbour stake, escrow wired (The Auction). Non-refundable: the commitment is the bid. The +10% harbour dividend goes live when the stake settles at the auction's close.");
+      }
+    }
     else M.packChoice = flag;
     persistMission();
     setChoiceFor(null);
@@ -698,6 +954,15 @@ export default function App() {
   };
 
   const respawn = useCallback(() => {
+    // Phase 30 audit fix: respawn must run EXACTLY ONCE per bust.
+    // The BUSTED/WASTED button renders from the 8 Hz HUD snapshot,
+    // so it outlives G.status by up to a poll after the first click
+    // clears it — a fast double-click (or R + click) re-entered here
+    // with G.status already "" and fell into the WASTED branch:
+    // a busted player was fined a second $100 AND their evidence
+    // file was halved a second time (resetAfterWasted also halves).
+    // With no live status there is nothing to respawn from.
+    if (!G.status) return;
     if (G.status === "busted") resetAfterArrest(150 + G.wanted * 50);
     else resetAfterWasted();
     G.status = ""; G.crouched = false; playerPositionRef.current.copy(G.playerPos);
@@ -793,10 +1058,31 @@ export default function App() {
   // multiplayer connect (optional; game is fully playable offline)
   const connectToRoom = useCallback((room: string) => {
     if (!serverUrl) { setNetworkStatus("Set VITE_MULTIPLAYER_SERVER_URL to enable multiplayer."); return; }
-    multiplayerRef.current?.disconnect(); setPlayers([]); setActiveRoom(room);
-    const mp = new Multiplayer(setPlayers, setNetworkStatus);
-    multiplayerRef.current = mp; mp.connect(serverUrl, room);
+    multiplayerRef.current?.disconnect(); setPlayers([]); setActiveRoom(room); setChatLog([]);
+    try { localStorage.setItem("harborfall-mproom", room); } catch { /* the code just won't be remembered */ }
+    const mp = new Multiplayer(setPlayers, setNetworkStatus, (line) => {
+      setChatLog((log) => [...log.slice(-5), { ...line, at: Date.now(), self: false }]);
+    });
+    multiplayerRef.current = mp; mp.connect(serverUrl, room, G.settings.mpName || "Rayan");
   }, [serverUrl]);
+  // Phase 38: send a chat line. The server never echoes our own
+  // lines back, so ours appends locally (optimistically — a server
+  // rejection, e.g. the rate limit, lands on the panel status line).
+  const handleChatSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const text = chatDraft.trim();
+    if (!text || !activeRoom || !multiplayerRef.current) return;
+    multiplayerRef.current.sendChat(text);
+    const name = G.settings.mpName || "Rayan";
+    setChatLog((log) => [...log.slice(-5), { playerId: "self", name, text, at: Date.now(), self: true }]);
+    setChatDraft("");
+  };
+  // the overlay's fade is age-based; tick once a second while shown
+  useEffect(() => {
+    if (!chatOpen || chatLog.length === 0) return;
+    const id = window.setInterval(() => setChatNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [chatOpen, chatLog.length]);
   useEffect(() => {
     if (!serverUrl) { setNetworkStatus("Offline — single-player. Set VITE_MULTIPLAYER_SERVER_URL to join a room."); return; }
     connectToRoom(initialRoom);
@@ -844,21 +1130,60 @@ export default function App() {
     return () => window.clearInterval(id);
   }, []);
 
-  // Phase 25: Eastmere lazy-load trigger — poll the player's
-  // position twice a second while in game; approaching the causeway
-  // gate fetches the district chunk (once), mounts it, and shows the
-  // entering card on the mission banner. Once loaded it stays.
+  // Phase 25/26: streamed-district lazy-load trigger — poll the
+  // player's position twice a second while in game; approaching a
+  // causeway gate fetches that district's chunk (once), mounts it,
+  // and shows the entering card on the mission banner. Once loaded
+  // a district stays loaded.
+  // Phase 26 failure handling: a failed fetch (chunk 404 / offline)
+  // no longer ends the story — Phase 25 cleared the poll and stayed
+  // silent, leaving the district unreachable for the whole session.
+  // Now the player is told once per approach and the load retries
+  // every 5 s while they stay in range. An unloaded district is
+  // water on every path (isWaterAt), so its causeway simply ends at
+  // the shore — no soft-lock, no half-registered colliders.
   useEffect(() => {
-    if (!started || flow !== "game" || eastmereReady) return;
+    if (!started || flow !== "game") return;
+    const districts = [
+      { id: "eastmere", name: "Eastmere", landmark: "Gull Rock Lookout", state: eastmereState, needed: eastmereNeeded, inRange: eastmereInRange, load: loadEastmere },
+      { id: "westbrook", name: "Westbrook", landmark: "Breakwater Point", state: westbrookState, needed: westbrookNeeded, inRange: westbrookInRange, load: loadWestbrook },
+      { id: "northreach", name: "Northreach", landmark: "Northreach Point", state: northreachState, needed: northreachNeeded, inRange: northreachInRange, load: loadNorthreach },
+    ];
+    const retryAt: Record<string, number> = {};
+    const warned: Record<string, boolean> = {};
+    const done: Record<string, boolean> = {};
     const id = window.setInterval(() => {
-      if (!eastmereNeeded(G.followPos.x, G.followPos.z)) return;
-      window.clearInterval(id);
-      void loadEastmere().then((ok) => {
-        if (ok) { setEastmereReady(true); showBanner("Entering Eastmere — Gull Rock Lookout", true); }
-      });
+      let allDone = true;
+      for (const d of districts) {
+        if (done[d.id]) continue;
+        if (d.state.loaded) { done[d.id] = true; setStreamedReady((s) => (s[d.id] ? s : { ...s, [d.id]: true })); continue; }
+        allDone = false;
+        // Phase 27 audit: the once-per-approach toast is re-armed by
+        // LEAVING the approach zone (pure geometry, inRange) — NOT by
+        // needed() going false, which also happens while a load is
+        // in flight. Phase 26 reset `warned` on !needed(), so every
+        // 5 s retry cycle re-toasted a player waiting at the gate.
+        if (!d.inRange(G.followPos.x, G.followPos.z)) { warned[d.id] = false; continue; }
+        if (d.state.loading) continue; // single-flight in progress — warned untouched
+        if ((retryAt[d.id] ?? 0) > performance.now()) continue;
+        void d.load().then((ok) => {
+          if (ok) {
+            done[d.id] = true;
+            setStreamedReady((s) => ({ ...s, [d.id]: true }));
+            showBanner(`Entering ${d.name} — ${d.landmark}`, true);
+          } else {
+            retryAt[d.id] = performance.now() + 5000;
+            if (!warned[d.id]) {
+              warned[d.id] = true;
+              gameToast(`Couldn't load ${d.name} — check your connection. The causeway stays closed until it loads.`);
+            }
+          }
+        });
+      }
+      if (allDone) window.clearInterval(id);
     }, 500);
     return () => window.clearInterval(id);
-  }, [started, flow, eastmereReady, showBanner]);
+  }, [started, flow, showBanner]);
 
   // HUD poll ~8Hz + minimap + audio tick
   useEffect(() => {
@@ -866,11 +1191,18 @@ export default function App() {
       if (!cv) return;
       const g = cv.getContext("2d"); if (!g) return;
       const mm = theme.minimap;
-      // world → map (Phase 6): covers Northgate (z −296) to Coral Shores
-      // (z 324) — span 700 around centre (5, 15)
-      const S = size / 700;
+      // Phase 44: the meaning-carrying blip colours come from the
+      // HUD palette module (game/hudpalette.ts) — with the
+      // colourblind-safe HUD off, pal IS today's colours exactly.
+      const pal = hudCanvasPalette(mm);
+      // world → map. Phase 31: the frame extends NORTH for Northreach (land to
+      // z −368) — span 720 around centre (5, −20), covering
+      // z −380..340 and x −355..365. One uniform scale, no
+      // distortion: the existing city simply sits in a slightly
+      // wider frame so the new headland is on the map at all.
+      const S = size / 720;
       const mx = (x: number) => (x - 5) * S + size / 2;
-      const mz = (z: number) => (z - 15) * S + size / 2;
+      const mz = (z: number) => (z + 20) * S + size / 2;
       g.fillStyle = "#2c5d84"; g.fillRect(0, 0, size, size); // water everywhere first
       g.fillStyle = mm.bg;
       g.fillRect(mx(-124), mz(-124), (124 + 124) * S, (128 + 124) * S); // Port Sable
@@ -901,13 +1233,21 @@ export default function App() {
         g.fillStyle = mm.bg;
         g.fillRect(mx(d.x0), mz(d.z0), (d.x1 - d.x0) * S, (d.z1 - d.z0) * S);
         g.strokeStyle = "#d9d4c5"; g.lineWidth = Math.max(1.5, 4 * S);
-        g.beginPath(); g.moveTo(mx(d.gate.x - 4), mz(d.gate.z)); g.lineTo(mx(d.x0), mz(d.gate.z)); g.stroke();
+        // Phase 31: the causeway stub follows the gate's approach
+        // axis — east/west gates (Eastmere, Westbrook) draw the
+        // horizontal stub they always have; a gate south/north of
+        // its district (Northreach's bridge) draws a vertical one.
+        if (d.gate.z > d.z1) { g.beginPath(); g.moveTo(mx(d.gate.x), mz(d.gate.z + 4)); g.lineTo(mx(d.gate.x), mz(d.z1)); g.stroke(); }
+        else if (d.gate.z < d.z0) { g.beginPath(); g.moveTo(mx(d.gate.x), mz(d.gate.z - 4)); g.lineTo(mx(d.gate.x), mz(d.z0)); g.stroke(); }
+        else { g.beginPath(); g.moveTo(mx(d.gate.x - 4), mz(d.gate.z)); g.lineTo(mx(d.x0), mz(d.gate.z)); g.stroke(); }
         g.strokeStyle = mm.road; g.lineWidth = Math.max(1.5, 5 * S);
         for (const c of d.roadX) { g.beginPath(); g.moveTo(mx(c), mz(d.z0 + 4)); g.lineTo(mx(c), mz(d.z1 - 4)); g.stroke(); }
         for (const c of d.roadZ) { g.beginPath(); g.moveTo(mx(d.x0 + 2), mz(c)); g.lineTo(mx(d.x1 - 2), mz(c)); g.stroke(); }
         if (size > 300) {
+          // Phase 26: the label is the district's own name at its own
+          // centre — Phase 25 hardcoded "EASTMERE" for every district.
           g.fillStyle = "#ffb340"; g.font = `bold ${Math.max(10, 13 * S)}px sans-serif`; g.textAlign = "center";
-          g.fillText("EASTMERE", mx((d.x0 + d.x1) / 2), mz(-262));
+          g.fillText(d.name.toUpperCase(), mx((d.x0 + d.x1) / 2), mz((d.z0 + d.z1) / 2));
         }
       }
       // Phase 13: the Sable Line loop (teal) + its stations; the big
@@ -930,9 +1270,9 @@ export default function App() {
           // the amber ring — numbered when there's more than one
           FLEET.list.forEach((s, i) => {
             const cxp = mx(s.x), czp = mz(s.z);
-            g.strokeStyle = "#ffb340"; g.lineWidth = 2;
+            g.strokeStyle = pal.yours; g.lineWidth = 2;
             g.beginPath(); g.arc(cxp, czp, Math.max(5, 7 * S), 0, 7); g.stroke();
-            g.fillStyle = "#ffb340"; g.font = `bold ${Math.max(9, 11 * S)}px sans-serif`; g.textAlign = "center";
+            g.fillStyle = pal.yours; g.font = `bold ${Math.max(9, 11 * S)}px sans-serif`; g.textAlign = "center";
             g.fillText(FLEET.list.length > 1 ? `YOUR CAR ${i + 1}` : "YOUR CAR", cxp, czp - Math.max(8, 10 * S));
           });
           // the last-car ring still covers a NON-owned last car (the
@@ -941,18 +1281,18 @@ export default function App() {
           const inFleet = LASTCAR.save ? FLEET.list.some((e) => e.kind === LASTCAR.save!.kind && Math.abs(e.x - LASTCAR.save!.x) < 1 && Math.abs(e.z - LASTCAR.save!.z) < 1) : false;
           if (LASTCAR.save && !inFleet) {
             const cxp = mx(LASTCAR.save.x), czp = mz(LASTCAR.save.z);
-            g.strokeStyle = "#ffb340"; g.lineWidth = 2;
+            g.strokeStyle = pal.yours; g.lineWidth = 2;
             g.beginPath(); g.arc(cxp, czp, Math.max(5, 7 * S), 0, 7); g.stroke();
-            g.fillStyle = "#ffb340"; g.font = `bold ${Math.max(9, 11 * S)}px sans-serif`; g.textAlign = "center";
+            g.fillStyle = pal.yours; g.font = `bold ${Math.max(9, 11 * S)}px sans-serif`; g.textAlign = "center";
             g.fillText("YOUR CAR", cxp, czp - Math.max(8, 10 * S));
           }
         }
       }
       const dot = (x: number, z: number, col: string, r: number) => { g.fillStyle = col; g.beginPath(); g.arc(mx(x), mz(z), Math.max(1.4, r * S * 2.2), 0, 7); g.fill(); };
       for (const st of FUEL_STATIONS) dot(st.x, st.z, "#ffb703", 3); // fuel pumps
-      for (const c of G.cars) if (!c.storedAway) dot(c.state.x, c.state.z, mm.car, 2.4);
-      for (const c of G.traffic) dot(c.x, c.z, mm.car, 2);
-      for (const c of G.cops) if (c.active) dot(c.x, c.z, mm.police, 3.4);
+      for (const c of G.cars) if (!c.storedAway) dot(c.state.x, c.state.z, pal.car, 2.4);
+      for (const c of G.traffic) dot(c.x, c.z, pal.car, 2);
+      for (const c of G.cops) if (c.active) dot(c.x, c.z, pal.police, 3.4);
       // Phase 15: Sable Downs farm roads (dirt brown) + the live
       // dispatch incident blip — a white-ringed red cross, a colour
       // no other map element uses, so an active call reads instantly
@@ -962,28 +1302,28 @@ export default function App() {
         const ix = mx(G.incident.x), iz = mz(G.incident.z), ir = Math.max(4, 7 * S);
         g.strokeStyle = "#ffffff"; g.lineWidth = 2;
         g.beginPath(); g.arc(ix, iz, ir + 2, 0, 7); g.stroke();
-        g.strokeStyle = "#e23232"; g.lineWidth = Math.max(2, 3 * S);
+        g.strokeStyle = pal.incident; g.lineWidth = Math.max(2, 3 * S);
         g.beginPath(); g.moveTo(ix - ir, iz); g.lineTo(ix + ir, iz); g.moveTo(ix, iz - ir); g.lineTo(ix, iz + ir); g.stroke();
       }
-      if (G.objective && M.phase === "play") dot(G.objective.x, G.objective.z, mm.marker, 4);
+      if (G.objective && M.phase === "play") dot(G.objective.x, G.objective.z, pal.objective, 4);
       // Phase 7: job / race target dot + the GPS route on the big map
       const jt = jobTarget();
-      if (jt && M.phase !== "play") dot(jt.x, jt.z, "#ffb340", 3.6);
+      if (jt && M.phase !== "play") dot(jt.x, jt.z, pal.job, 3.6);
       if (size > 300) {
         const tgt: { x: number; z: number } | null = M.phase === "play" && G.objective ? { x: G.objective.x, z: G.objective.z } : jt;
         if (tgt) {
           const pts = routePoints(G.followPos.x, G.followPos.z, tgt.x, tgt.z);
-          g.strokeStyle = "#ffb340"; g.lineWidth = Math.max(2, 3.5 * S); g.setLineDash([7, 5]);
+          g.strokeStyle = pal.job; g.lineWidth = Math.max(2, 3.5 * S); g.setLineDash([7, 5]);
           g.beginPath();
           pts.forEach(([x, z], i) => { if (i === 0) g.moveTo(mx(x), mz(z)); else g.lineTo(mx(x), mz(z)); });
           g.stroke(); g.setLineDash([]);
-          dot(tgt.x, tgt.z, "#ffb340", 4);
+          dot(tgt.x, tgt.z, pal.job, 4);
         }
       }
       // player arrow
       const px = mx(G.followPos.x), pz = mz(G.followPos.z);
       const h = G.driving && G.activeCarId >= 0 ? G.cars[G.activeCarId].state.heading : playerRotationRef.current.y;
-      g.save(); g.translate(px, pz); g.rotate(h); g.fillStyle = mm.player;
+      g.save(); g.translate(px, pz); g.rotate(h); g.fillStyle = pal.player;
       const as = Math.max(3, 6 * S * 2.2);
       g.beginPath(); g.moveTo(0, -as); g.lineTo(as * 0.66, as * 0.83); g.lineTo(-as * 0.66, as * 0.83); g.closePath(); g.fill(); g.restore();
     };
@@ -999,6 +1339,13 @@ export default function App() {
         chapter: (M.storyDone ? "Story complete — free roam" : `Chapter ${Math.min(6, M.storyIndex + 1)}: ${STORY_MISSIONS[Math.min(5, M.storyIndex)]?.title ?? ""}`) + (NGP.level > 0 ? ` · NG+ ${NGP.level}` : ""), // Phase 20: NG+ badge rides the chapter line
         district: districtAt(px, pz), driving: G.driving, bust: G.bustTimer, status: G.status, storyDone: M.storyDone,
         weather: G.weather, weatherIcon: WEATHER_META[G.weather].icon,
+        // Phase 36: the forecast glyph — the committed next weather's
+        // icon, shown only in the last 10 game-minutes before the
+        // change (a Port Sable day is 300 real seconds, so 10
+        // game-minutes ≈ the final ~2 s: a last-moments warning.
+        // The full forecast lives on the phone's weather page.)
+        weatherNextIcon: WEATHER_META[forecastNext()].icon,
+        weatherSoon: forecastNext() !== G.weather && forecastInGameMinutes() < 10,
         fuel: myCar ? Math.round(myCar.fuel) : 100, damage: myCar ? Math.round(myCar.damage) : 0,
         ammo: G.ammo, armed: G.armed, prompt: G.promptText, promptWarn: G.promptWarn,
         loot: stashTotal(), lootCount: G.inventory.length, eye: G.stealthEye,
@@ -1008,6 +1355,9 @@ export default function App() {
         mini: currentMiniUi(), // Phase 8: fishing/gym minigame bar (8 Hz poll)
         fps: showFps() ? Math.round(perf.fps) : 0,
         aiming: G.aiming, // Phase 9: free-aim crosshair
+        stall: G.stallWarn, // Phase 28: Sparrow stall chip (set by Vehicle's flight branch)
+        cover: G.inCombatCover ? (G.aiming ? "peek" : "cover") : "", // Phase 33: combat-cover chip (set by GameSystems' vitals block)
+        heat: HEAT.evidence, // Phase 29: patrol evidence file (game/heat.ts)
         rush: isRushNow(), // Phase 22: city-rhythm chip on the clock line (same 8 Hz poll)
         drink: G.timeS < G.drinkUntil, // Phase 23: club-drink warm vignette window (same poll)
       });
@@ -1096,8 +1446,9 @@ export default function App() {
       if ((isBind(e, "weapon") || key === "tab") && started) {
         e.preventDefault();
         // Phase 6: Q cycles every OWNED slot — fists → pistol → SMG →
-        // shotgun → bat (Phase 9 adds the bottle throw slot)
-        const order = ["fist", "pistol", "smg", "shotgun", "bat", "bottle"] as const;
+        // shotgun → bat (Phase 9 adds the bottle throw slot;
+        // Phase 33 slots the carbine between the SMG and the shotgun)
+        const order = ["fist", "pistol", "smg", "carbine", "shotgun", "bat", "bottle"] as const;
         const owned = order.filter((w) => w === "fist" || G.weaponOwned[w]);
         const next = owned[(owned.indexOf(G.weaponSel) + 1) % owned.length] ?? "fist";
         G.weaponSel = next;
@@ -1105,7 +1456,7 @@ export default function App() {
         showPopup(next === "fist" ? "Weapon: fists"
           : next === "bat" ? "Weapon: BASEBALL BAT"
           : next === "bottle" ? `Weapon: BOTTLES ×${G.weaponAmmo.bottle} — click to throw`
-          : `Weapon: ${next.toUpperCase()} · ${G.weaponAmmo[next as "pistol" | "smg" | "shotgun"]} rounds`);
+          : `Weapon: ${next.toUpperCase()} · ${G.weaponAmmo[next as "pistol" | "smg" | "shotgun" | "carbine"]} rounds`);
         return;
       }
       if (key === "v") {
@@ -1157,7 +1508,7 @@ export default function App() {
     return () => window.removeEventListener("pointermove", move);
   }, []);
 
-  const effectivePaused = paused || !!dialogue || !!choiceFor || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen || charOpen || !!garageZoneId || modOpen;
+  const effectivePaused = paused || !!dialogue || !!choiceFor || !!hud.status || introIdx >= 0 || !started || showHelp || phoneOpen || charOpen || !!garageZoneId || modOpen || !!harbourLog;
   // Phase 6: which construction stage the 3D world shows. The poster and
   // character showcase sit over a built Port Sable (stage 1); loading
   // walks the real stages; in game everything is mounted.
@@ -1173,12 +1524,12 @@ export default function App() {
   // Poster slideshow: the crew panel opens and holds, then the rest of the
   // key-art panels crossfade in one by one (GTA loading-screen style).
   useEffect(() => {
-    if (started) return;
+    if (started || posterPanels.length === 0) return;
     const id = window.setTimeout(() => {
-      setPosterIdx((v) => (v + 1) % POSTER_PANELS.length);
+      setPosterIdx((v) => (v + 1) % posterPanels.length);
     }, posterIdx === 0 ? 6000 : 4200);
     return () => window.clearTimeout(id);
-  }, [started, posterIdx]);
+  }, [started, posterIdx, posterPanels]);
   useEffect(() => {
     if (started || !loaded) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter") startLoad(true); };
@@ -1207,7 +1558,7 @@ export default function App() {
   };
   const beginPlay = () => {
     const story = storyModeRef.current;
-    sfx.playStart(); stopMenuTheme(); setStarted(true); startedRef.current = true; setCharOpen(false); savedPosRef.current = null;
+    sfx.playStart(); stopMenuTheme(); resumeTunes(); scoreStart(); setStarted(true); startedRef.current = true; setCharOpen(false); savedPosRef.current = null;
     // Phase 15: CC0 textures release on IDLE after spawn-in (never on
     // the path to the first playable frame, any tier) — the shared
     // texture objects sharpen in place when the decode lands.
@@ -1296,8 +1647,10 @@ export default function App() {
         <Suspense fallback={null}>
           <EnvSetup theme={theme} quality={quality} />
           <World theme={theme} night={nightBucket} quality={quality} stage={worldStage} reflFx={reflFx} />
-          {/* Phase 25: Eastmere — mounted only after its lazy chunk loads (see the loader effect below) */}
-          {eastmereReady && eastmereState.World ? <eastmereState.World night={nightBucket} /> : null}
+          {/* Phase 25/26: streamed districts — each mounted only after its lazy chunk loads (see the loader effect above) */}
+          {streamedReady.eastmere && eastmereState.World ? <eastmereState.World night={nightBucket} /> : null}
+          {streamedReady.westbrook && westbrookState.World ? <westbrookState.World night={nightBucket} /> : null}
+          {streamedReady.northreach && northreachState.World ? <northreachState.World night={nightBucket} /> : null}
           <Collectibles targetRef={followRef} paused={effectivePaused}
             onCollect={() => { tokenCountRef.current += 1; G.tokens = tokenCountRef.current; sfx.pickup(); showPopup("Harbour token +$25"); G.cash += 25; }} />
           <Vehicle playerPositionRef={playerPositionRef} vehiclePositionRef={vehiclePositionRef} vehicleStateRef={vehicleStateRef}
@@ -1312,14 +1665,31 @@ export default function App() {
           <Interactions />
           <Phase7Systems />
           <Phase8Systems />
+          {/* Phase 42: harbour wildlife — the dolphin pod + perched
+              gulls. Presentation only; claims no prompts. */}
+          <Wildlife />
           <Phase9Systems />
           {/* Phase 21: hired staff on shift at their businesses —
               display + greeting only, claims no prompts */}
           <StaffWorld />
+          <QuietHarbour />
+          <CrownWorld />
           {/* Phase 17: world events + the rideable Cityliner — mounted
               before the tram; both claim prompts politely (only when
               the line is free), so the tram keeps its last-writer win */}
           <Phase17Systems />
+          {/* Phase 32: the service jobs (paramedic + firefighter) —
+              polite prompt claims like Phase 17, before the tram's
+              last-writer mount */}
+          <ServiceJobs />
+          {/* Phase 34: the Sable Slide Series — drift championship
+              courses + the armed-round start prompts (polite claims,
+              same mount discipline as the service jobs) */}
+          <SlideSeries />
+          {/* Phase 47: the day events (regatta buoys + market stalls)
+              — polite prompt claims like Phase 17 / SlideSeries,
+              mounted before the tram's last-writer win */}
+          <DayEvents />
           <BusRide />
           {/* Phase 13: the Sable Line mounts LAST of the world systems
               on purpose — while the player rides, its prompt claim
@@ -1385,8 +1755,11 @@ export default function App() {
             <div className="weather-chip" title={`Weather (Y to change) · Wind: ${hud.wind} — palms and boats feel it`}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="9" cy="9" r="3.4" /><path d="M9 2.5v1.6M2.5 9h1.6M4.9 4.9l1.1 1.1M13.1 4.9l-1.1 1.1" /><path d="M10 20h7.2a3.4 3.4 0 0 0 .6-6.7 4.6 4.6 0 0 0-8.7 1A3.2 3.2 0 0 0 10 20Z" /></svg>
               {hud.weather}
+              {hud.weatherSoon && <span className="weather-next" title="The weather is about to turn — the phone's weather page carries the full forecast">→ {hud.weatherNextIcon}</span>}
             </div>
             {hud.rush && <div className="rush-chip" title="Rush hour (07:00–09:00 · 17:00–19:00) — the streets and pavements fill up, and the Cityliner runs a tighter stop">🚦 Rush hour</div>}
+            {hud.stall && <div className="stall-chip" title="Stall — the Sparrow is below flying speed and the nose is dropping. Throttle up (W) or dive gently to trade height for speed.">⚠ STALL</div>}
+            {hud.cover && <div className={`cover-chip ${hud.cover === "peek" ? "peek" : ""}`} title={hud.cover === "peek" ? "Peeking — you're aiming out of cover, so the patrol sees you at the normal crouch range and a grab lands at full speed. Stop aiming to tuck back in." : "In cover — crouched against a wall or car with a firearm ready. The patrol's sight range on you is cut and a grab builds slower. Aim to peek (and be exposed), move or stand to leave cover."}>{hud.cover === "peek" ? "◉ PEEKING" : "🛡 IN COVER"}</div>}
             <div className="minimap-disc"><canvas ref={minimapRef} className="minimap" width={148} height={148} aria-label="Minimap" /></div>
             <div className="health-wrap"><div className="health-bar" style={{ width: `${hud.health}%` }} /><span>{hud.health}</span></div>
             <div className="stamina-wrap" title="Stamina — sprint, swim and pedal drain it"><div className={`stamina-bar ${hud.stamina <= 20 ? "low" : ""}`} style={{ width: `${hud.stamina}%` }} /></div>
@@ -1399,8 +1772,9 @@ export default function App() {
           <div className="hud-right">
             <div className="hud-topright">
               <div className={`stars ${starPulse ? "pulse" : ""}`} aria-label={`Wanted ${hud.wanted} stars`}>
-                {[1, 2, 3, 4, 5, 6].map((i) => <span key={i} className={i <= hud.wanted ? "on" : ""}>★</span>)}
+                {[1, 2, 3, 4, 5, 6].map((i) => <span key={i} className={i <= hud.wanted ? "on" : ""} style={domPal.star && i <= hud.wanted ? { color: domPal.star } : undefined}>★</span>)}
               </div>
+              {hud.heat > 0 && <div className="heat-chip" style={domPal.heat ? { borderColor: domPal.heat, color: domPal.heat } : undefined} title={`Patrol evidence ${hud.heat}/100 — at 25/50/75 the next reported crime starts you at a 1★/2★/3★ floor, and the patrol searches longer before each star falls. Lay low and unseen to thin the file, change your look to thin it faster, or call Marek Doss, the Fixer (Contacts, after Ch.2).`}>👁 {hud.heat}</div>}
               <div className="cash">${hud.cash.toLocaleString()}</div>
               {hud.lootCount > 0 && <div className="loot-chip" title="Stolen goods — fence them at Coral Pawn or Lina's">STASH ${hud.loot.toLocaleString()} <span>· {hud.lootCount} item{hud.lootCount > 1 ? "s" : ""}</span></div>}
               {hud.armed && hud.weapon !== "fist" && hud.weapon !== "bat" && hud.weapon !== "bottle" && <div className="ammo-chip" title="Ammo — click or J to fire, Q to cycle weapons">{hud.weapon.toUpperCase()} · {hud.ammo}</div>}
@@ -1424,7 +1798,7 @@ export default function App() {
             )}
             {(hud.armed || hud.weapon === "bat" || hud.weapon === "bottle") && !driving && (
               <button type="button" className="weapon-chip" onClick={() => {
-                const order = ["fist", "pistol", "smg", "shotgun", "bat", "bottle"] as const;
+                const order = ["fist", "pistol", "smg", "carbine", "shotgun", "bat", "bottle"] as const;
                 const owned = order.filter((w) => w === "fist" || G.weaponOwned[w]);
                 G.weaponSel = owned[(owned.indexOf(G.weaponSel) + 1) % owned.length] ?? "fist";
                 syncWeaponMirrors();
@@ -1435,7 +1809,7 @@ export default function App() {
             {driving && <div className="speedo"><div className="speedo-arc" style={{ ["--speed" as string]: `${Math.min(100, hud.speed / 1.4)}%` }} /><strong>{hud.speed}</strong><span>km/h</span></div>}
           </div>
           {hud.objective && (
-            <div className="objective-banner"><span className="objective-district">{hud.district}</span><span className="objective-label">{M.active?.title}</span><span className="objective-text">{hud.objective}{hud.dist ? ` · ${hud.dist}m` : ""}{M.phase === "play" ? ` · ${Math.floor(hud.timer / 60)}:${String(hud.timer % 60).padStart(2, "0")}` : ""}</span></div>
+            <div className="objective-banner"><span className="objective-district">{hud.district}</span><span className="objective-label">{M.active?.title}</span><span className="objective-text">{hud.objective}{hud.dist ? ` · ${hud.dist}m` : ""}{M.phase === "play" && !M.active?.hideTimer ? ` · ${Math.floor(hud.timer / 60)}:${String(hud.timer % 60).padStart(2, "0")}` : ""}</span></div>
           )}
           <div className="prompt-stack">
             {nearVehicle && !driving && !hud.prompt && <p className="interaction-prompt"><span className="keycap">E</span>Enter car<span className="prompt-sub">hold — break in</span></p>}
@@ -1462,6 +1836,7 @@ export default function App() {
       {photoMode && started && (
         <div className="photo-bar">
           <span>Photo mode — H or U to exit · drag to look</span>
+          <PostcardHint />
           <button type="button" onClick={capturePhoto}>Capture ⏎</button>
         </div>
       )}
@@ -1472,7 +1847,7 @@ export default function App() {
           <div className="debrief-title">{missionResult.title}</div>
           {missionResult.ok ? (
             <div className="debrief-lines">
-              <div><span>Reward</span><b>+${missionResult.reward.toLocaleString()}</b></div>
+              <div><span>Reward</span><b style={domPal.gain ? { color: domPal.gain } : undefined}>+${missionResult.reward.toLocaleString()}</b></div>
               {missionResult.timeLeft > 0 && <div><span>Time remaining</span><b>{Math.floor(missionResult.timeLeft / 60)}:{String(missionResult.timeLeft % 60).padStart(2, "0")}</b></div>}
               <div><span>Balance</span><b>${hud.cash.toLocaleString()}</b></div>
             </div>
@@ -1480,6 +1855,24 @@ export default function App() {
             <div className="debrief-lines"><div><span>Reason</span><b>{missionResult.reason}</b></div></div>
           )}
           <button type="button" className="debrief-btn" onClick={() => setMissionResult(null)}>Continue ⏎</button>
+        </div>
+      )}
+
+      {harbourLog && started && (
+        <div className="debrief glass" role="dialog" aria-label="Westbrook harbour log">
+          <div className="debrief-kicker ok">WESTBROOK HARBOUR LOG</div>
+          <div className="debrief-title">The silo office book — the harbour as it stands</div>
+          <div className="debrief-lines">
+            {harbourLog.headlines.length === 0 && <div><span>The Wire</span><b>No headlines yet — the harbour is quiet.</b></div>}
+            {harbourLog.headlines.map((h, i) => (
+              <div key={i}><span>📰 {h.title}</span><b>{h.body}</b></div>
+            ))}
+            {harbourLog.districts.length === 0 && <div><span>District standing</span><b>No reputation anywhere yet — a stranger in every district.</b></div>}
+            {harbourLog.districts.map((d) => (
+              <div key={d.name}><span>{d.name} — standing</span><b>{d.rep > 0 ? `+${d.rep}` : `${d.rep}`}</b></div>
+            ))}
+          </div>
+          <button type="button" className="debrief-btn" onClick={() => setHarbourLog(null)}>Close the log</button>
         </div>
       )}
 
@@ -1571,16 +1964,39 @@ export default function App() {
           <small>Keys 1–5 switch instantly · T cycles · saved automatically</small>
         </div>
         <form className="room-form" onSubmit={handleRoomSubmit}>
-          <label htmlFor="room-name">Multiplayer room (optional)</label>
+          <label htmlFor="room-name">Multiplayer room code (optional)</label>
           <div className="room-row">
             <input id="room-name" value={roomName} onChange={(e) => setRoomName(e.target.value)} maxLength={48} autoComplete="off" />
             <button type="submit" disabled={!serverUrl || !roomName.trim()}>Join</button>
           </div>
-          <small>Single-player works with no server configured.</small>
+          <small>Friends in the same code share a room; different codes never see each other. Your code is remembered per profile — the shared default room is “sable”. Single-player works with no server configured.</small>
         </form>
         <p className="network-status" role="status">{networkStatus}</p>
         {activeRoom && <button type="button" onClick={() => { multiplayerRef.current?.disconnect(); multiplayerRef.current = null; setPlayers([]); setActiveRoom(""); setNetworkStatus("Disconnected"); }}>Leave room</button>}
+        {activeRoom && (
+          <div className="chat-box">
+            <div className="room-row">
+              <span>Room chat</span>
+              <button type="button" onClick={() => setChatOpen((v) => !v)}>{chatOpen ? "Hide overlay" : "Show overlay"}</button>
+            </div>
+            <form className="room-row" onSubmit={handleChatSubmit}>
+              <input value={chatDraft} onChange={(e) => setChatDraft(e.target.value)} maxLength={200} autoComplete="off" placeholder="Say something…" aria-label="Chat message" />
+              <button type="submit" disabled={!chatDraft.trim()}>Send</button>
+            </form>
+            <small>Sent to everyone in “{activeRoom}” under your display name (Phone → Settings). 200 characters, one line every 1.5 s — the server enforces both.</small>
+          </div>
+        )}
       </aside>
+
+      {chatOpen && chatLog.length > 0 && (
+        <div className="chat-overlay" aria-live="polite">
+          {chatLog.map((l, i) => {
+            const age = (chatNow - l.at) / 1000;
+            const opacity = age < 6 ? 1 : Math.max(0.35, 1 - (age - 6) / 30);
+            return <p key={`${l.at}-${i}`} style={{ opacity }}><b>{l.self ? `${l.name} (you)` : l.name}:</b> {l.text}</p>;
+          })}
+        </div>
+      )}
 
       <TouchControls driving={driving} onPause={() => setPaused((v) => !v)} />
 
@@ -1624,6 +2040,78 @@ export default function App() {
             const next = nextSideMission("wire", M.side.wire);
             if (next) { startMission(next); return; }
           }
+          // Phase 48: THE HARBOUR CROWN — the endgame empire chain.
+          // Ines offers it once the STORY IS DONE, and only to a
+          // player whose empire can hold what the chain takes: at
+          // least 2 businesses AND 1 rental property. When the
+          // empire is short she says exactly what's missing (the
+          // gate is the chain's premise, stated up front — never a
+          // silent refusal). crown1 spans Westbrook AND Eastmere
+          // and crown4 ends in Northreach, so those starts are
+          // GATED on the districts loading (the Ledger/Quiet
+          // pattern — a mission never starts into an unloaded
+          // district; on failure Ines postpones with a line).
+          if (name === "Ines Marlo" && M.storyDone && started && !M.active && !dialogueRef.current) {
+            const next = nextSideMission("crown", M.side.crown);
+            if (next) {
+              const biz = ECO.owned.length, rent = RENTALS.owned.length;
+              if (biz < 2 || rent < 1) {
+                beginDialogue([
+                  { who: "Ines Marlo", text: "(phone) Rayan — sit down for this one. Solano's money never died. It incorporated: Meridian Holdings, a front with clean paper and old backers, and it's moving to buy this harbour back one deed at a time. I have the shape of it. All of it." },
+                  { who: "Ines Marlo", text: `But I won't light this fuse until you can HOLD what we take. The Crown needs an empire behind it: two businesses and a rented property, minimum. Right now the Wire counts ${biz} business${biz === 1 ? "" : "es"} and ${rent} rental propert${rent === 1 ? "y" : "ies"} in your name. Build first — the Bank app sells both. Then call me, and we take the harbour back.` },
+                ], () => {});
+                return;
+              }
+              if (next.id === "crown1") {
+                void (async () => {
+                  const okW = await ensureDistrictLoaded(westbrookLoader);
+                  const okE = okW && (await ensureDistrictLoaded(eastmereLoader));
+                  if (okW && okE) { startMissionRef.current(next); return; }
+                  beginDialogue([
+                    { who: "Ines Marlo", text: okW ? "(phone) Not tonight, Rayan — the causeway's closed and Eastmere is cut off. The bagman keeps his secrets one more day." : "(phone) Not tonight, Rayan — the coast road west is out and Westbrook is cut off. The bagman keeps his secrets one more day." },
+                    { who: "Ines Marlo", text: "Give it a moment and call me again. Front companies are patient. So are we." },
+                  ], () => {});
+                })();
+                return;
+              }
+              if (next.id === "crown4") {
+                void (async () => {
+                  const ok = await ensureDistrictLoaded(northreachLoader);
+                  if (ok) { startMissionRef.current(next); return; }
+                  beginDialogue([
+                    { who: "Ines Marlo", text: "(phone) The Northreach road isn't answering, Rayan — and the deed run ends at that observatory. The lawyers can wait a day. The archive has waited a century." },
+                    { who: "Ines Marlo", text: "Call me again in a bit. Everything else is ready." },
+                  ], () => {});
+                })();
+                return;
+              }
+              startMission(next); return;
+            }
+          }
+          // Phase 27: THE LEDGER LINE — Petra Vane offers her arc by
+          // phone after Chapter 3. Parts 1 and 2 live in the streamed
+          // districts, so the start is GATED on the district actually
+          // loading: ensureDistrictLoaded drives the shared loader
+          // (waits out an in-flight attempt, retries once). On
+          // failure the mission REFUSES with Petra's line — a mission
+          // never starts into an unloaded district.
+          if (name === "Petra Vane" && started && !M.active && !dialogueRef.current && M.storyIndex >= 3) {
+            const next = nextSideMission("ledger", M.side.ledger);
+            if (next) {
+              const gate = next.id === "ledger1" ? { loader: westbrookLoader, place: "Westbrook", closed: "the coast road west is out" }
+                : next.id === "ledger2" ? { loader: eastmereLoader, place: "Eastmere", closed: "the causeway's closed" } : null;
+              if (!gate) { startMission(next); return; }
+              void (async () => {
+                const ok = await ensureDistrictLoaded(gate.loader);
+                if (ok) { startMissionRef.current(next); return; }
+                beginDialogue([
+                  { who: "Petra Vane", text: `(phone) Not yet, Kade — ${gate.closed} and ${gate.place} is cut off. The water doesn't care about our schedule.` },
+                  { who: "Petra Vane", text: "Give it a moment and call me again. The book isn't going anywhere — that's rather the problem." },
+                ], () => {});
+              })();
+              return;
+            }
+          }
           // Phase 5 Step 7a: Lina (after Ch.2) and Voss (after Ch.4) offer
           // their side-story arcs by phone — calling them starts the next
           // unplayed part instead of the ambient chat.
@@ -1640,6 +2128,103 @@ export default function App() {
             const pack = nextSideMission("after", M.side.after);
             if (pack && name === pack.giver) { startMission(pack); return; }
           }
+          // Phase 37: THE QUIET HARBOUR — post-story arc II, offered
+          // by the next part's own giver (Elias, then Lina, then
+          // Elias) once the story is done. Part 2 lives in
+          // Northreach, so its start is GATED on the district
+          // loading — the Ledger pattern: ensureDistrictLoaded waits
+          // out an in-flight attempt and retries once; on failure
+          // Lina postpones with a subtitled line and nothing starts.
+          if (M.storyDone && started && !M.active && !dialogueRef.current) {
+            const q = nextSideMission("quiet", M.side.quiet);
+            if (q && name === q.giver) {
+              if (q.id === "quiet2") {
+                void (async () => {
+                  const ok = await ensureDistrictLoaded(northreachLoader);
+                  if (ok) { startMissionRef.current(q); return; }
+                  beginDialogue([
+                    { who: "Lina Park", text: "(phone) Road up to Northreach isn't answering, Rayan. Another day, then — the observatory's stood there a hundred years. It can wait for my day off." },
+                    { who: "Lina Park", text: "Call me again in a bit. And the offer stands: slowly." },
+                  ], () => {});
+                })();
+                return;
+              }
+              startMission(q); return;
+            }
+          }
+          // Phase 29: THE FIXER — Marek Doss (post-Ch.2) burns your
+          // evidence file for cash. The refusal chain is ordered so
+          // the player always hears the TRUE blocker: mid-mission and
+          // mid-escort first (a bribe there would corrupt live state),
+          // then the once-a-day cooldown, then nothing-to-fix, then
+          // the line-of-sight rule, then the money. A refusal never
+          // charges and never consumes the day. Before Ch.2 he falls
+          // through to the generic line — he doesn't know you yet.
+          if (name === "Marek Doss" && started && !dialogueRef.current && !G.status && M.storyIndex >= 2) {
+            if (M.active) {
+              beginDialogue([{ who: "Marek Doss", text: "(phone) Not mid-job, Kade. Loose ends make loud noises — finish what you're running, then call me." }], () => {});
+              return;
+            }
+            if (ESCORT.active) {
+              beginDialogue([{ who: "Marek Doss", text: "(phone) You're being walked to a patrol car, friend. Even I can't fix that. Pay the fine, do the walk — then call." }], () => {});
+              return;
+            }
+            if (ECO.daySerial <= HEAT.fixerDay) {
+              beginDialogue([{ who: "Marek Doss", text: "(phone) Paid up for today, Kade. My man inside works one miracle a day — that's what keeps him careful. Tomorrow." }], () => {});
+              return;
+            }
+            if (HEAT.evidence <= 0 && G.wanted <= 0) {
+              beginDialogue([{ who: "Marek Doss", text: "(phone) You're clean, Kade. No file, no stars. Don't spend money putting out a fire that isn't burning." }], () => {});
+              return;
+            }
+            if (G.wanted > 0 && G.copSeen) {
+              beginDialogue([
+                { who: "Marek Doss", text: "(phone) Not while they're looking at you." },
+                { who: "Marek Doss", text: "Break their eyes first — a wall, a bridge, a dark street. Then call me and we'll talk money." },
+              ], () => {});
+              return;
+            }
+            const cost = bribeCost();
+            if (G.cash < cost) {
+              beginDialogue([{ who: "Marek Doss", text: `(phone) Burning your file costs $${cost.toLocaleString()} — evidence and attention, priced honest. You're carrying $${Math.floor(G.cash).toLocaleString()}. Come back richer. Or quieter.` }], () => {});
+              return;
+            }
+            const paid = applyBribe(ECO.daySerial);
+            pushPhoneMsg("Marek Doss", `Done. $${paid.toLocaleString()} received, file burned, stars gone. We never spoke. (One arrangement per day.)`);
+            sfx.cash();
+            beginDialogue([
+              { who: "Marek Doss", text: `(phone) $${paid.toLocaleString()}. …It's done. Your file's ash, the board's wiped, and as of this minute the patrol has never heard of you.` },
+              { who: "Rayan Kade", text: "And if they see me again?" },
+              { who: "Marek Doss", text: "Then you start a new file, Kade. Try not to autograph this one." },
+            ], () => {});
+            return;
+          }
+          // Phase 30: ANA RUIZ (Sable Lets) reports the rental
+          // portfolio live — what's let, what's paused on a due
+          // bill, and what the mornings are paying. With nothing
+          // owned she makes the pitch instead. Read-only: buying,
+          // bill-paying and selling live at the doors and in
+          // SableBank, never on a phone call.
+          if (name === "Ana Ruiz" && started && !dialogueRef.current && !G.status) {
+            if (RENTALS.owned.length === 0) {
+              beginDialogue([
+                { who: "Ana Ruiz", text: "(phone) Ana Ruiz, Sable Lets. Three units on my books with your name pencilled beside them, Kade: a Coral Shores flat at $18,000, a Northgate townhouse at $32,000, and the Docks warehouse at $45,000 — that one I only let to business owners, commercial tenants like a landlord who trades." },
+                { who: "Ana Ruiz", text: "Buy at the door — look for my boards. After that the rent is my problem and your income: it lands every morning with your business money. Call me any time for the state of the portfolio." },
+              ], () => {});
+              return;
+            }
+            const lines: { who: string; text: string }[] = [{ who: "Ana Ruiz", text: `(phone) Your portfolio, Kade: ${RENTALS.owned.length} of my three units, paying $${rentDailyNet().toLocaleString()} a day as it stands.` }];
+            for (const p of RENTAL_PROPERTIES) {
+              if (!RENTALS.owned.includes(p.id)) continue;
+              const due = RENTALS.due[p.id] ?? 0;
+              lines.push({ who: "Ana Ruiz", text: due > 0
+                ? `The ${p.name}: a $${due.toLocaleString()} repair bill is DUE, so its rent is paused. Pay it at the door and we're earning again tomorrow.`
+                : `The ${p.name}: let, quiet, $${p.rent} a morning. The kind of tenant I pray for.` });
+            }
+            lines.push({ who: "Ana Ruiz", text: "Anything changes, you'll have my message before your coffee cools. That's the job." });
+            beginDialogue(lines, () => {});
+            return;
+          }
           beginDialogue([{ who: name, text: line }, { who: name, text: hint }], () => {});
         }} />
       </Suspense>
@@ -1649,18 +2234,20 @@ export default function App() {
 
       {(flow === "splash" || flow === "poster") && (
         <div className="start-screen poster-screen">
-          {POSTER_PANELS.map((panel, i) => (
+          {posterPanels.map((panel, i) => (
             <img key={panel.caption} className={i === posterIdx ? "poster-bg active" : "poster-bg"} src={panel.src} alt="" aria-hidden="true" />
           ))}
           <div className="poster-shade" aria-hidden="true" />
+          {posterPanels.length > 0 && (
           <div className="poster-caption" aria-hidden="true">
-            <span>{POSTER_PANELS[posterIdx].caption}</span>
-            <span className="poster-dots">{POSTER_PANELS.map((panel, i) => (<i key={panel.caption} className={i === posterIdx ? "on" : ""} />))}</span>
+            <span>{posterPanels[posterIdx % posterPanels.length].caption}</span>
+            <span className="poster-dots">{posterPanels.map((panel, i) => (<i key={panel.caption} className={i === posterIdx ? "on" : ""} />))}</span>
           </div>
+          )}
           <div className="poster-content">
             <h1 className="game-title">HARBOR<span>FALL</span></h1>
             <p className="tagline">Port Sable · a harbour city of debts, cranes and second chances</p>
-            <p className="version-stamp">v2.0 — Complete Edition</p>
+            <p className="version-stamp">v3.0 — Complete Edition</p>
             {!loaded ? (
               <div className="load-block">
                 <div className="load-bar"><div className="load-fill" style={{ width: sceneReady ? "86%" : "52%" }} /></div>
@@ -1832,7 +2419,7 @@ export default function App() {
               ))}
             </div>
             <p className="settings-note">Seasons turn every 7 game-days: the sun's arc and the day's length, the sky / fog / water tints, the street trees (palms stay green — this is the subtropics) and the weather odds all shift with it. Winter here is cool, grey and dry: Port Sable has never seen snow, and won't.</p>
-            <p className="settings-note">Low: no composer, 1024 shadows, procedural textures. Medium: + CC0 photo textures at 512, water shader. High: + stronger bloom, CC0 at 768 — and ray-traced-style reflections (screen-space reflections + mirrored bay water; a browser has no hardware ray tracing, this is the real-time reflection stack every web game uses). Reflections are opt-in and off by default since the stability pass: they render at reduced resolution, the water mirror is capped, and SSAO steps aside while they're on. Resolution adapts automatically for smoothness (even on a manual High); picking a tier here turns the auto tier-drop off for this session.</p>
+            <p className="settings-note">Low is the weak-phone preset: no composer, NO shadows at all (the biggest single saving — the city looks flatter for it), resolution capped at native 1.0, ambient traffic and crowds capped at half whatever the density levers say, wildlife updates at half rate, procedural textures only. Medium: + shadows (2048 map), CC0 photo textures at 512, water shader. High: + stronger bloom, CC0 at 768 — and ray-traced-style reflections (screen-space reflections + mirrored bay water; a browser has no hardware ray tracing, this is the real-time reflection stack every web game uses). Reflections are opt-in and off by default since the stability pass: they render at reduced resolution, the water mirror is capped, and SSAO steps aside while they're on. Resolution adapts automatically for smoothness (even on a manual High) but never above your tier's cap; picking a tier here turns the auto tier-drop off for this session.</p>
             <h3 className="settings-head">World · density &amp; view distance</h3>
             <div className="seg-row" role="group" aria-label="Traffic density">
               <span className="seg-label">Traffic</span>
@@ -1898,7 +2485,7 @@ export default function App() {
               <div><dt>Space</dt><dd>Jump</dd></div><div><dt>E / F</dt><dd>Enter car · doors · buy · advance dialogue</dd></div>
               <div><dt>Click / J</dt><dd>Punch — or fire your weapon (SMG auto-fires while held)</dd></div>
               <div><dt>Hold right-mouse / LT</dt><dd>Free-aim — over-shoulder camera, fire along the crosshair</dd></div>
-              <div><dt>Q / Tab</dt><dd>Weapon selector — fists · pistol · SMG · shotgun · bat · bottles</dd></div>
+              <div><dt>Q / Tab</dt><dd>Weapon selector — fists · pistol · SMG · carbine · shotgun · bat · bottles</dd></div>
               <div><dt>Bottles</dt><dd>Crates by Club Solace and the pier — Q to the bottle slot, click to throw (breaks shopfront glass)</dd></div>
               <div><dt>Sable Arms mods</dt><dd>Suppressors (quiet shots), extended mag, reflex sight, shotgun choke — hold E at the counter</dd></div>
               <div><dt>Named townsfolk</dt><dd>Tomas, Priya, Bea and Kip keep schedules across the city — walk up and press E to talk</dd></div>
@@ -1934,6 +2521,7 @@ export default function App() {
               <div><dt>Flying the Sparrow</dt><dd>W builds speed, lift-off past ~60 km/h · Shift climbs · Ctrl descends · land under ~27 km/h sink or it costs you</dd></div>
               <div><dt>Boats</dt><dd>Speedboat at the pier, fishing skiffs at the island and Coral docks — E boards, W drives, mind the patrol boat at 2★+</dd></div>
               <div><dt>Six stars</dt><dd>Serious crime at 5★ builds heat — the sixth star brings the Harbour Guard SUV and K9 units (3★+, on foot)</dd></div>
+              <div><dt>Evidence &amp; the Fixer</dt><dd>Every crime the patrol learns about builds your evidence file (👁 by the stars): at 25/50/75 the next report starts at a 1★/2★/3★ floor and searches run longer. Lay low and unseen to thin it, change your look to thin it faster, get busted or wasted and half is served — or call Marek Doss (Contacts, after Ch.2) and pay to burn it all, once a day, never while they're looking at you</dd></div>
               <div><dt>M (at a garage)</dt><dd>Lina's mods — respray · engine tune · brakes</dd></div>
               <div><dt>C</dt><dd>Camera near / far</dd></div>
               <div><dt>Taxi work</dt><dd>Drive the yellow Sable Cab — fares hail with an amber marker; fast + clean = tips</dd></div>

@@ -3,6 +3,14 @@ let ctx: AudioContext | null = null; let muted = false;
 let engineOsc: OscillatorNode | null = null; let engineGain: GainNode | null = null;
 let sirenOsc: OscillatorNode | null = null; let sirenGain: GainNode | null = null; let sirenTimer = 0;
 export function isMuted() { return muted; }
+// Phase 32: the PLAYER's own siren (the service jobs' ambulance /
+// fire tender on a live call). audioTick's siren voice is shared:
+// it sounds for the patrol when wanted > 0, and for the player's
+// unit while this flag is set by ServiceJobs. Set it every frame
+// the condition holds; ServiceJobs also clears it on shift end, so
+// a stood-down shift can never leave a phantom siren running.
+let jobSiren = false;
+export function setJobSiren(on: boolean) { jobSiren = on; }
 export function toggleMute() { muted = !muted; if (engineGain) engineGain.gain.value = 0; if (sirenGain) sirenGain.gain.value = 0; if (themeMaster) themeMaster.gain.value = muted ? 0 : 0.5; if (clubMaster) clubMaster.gain.value = muted ? 0 : 0.4; return muted; }
 function ac(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -11,6 +19,22 @@ function ac(): AudioContext | null {
   return ctx;
 }
 export function initAudio() { ac(); }
+// Phase 35: shared-context access for game/tunes.ts (the Sable Tunes
+// player runs its two new loops on the same AudioContext, through a
+// bus gain like the theme/club masters). The bus starts at the
+// global mute state; tunes.ts re-syncs it on its scheduler tick, so
+// the N-key mute lands on Tunes within ~90 ms, the same as it lands
+// on the theme and club masters in toggleMute above. The game has
+// no separate volume setting — mute is the one audio switch, and
+// every music source honours it identically.
+export function audioCtx(): AudioContext | null { return ac(); }
+export function musicBus(vol: number): GainNode | null {
+  const a = ac(); if (!a) return null;
+  const g = a.createGain(); g.gain.value = muted ? 0 : vol; g.connect(a.destination); return g;
+}
+export function syncMusicBus(g: GainNode | null, vol: number) {
+  if (g) { try { g.gain.value = muted ? 0 : vol; } catch { /* node gone */ } }
+}
 function blip(freq: number, dur: number, type: OscillatorType, vol: number, when = 0, slide = 0) {
   const a = ac(); if (!a || muted) return;
   const o = a.createOscillator(); const g = a.createGain();
@@ -77,6 +101,7 @@ export const sfx = {
   punch() { noiseBurst(0.09, 0.13, 1400); blip(180, 0.07, "sine", 0.08, 0, -70); }, // fist swish + body
   shot() { noiseBurst(0.16, 0.4, 3400); blip(150, 0.14, "sawtooth", 0.2, 0, -95); noiseBurst(0.3, 0.1, 700, ); }, // pistol crack + tail
   smg() { noiseBurst(0.09, 0.3, 3800); blip(170, 0.08, "sawtooth", 0.15, 0, -100); }, // SMG: shorter, snappier crack
+  carbine() { noiseBurst(0.12, 0.34, 2600); blip(118, 0.11, "sawtooth", 0.19, 0, -82); noiseBurst(0.22, 0.09, 520); }, // Phase 33: Kestrel Carbine — deeper body than the SMG, a shorter tail than the shotgun
   blast() { noiseBurst(0.34, 0.55, 2400); blip(95, 0.3, "sawtooth", 0.3, 0, -60); noiseBurst(0.5, 0.16, 500); }, // shotgun boom + long tail
   pop() { noiseBurst(0.2, 0.5, 1800); blip(220, 0.16, "sine", 0.25, 0, -160); noiseBurst(0.4, 0.12, 300); }, // tyre blowout on spikes
   eat() { blip(300, 0.07, "sine", 0.08); blip(240, 0.08, "sine", 0.08, 0.11); blip(340, 0.07, "sine", 0.07, 0.23); }, // vendor food: three soft bites
@@ -329,6 +354,7 @@ export function startClubBass() {
     while (clubNextTime < ctx.currentTime + 0.15) { scheduleClubStep(clubStep, clubNextTime); clubStep += 1; clubNextTime += CLUB_STEP_DUR; }
   }, 80);
 }
+export function isClubBassPlaying() { return clubTimer !== null; }
 export function stopClubBass() {
   if (clubTimer !== null) { window.clearInterval(clubTimer); clubTimer = null; }
   if (ctx && clubMaster) { const g = clubMaster; g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.25); window.setTimeout(() => g.disconnect(), 350); }
@@ -349,7 +375,7 @@ export function audioTick(driving: boolean, speedKph: number, wanted: number) {
     engineOsc.frequency.value = 55 + speedKph * 1.6;
     engineGain.gain.value = 0.028 + Math.min(0.05, speedKph / 1800);
   } else if (engineGain) engineGain.gain.value = 0;
-  if (wanted > 0 && !muted) {
+  if ((wanted > 0 || jobSiren) && !muted) {
     if (!sirenOsc || !sirenGain) {
       const osc = a.createOscillator(); const gain = a.createGain();
       osc.type = "triangle"; gain.gain.value = 0.02;
